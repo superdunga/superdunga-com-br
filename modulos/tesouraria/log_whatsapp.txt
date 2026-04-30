@@ -1,0 +1,6 @@
+2026-04-28 23:22:56 - OK: {"success":true,"message":"Mensagem enviada com sucesso"}
+2026-04-28 23:30:42 - OK: {"success":true,"message":"Mensagem enviada com sucesso"}
+2026-04-28 23:36:54 - OK: {"success":true,"message":"Mensagem enviada com sucesso"}
+2026-04-28 23:40:36 - OK: {"success":true,"message":"Mensagem enviada com sucesso"}
+2026-04-29 00:09:51 - OK: {"success":true,"message":"Mensagem enviada com sucesso"}
+2026-04-29 00:20:08 - OK: {"success":true,"message":"Mensagem enviada com sucesso"}

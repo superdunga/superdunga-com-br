@@ -1,0 +1,24 @@
+# Arquivos do sistema
+.DS_Store
+Thumbs.db
+
+# Logs
+error_log
+*.log
+
+# Arquivos temporários
+*.tmp
+*.swp
+*~
+
+# Backup do WordPress
+wp-config.php
+wp-content/uploads/
+
+# Arquivos grandes desnecessários
+*.zip
+*.pdf
+*.jpg
+*.jpeg
+*.png
+*.gif
