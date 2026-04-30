@@ -1,73 +1,80 @@
 <?php
 require '../../config/auth.php';
 require '../../layout/header.php';
+
+$opcoes = [
+    [
+        'titulo' => 'Movimentacao',
+        'descricao' => 'Registre entradas, saidas e ajustes da tesouraria.',
+        'href' => 'movimentar.php',
+        'icone' => '$',
+        'botao' => 'btn-success',
+    ],
+    [
+        'titulo' => 'Extrato',
+        'descricao' => 'Consulte saldos, filtros e historico de movimentacoes.',
+        'href' => 'extrato.php',
+        'icone' => 'EX',
+        'botao' => 'btn-primary',
+    ],
+    [
+        'titulo' => 'Inventario Fisico',
+        'descricao' => 'Abra a rotina de contagem e conferencia fisica.',
+        'href' => 'inventario.php',
+        'icone' => 'IF',
+        'botao' => 'btn-info',
+    ],
+    [
+        'titulo' => 'Historico de Inventarios',
+        'descricao' => 'Veja inventarios finalizados e resultados anteriores.',
+        'href' => 'inventarios.php',
+        'icone' => 'HI',
+        'botao' => 'btn-secondary',
+    ],
+    [
+        'titulo' => 'Conciliar Tesouraria',
+        'descricao' => 'Compare lancamentos e marque conciliacoes.',
+        'href' => 'conciliar.php',
+        'icone' => 'CT',
+        'botao' => 'btn-warning',
+    ],
+];
 ?>
 
-<div class="card shadow-sm">
-    <div class="card-body">
-
-        <h4>Tesouraria</h4>
-        <p class="text-muted">Selecione uma opção</p>
-
-        <div class="row mt-3">
-
-            <div class="col-md-4 mb-2">
-                <a href="movimentar.php" class="btn btn-success w-100">
-                    💰 Movimentação
-                </a>
+<section class="mb-4">
+    <div class="p-4 p-lg-5 bg-white border rounded-2 shadow-sm">
+        <div class="row align-items-center g-3">
+            <div class="col-lg-8">
+                <span class="badge text-bg-success mb-3">Modulo</span>
+                <h1 class="h3 fw-bold mb-2">Tesouraria</h1>
+                <p class="text-muted mb-0">Acesse as rotinas de movimentacao, extrato, inventario e conciliacao.</p>
             </div>
-
-            <div class="col-md-4 mb-2">
-                <a href="extrato.php" class="btn btn-primary w-100">
-                    📊 Extrato
-                </a>
+            <div class="col-lg-4 text-lg-end">
+                <a href="../../index.php" class="btn btn-outline-secondary">Voltar ao painel</a>
             </div>
-
-            <div class="col-md-4 mb-2">
-                <a href="inventario.php" class="btn btn-info w-100">
-                    📦 Inventário Físico
-                </a>
-            </div>
-      
-            <div class="col-md-4 mb-2">
-                <a href="inventarios.php" class="btn btn-secondary w-100">
-                    📋 Histórico de Inventários
-                </a>
-            </div>
-
-            <!-- NOVO BOTÃO DE CONCILIAÇÃO -->
-            <div class="col-md-4 mb-2">
-                <a href="conciliar.php" class="btn btn-warning w-100">
-                    🔄 Conciliar Tesouraria
-                </a>
-            </div>
-
         </div>
-
     </div>
-</div>
+</section>
 
-<style>
-.btn-voltar-fixo {
-    position: fixed;
-    bottom: 15px;
-    left: 15px;
-    z-index: 9999;
-}
-
-@media (max-width: 768px) {
-    .btn-voltar-fixo {
-        position: static;
-        width: 100%;
-        margin-top: 15px;
-    }
-}
-</style>
-
-<div class="btn-voltar-fixo">
-    <button onclick="window.location.href='../../index.php'" class="btn btn-secondary">
-        ← Voltar
-    </button>
-</div>
+<section>
+    <div class="row g-3">
+        <?php foreach ($opcoes as $opcao): ?>
+            <div class="col-md-6 col-xl-4">
+                <div class="card module-card h-100 shadow-sm">
+                    <div class="card-body d-flex flex-column">
+                        <div class="d-flex align-items-start gap-3 mb-3">
+                            <div class="module-icon"><?= htmlspecialchars($opcao['icone']) ?></div>
+                            <div>
+                                <h2 class="h6 fw-bold mb-1"><?= htmlspecialchars($opcao['titulo']) ?></h2>
+                                <p class="text-muted small mb-0"><?= htmlspecialchars($opcao['descricao']) ?></p>
+                            </div>
+                        </div>
+                        <a href="<?= htmlspecialchars($opcao['href']) ?>" class="btn <?= htmlspecialchars($opcao['botao']) ?> mt-auto w-100">Acessar</a>
+                    </div>
+                </div>
+            </div>
+        <?php endforeach; ?>
+    </div>
+</section>
 
 <?php require '../../layout/footer.php'; ?>

@@ -1,111 +1,104 @@
 <?php
 require '../../config/auth.php';
 require '../../layout/header.php';
+
+$comercial = [
+    [
+        'titulo' => 'SIPAG POS',
+        'descricao' => 'Debito/Credito - D+1 CMCONTADOR 3 | D+30 CMCONTADOR 2',
+        'href' => 'importar_sipag_pos_comercial.php',
+        'botao' => 'btn-primary',
+    ],
+    [
+        'titulo' => 'SIPAG PIX',
+        'descricao' => 'Recebimentos PIX comercial - CMCONTADOR 12',
+        'href' => 'importar_sipag_pix_comercial.php',
+        'botao' => 'btn-primary',
+    ],
+];
+
+$outros = [
+    [
+        'titulo' => 'SIPAG POS',
+        'descricao' => 'Debito/Credito - D+1 CMCONTADOR 6 | D+30 CMCONTADOR 14',
+        'href' => 'importar_sipag_pos_outros.php',
+        'botao' => 'btn-success',
+    ],
+    [
+        'titulo' => 'SIPAG PIX',
+        'descricao' => 'Recebimentos PIX outros - CMCONTADOR 7',
+        'href' => 'importar_sipag_pix_outros.php',
+        'botao' => 'btn-success',
+    ],
+    [
+        'titulo' => 'PAGSEGURO PIX',
+        'descricao' => 'Importacao PagSeguro PIX - CMCONTADOR 7',
+        'href' => 'importar_pagseguro.php',
+        'botao' => 'btn-success',
+    ],
+];
 ?>
 
-<div class="card shadow-sm">
-
-    <div class="card-header">
-        <div class="d-flex justify-content-between align-items-center">
-            <div>
-                <h5>📥 Importação de Recebimentos</h5>
-                <small>Selecione o tipo de arquivo para iniciar a importação</small>
+<section class="mb-4">
+    <div class="p-4 p-lg-5 bg-white border rounded-2 shadow-sm">
+        <div class="row align-items-center g-3">
+            <div class="col-lg-7">
+                <span class="badge text-bg-warning mb-3">Recebimentos</span>
+                <h1 class="h3 fw-bold mb-2">Importacao de Recebimentos</h1>
+                <p class="text-muted mb-0">Selecione o tipo de arquivo para iniciar a importacao ou abrir a conciliacao.</p>
             </div>
+            <div class="col-lg-5">
+                <div class="d-flex flex-wrap gap-2 justify-content-lg-end">
+                    <a href="menu_fechamento.php" class="btn btn-outline-secondary">Voltar ao modulo</a>
+                    <a href="validar_cm.php" class="btn btn-purple">Validar Clientes</a>
+                    <a href="conciliar_recebimentos.php" class="btn btn-dark">Conciliacao</a>
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
 
-            <div class="d-flex gap-2">
-                <!-- BOTÃO VOLTAR -->
-                <a href="menu_fechamento.php" class="btn btn-secondary">
-                    ← Voltar
-                </a>
-
-                <!-- 🟣 NOVO BOTÃO -->
-                <a href="validar_cm.php" class="btn btn-purple">
-                    🟣 Validar Clientes
-                </a>
-
-                <!-- BOTÃO DE CONCILIAÇÃO -->
-                <a href="conciliar_recebimentos.php" class="btn btn-dark">
-                    🔗 Conciliação
-                </a>
+<div class="row g-3">
+    <div class="col-lg-6">
+        <div class="card h-100 shadow-sm">
+            <div class="card-header">
+                <h2 class="h5 mb-0">Comercial</h2>
+            </div>
+            <div class="card-body">
+                <div class="row g-3">
+                    <?php foreach ($comercial as $item): ?>
+                        <div class="col-md-6 col-lg-12">
+                            <div class="border p-3 rounded h-100">
+                                <h3 class="h6 fw-bold mb-1"><?= htmlspecialchars($item['titulo']) ?></h3>
+                                <p class="text-muted small mb-3"><?= htmlspecialchars($item['descricao']) ?></p>
+                                <a href="<?= htmlspecialchars($item['href']) ?>" class="btn <?= htmlspecialchars($item['botao']) ?> w-100">Abrir Importacao</a>
+                            </div>
+                        </div>
+                    <?php endforeach; ?>
+                </div>
             </div>
         </div>
     </div>
 
-    <div class="card-body">
-
-        <div class="row">
-
-            <!-- 🔵 COMERCIAL -->
-            <div class="col-md-6">
-
-                <h5 class="mb-3">📦 COMERCIAL</h5>
-
-                <!-- SIPAG POS -->
-                <div class="mb-3 border p-3 rounded">
-                    <strong>📘 SIPAG POS (Débito/Crédito)</strong><br>
-                    <small>D+1 → CMCONTADOR 3 | D+30 → CMCONTADOR 2</small>
-
-                    <a href="importar_sipag_pos_comercial.php" 
-                       class="btn btn-primary w-100 mt-2">
-                       Abrir Importação
-                    </a>
-                </div>
-
-                <!-- SIPAG PIX -->
-                <div class="border p-3 rounded">
-                    <strong>🟣 SIPAG PIX</strong><br>
-                    <small>CMCONTADOR 12</small>
-
-                    <a href="importar_sipag_pix_comercial.php" 
-                       class="btn btn-primary w-100 mt-2">
-                       Abrir Importação
-                    </a>
-                </div>
-
+    <div class="col-lg-6">
+        <div class="card h-100 shadow-sm">
+            <div class="card-header">
+                <h2 class="h5 mb-0">Outros</h2>
             </div>
-
-            <!-- 🟢 OUTROS -->
-            <div class="col-md-6">
-
-                <h5 class="mb-3">📦 OUTROS</h5>
-
-                <!-- SIPAG POS -->
-                <div class="mb-3 border p-3 rounded">
-                    <strong>🟢 SIPAG POS (Débito/Crédito)</strong><br>
-                    <small>D+1 → CMCONTADOR 6 | D+30 → CMCONTADOR 14</small>
-
-                    <a href="importar_sipag_pos_outros.php" 
-                       class="btn btn-success w-100 mt-2">
-                       Abrir Importação
-                    </a>
+            <div class="card-body">
+                <div class="row g-3">
+                    <?php foreach ($outros as $item): ?>
+                        <div class="col-md-6 col-lg-12">
+                            <div class="border p-3 rounded h-100">
+                                <h3 class="h6 fw-bold mb-1"><?= htmlspecialchars($item['titulo']) ?></h3>
+                                <p class="text-muted small mb-3"><?= htmlspecialchars($item['descricao']) ?></p>
+                                <a href="<?= htmlspecialchars($item['href']) ?>" class="btn <?= htmlspecialchars($item['botao']) ?> w-100">Abrir Importacao</a>
+                            </div>
+                        </div>
+                    <?php endforeach; ?>
                 </div>
-
-                <!-- SIPAG PIX -->
-                <div class="mb-3 border p-3 rounded">
-                    <strong>🟡 SIPAG PIX</strong><br>
-                    <small>CMCONTADOR 7</small>
-
-                    <a href="importar_sipag_pix_outros.php" 
-                       class="btn btn-success w-100 mt-2">
-                       Abrir Importação
-                    </a>
-                </div>
-
-                <!-- PAGSEGURO -->
-                <div class="border p-3 rounded">
-                    <strong>🟠 PAGSEGURO PIX</strong><br>
-                    <small>CMCONTADOR 7</small>
-
-                    <a href="importar_pagseguro.php" 
-                       class="btn btn-success w-100 mt-2">
-                       Abrir Importação
-                    </a>
-                </div>
-
             </div>
-
         </div>
-
     </div>
 </div>
 
