@@ -39,11 +39,13 @@ $homeUrlJson = htmlspecialchars(json_encode($homeUrl), ENT_QUOTES, 'UTF-8');
         body {
             background: var(--sd-page);
             color: #1f2937;
+            overflow-x: hidden;
         }
 
         .navbar-brand {
             font-weight: 700;
             letter-spacing: 0;
+            min-width: 0;
         }
 
         .app-topbar {
@@ -148,7 +150,8 @@ $homeUrlJson = htmlspecialchars(json_encode($homeUrl), ENT_QUOTES, 'UTF-8');
         .table-responsive {
             border: 1px solid var(--sd-border);
             border-radius: .5rem;
-            overflow: hidden;
+            overflow-x: auto;
+            -webkit-overflow-scrolling: touch;
         }
 
         .table thead th,
@@ -203,9 +206,35 @@ $homeUrlJson = htmlspecialchars(json_encode($homeUrl), ENT_QUOTES, 'UTF-8');
             padding-bottom: 2rem;
         }
 
+        img,
+        video,
+        canvas,
+        iframe {
+            max-width: 100%;
+        }
+
+        input,
+        select,
+        textarea,
+        button {
+            max-width: 100%;
+        }
+
         @media (max-width: 991.98px) {
+            .app-topbar .container-fluid {
+                gap: .5rem;
+            }
+
             .app-topbar .navbar-brand {
                 font-size: 1rem;
+                flex: 1 1 auto;
+                overflow: hidden;
+            }
+
+            .app-topbar .navbar-brand span:last-child {
+                overflow: hidden;
+                text-overflow: ellipsis;
+                white-space: nowrap;
             }
 
             .card-header .d-flex,
@@ -213,6 +242,128 @@ $homeUrlJson = htmlspecialchars(json_encode($homeUrl), ENT_QUOTES, 'UTF-8');
                 align-items: flex-start !important;
                 flex-direction: column;
                 gap: .75rem;
+                width: 100%;
+            }
+
+            .card-header .d-flex > div,
+            .card-header.d-flex > div {
+                width: 100%;
+            }
+
+            .card-header .btn,
+            .card-header form,
+            .card-header form .form-control,
+            .card-header form .form-select {
+                width: 100%;
+            }
+
+            .card-header form.d-flex,
+            .card-body form.d-flex,
+            .card-body > .d-flex,
+            .page-shell form.d-flex {
+                align-items: stretch !important;
+                flex-direction: column;
+                gap: .5rem !important;
+            }
+
+            .page-shell .d-flex.flex-wrap .btn {
+                flex: 1 1 100%;
+            }
+
+            .user-chip {
+                width: 100%;
+                text-align: center;
+            }
+        }
+
+        @media (max-width: 767.98px) {
+            .page-shell {
+                width: 100%;
+                max-width: 100%;
+                padding: 1rem .75rem 1.5rem;
+            }
+
+            .card {
+                border-radius: .5rem;
+            }
+
+            .card-body,
+            .card-header {
+                padding: 1rem;
+            }
+
+            .table-responsive {
+                margin-right: -1rem;
+                margin-left: -1rem;
+                border-right: 0;
+                border-left: 0;
+                border-radius: 0;
+            }
+
+            .table-responsive > .table,
+            .card-body.table-responsive > .table {
+                min-width: 680px;
+            }
+
+            .btn,
+            .form-control,
+            .form-select {
+                min-height: 42px;
+            }
+
+            .page-shell .row {
+                --bs-gutter-x: .75rem;
+            }
+
+            .module-icon {
+                width: 40px;
+                height: 40px;
+                flex: 0 0 40px;
+            }
+        }
+
+        @media (max-width: 575.98px) {
+            .btn-back-top {
+                padding-right: .5rem;
+                padding-left: .5rem;
+            }
+
+            .app-topbar .navbar-brand span:first-child {
+                width: 30px !important;
+                height: 30px !important;
+                flex: 0 0 30px;
+            }
+
+            .app-topbar .navbar-brand span:last-child {
+                font-size: .95rem;
+            }
+
+            .navbar-toggler {
+                padding: .25rem .5rem;
+            }
+
+            .card-header h1,
+            .card-header h2,
+            .card-header h3,
+            .card-header h4,
+            .card-header h5,
+            .page-shell h1.h3,
+            .page-shell .h3 {
+                font-size: 1.25rem;
+            }
+
+            .page-shell .display-6 {
+                font-size: 1.8rem;
+            }
+
+            .page-shell .btn {
+                width: 100%;
+            }
+        }
+
+        @media (max-width: 380px) {
+            .app-topbar .navbar-brand span:last-child {
+                display: none;
             }
         }
     </style>

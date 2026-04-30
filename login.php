@@ -95,6 +95,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             background:
                 linear-gradient(135deg, rgba(15, 45, 104, .94), rgba(22, 65, 148, .82)),
                 var(--sd-page);
+            overflow-x: hidden;
         }
 
         .login-shell {
@@ -143,6 +144,52 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             background: #fff;
             border-color: #fff;
             color: var(--sd-primary-dark);
+        }
+
+        @media (max-width: 991.98px) {
+            .brand-panel {
+                text-align: center;
+            }
+
+            .brand-panel .d-flex {
+                justify-content: center;
+            }
+        }
+
+        @media (max-width: 575.98px) {
+            .login-shell {
+                align-items: flex-start !important;
+                padding-top: 4.25rem !important;
+            }
+
+            .login-back {
+                right: 1rem;
+                width: calc(100% - 2rem);
+            }
+
+            .brand-mark {
+                width: 46px;
+                height: 46px;
+                margin-bottom: 1rem !important;
+            }
+
+            .brand-panel h1 {
+                font-size: 1.9rem;
+            }
+
+            .brand-panel .lead {
+                font-size: 1rem;
+            }
+
+            .login-card .card-body {
+                padding: 1.25rem !important;
+            }
+
+            .form-control,
+            .form-select,
+            .btn {
+                min-height: 44px;
+            }
         }
     </style>
 </head>
