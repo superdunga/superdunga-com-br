@@ -1,6 +1,6 @@
 <?php
 
-$host = "localhost";
+$host = "superdunga.com.br";
 $db   = "etelema_superdunga";
 $user = "etelema_superdunga_user";
 $pass = "@superdunga2026";

@@ -5,6 +5,7 @@ Thumbs.db
 # Logs
 error_log
 *.log
+.local/
 
 # Arquivos temporários
 *.tmp
