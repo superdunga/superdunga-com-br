@@ -83,7 +83,8 @@ if (empty($crs)) {
             c.DTEMISSAO,
             c.VLRPARCELA,
             c.CMCONTADOR,
-            ABS(c.VLRPARCELA - ?) AS diferenca
+            ABS(c.VLRPARCELA - ?) AS diferenca,
+            ABS(TIMESTAMPDIFF(MINUTE, ?, c.DTLANC)) AS distancia_minutos
         FROM armazem_cr001 c
         WHERE c.recebimento_id IS NULL
           AND c.CMCONTADOR <> 9
@@ -92,12 +93,13 @@ if (empty($crs)) {
           AND c.DTLANC BETWEEN DATE_SUB(?, INTERVAL 5 DAY)
                            AND DATE_ADD(?, INTERVAL 5 DAY)
 
-        ORDER BY diferenca ASC, c.DTLANC ASC
+        ORDER BY diferenca ASC, distancia_minutos ASC, c.DTLANC ASC
         LIMIT 15
     ");
 
     $stmtCr->execute([
         $rec['valor_bruto'],
+        $rec['data_venda'],
         $rec['data_venda'],
         $rec['data_venda']
     ]);
@@ -105,7 +107,7 @@ if (empty($crs)) {
     $crs = $stmtCr->fetchAll(PDO::FETCH_ASSOC);
 }
 
-if ($modoFallback) {
+if ($modoFallback && empty($crs)) {
     $stmtCr = $pdo_master->prepare("
         SELECT
             c.CRCONTADOR,
@@ -119,7 +121,6 @@ if ($modoFallback) {
         WHERE c.recebimento_id IS NULL
           AND c.CMCONTADOR <> 9
           AND (c.validado IS NULL OR c.validado <> 'S')
-          AND c.CMCONTADOR = ?
           AND ABS(c.VLRPARCELA) = ABS(?)
         ORDER BY distancia_minutos ASC, c.DTLANC ASC
         LIMIT 15
@@ -127,7 +128,6 @@ if ($modoFallback) {
 
     $stmtCr->execute([
         $rec['data_venda'],
-        $rec['CMCONTADOR'],
         $rec['valor_bruto']
     ]);
 
