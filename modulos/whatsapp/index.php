@@ -65,7 +65,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
             if ($id > 0) {
                 $stmt = $pdo_master->prepare("UPDATE whatsapp_destinatarios SET nome = ?, tipo = ?, numero = ?, ativo = ? WHERE id = ?");
-                $stmt->execute([...$dados, $id]);
+                $dados[] = $id;
+                $stmt->execute($dados);
                 $alerta = 'Destinatario atualizado.';
             } else {
                 $stmt = $pdo_master->prepare("INSERT INTO whatsapp_destinatarios (nome, tipo, numero, ativo) VALUES (?, ?, ?, ?)");
