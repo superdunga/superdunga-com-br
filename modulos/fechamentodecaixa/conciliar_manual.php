@@ -42,6 +42,7 @@ $stmtCr = $pdo_master->prepare("
     SELECT 
         c.CRCONTADOR,
         c.DTLANC,
+        c.DTEMISSAO,
         c.VLRPARCELA,
         c.CMCONTADOR
     FROM armazem_cr001 c
@@ -79,6 +80,7 @@ if (empty($crs)) {
         SELECT 
             c.CRCONTADOR,
             c.DTLANC,
+            c.DTEMISSAO,
             c.VLRPARCELA,
             c.CMCONTADOR,
             ABS(c.VLRPARCELA - ?) AS diferenca
@@ -87,8 +89,8 @@ if (empty($crs)) {
           AND c.CMCONTADOR <> 9
           AND (c.validado IS NULL OR c.validado <> 'S')
 
-          AND c.DTLANC BETWEEN DATE_SUB(?, INTERVAL 2 DAY)
-                           AND DATE_ADD(?, INTERVAL 2 DAY)
+          AND c.DTLANC BETWEEN DATE_SUB(?, INTERVAL 5 DAY)
+                           AND DATE_ADD(?, INTERVAL 5 DAY)
 
         ORDER BY diferenca ASC, c.DTLANC ASC
         LIMIT 15
@@ -101,6 +103,39 @@ if (empty($crs)) {
     ]);
 
     $crs = $stmtCr->fetchAll(PDO::FETCH_ASSOC);
+}
+
+if ($modoFallback) {
+    $stmtCr = $pdo_master->prepare("
+        SELECT
+            c.CRCONTADOR,
+            c.DTLANC,
+            c.DTEMISSAO,
+            c.VLRPARCELA,
+            c.CMCONTADOR,
+            0 AS diferenca,
+            ABS(TIMESTAMPDIFF(MINUTE, ?, c.DTLANC)) AS distancia_minutos
+        FROM armazem_cr001 c
+        WHERE c.recebimento_id IS NULL
+          AND c.CMCONTADOR <> 9
+          AND (c.validado IS NULL OR c.validado <> 'S')
+          AND c.CMCONTADOR = ?
+          AND ABS(c.VLRPARCELA) = ABS(?)
+        ORDER BY distancia_minutos ASC, c.DTLANC ASC
+        LIMIT 15
+    ");
+
+    $stmtCr->execute([
+        $rec['data_venda'],
+        $rec['CMCONTADOR'],
+        $rec['valor_bruto']
+    ]);
+
+    $crsFallbackValorCm = $stmtCr->fetchAll(PDO::FETCH_ASSOC);
+
+    if (!empty($crsFallbackValorCm)) {
+        $crs = $crsFallbackValorCm;
+    }
 }
 ?>
 
@@ -149,6 +184,7 @@ if (empty($crs)) {
                     <th>CRCONTADOR</th>
                     <th>CM</th>
                     <th>Data</th>
+                    <th>Data do Movimento</th>
                     <th>Valor</th>
 
                     <?php if ($modoFallback): ?>
@@ -163,7 +199,7 @@ if (empty($crs)) {
 
                 <?php if (empty($crs)): ?>
                     <tr>
-                        <td colspan="6" class="text-center text-muted">
+                        <td colspan="7" class="text-center text-muted">
                             Nenhum lançamento encontrado.
                         </td>
                     </tr>
@@ -177,6 +213,8 @@ if (empty($crs)) {
                     <td><?= $c['CMCONTADOR'] ?></td>
 
                     <td><?= date('d/m/Y H:i', strtotime($c['DTLANC'])) ?></td>
+
+                    <td><?= !empty($c['DTEMISSAO']) ? date('d/m/Y', strtotime($c['DTEMISSAO'])) : '-' ?></td>
 
                     <td>
                         R$ <?= number_format($c['VLRPARCELA'],2,',','.') ?>

@@ -73,12 +73,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['arquivo'])) {
 
                 if (stripos($status, 'Processada') === false) continue;
 
-                if (stripos($forma_pagamento, 'Débito') !== false) {
+                if (stripos($forma_pagamento, 'bito') !== false) {
                     $CMCONTADOR = 3;
-                } elseif (stripos($forma_pagamento, 'Crédito') !== false) {
-                    $CMCONTADOR = 2;
                 } else {
-                    continue;
+                    $CMCONTADOR = 2;
                 }
 
                 $valor_bruto    = tratarValor($valor_bruto);

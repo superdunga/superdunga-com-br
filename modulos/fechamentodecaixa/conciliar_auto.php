@@ -5,15 +5,30 @@ error_reporting(E_ALL);
 require '../../config/auth.php';
 require '../../config/conexao.php';
 
+$modo = $_GET['modo'] ?? 'seguro';
 $data = $_GET['data'] ?? date('Y-m-d');
+$lote = (int)($_GET['lote'] ?? 50);
+$totalAnterior = (int)($_GET['total'] ?? 0);
+
+if (!in_array($modo, ['seguro', 'aproximado'], true)) {
+    $modo = 'seguro';
+}
+
+if ($lote < 1) {
+    $lote = 50;
+}
+
+if ($lote > 200) {
+    $lote = 200;
+}
 
 $inicio = date('Y-m-d 07:00:00', strtotime($data));
 $fim    = date('Y-m-d 03:00:00', strtotime($data . ' +1 day'));
 
 /* =========================================================
-   1. MATCH SEGURO (EXATO)
+   MATCH SEGURO (EXATO) - TODOS OS REGISTROS PENDENTES
 ========================================================= */
-$stmtSeguro = $pdo_master->prepare("
+$sqlSeguro = "
     WITH rec AS (
         SELECT
             r.id,
@@ -28,10 +43,11 @@ $stmtSeguro = $pdo_master->prepare("
                 PARTITION BY DATE_FORMAT(r.data_venda, '%Y-%m-%d %H:%i'), r.valor_bruto
             ) AS qtd_rec
         FROM armazem_conciliacao_recebimentos r
-        WHERE r.data_venda BETWEEN ? AND ?
-          AND NOT EXISTS (
-              SELECT 1 FROM armazem_cr001 cx WHERE cx.recebimento_id = r.id
-          )
+        WHERE NOT EXISTS (
+            SELECT 1
+            FROM armazem_cr001 cx
+            WHERE cx.recebimento_id = r.id
+        )
     ),
     cr AS (
         SELECT
@@ -47,8 +63,7 @@ $stmtSeguro = $pdo_master->prepare("
                 PARTITION BY DATE_FORMAT(c.DTLANC, '%Y-%m-%d %H:%i'), c.VLRPARCELA
             ) AS qtd_cr
         FROM armazem_cr001 c
-        WHERE c.DTLANC BETWEEN ? AND ?
-          AND c.recebimento_id IS NULL
+        WHERE c.recebimento_id IS NULL
           AND (c.validado IS NULL OR c.validado <> 'S')
     )
     SELECT r.id rec_id, r.CMCONTADOR, c.CRCONTADOR
@@ -58,50 +73,78 @@ $stmtSeguro = $pdo_master->prepare("
      AND r.dt_ref = c.dt_ref
      AND r.rn = c.rn
     WHERE r.qtd_rec = c.qtd_cr
-");
+    ORDER BY r.dt_ref ASC, r.id ASC, c.CRCONTADOR ASC
+    LIMIT $lote
+";
 
-$stmtSeguro->execute([$inicio, $fim, $inicio, $fim]);
-$seguros = $stmtSeguro->fetchAll(PDO::FETCH_ASSOC);
+$seguros = [];
+
+if ($modo === 'seguro') {
+    $stmtSeguro = $pdo_master->prepare($sqlSeguro);
+    $stmtSeguro->execute();
+    $seguros = $stmtSeguro->fetchAll(PDO::FETCH_ASSOC);
+}
 
 /* =========================================================
-   2. MATCH APROXIMADO (±1 MINUTO)
+   MATCH APROXIMADO (+/- 5 MINUTOS) - DATA FILTRADA
 ========================================================= */
-$stmtAprox = $pdo_master->prepare("
-    SELECT 
+$sqlAproximado = "
+    SELECT
         r.id AS rec_id,
         r.CMCONTADOR,
         c.CRCONTADOR
     FROM armazem_conciliacao_recebimentos r
     JOIN armazem_cr001 c
       ON ABS(r.valor_bruto) = ABS(c.VLRPARCELA)
-     AND ABS(TIMESTAMPDIFF(MINUTE, r.data_venda, c.DTLANC)) <= 1
+     AND ABS(TIMESTAMPDIFF(MINUTE, r.data_venda, c.DTLANC)) <= 5
+     AND DATE_FORMAT(r.data_venda, '%Y-%m-%d %H:%i') <> DATE_FORMAT(c.DTLANC, '%Y-%m-%d %H:%i')
     WHERE r.data_venda BETWEEN ? AND ?
       AND c.DTLANC BETWEEN ? AND ?
       AND c.recebimento_id IS NULL
       AND (c.validado IS NULL OR c.validado <> 'S')
       AND NOT EXISTS (
-          SELECT 1 FROM armazem_cr001 cx WHERE cx.recebimento_id = r.id
+          SELECT 1
+          FROM armazem_cr001 cx
+          WHERE cx.recebimento_id = r.id
       )
-");
+";
 
-$stmtAprox->execute([$inicio, $fim, $inicio, $fim]);
-$aprox = $stmtAprox->fetchAll(PDO::FETCH_ASSOC);
+$aprox = [];
+
+if ($modo === 'aproximado') {
+    $stmtAprox = $pdo_master->prepare($sqlAproximado);
+    $stmtAprox->execute([$inicio, $fim, $inicio, $fim]);
+    $aprox = $stmtAprox->fetchAll(PDO::FETCH_ASSOC);
+}
 
 /* =========================================================
-   FUNÇÃO DE UPDATE SEGURA
+   FUNCAO DE UPDATE SEGURA
 ========================================================= */
 function conciliar($pdo, $rec_id, $cm, $crcontador) {
 
-    // evita sobrescrever
+    // Evita reutilizar o mesmo CR001.
     $check = $pdo->prepare("
-        SELECT recebimento_id 
-        FROM armazem_cr001 
+        SELECT recebimento_id
+        FROM armazem_cr001
         WHERE CRCONTADOR = ?
     ");
     $check->execute([$crcontador]);
     $existe = $check->fetch(PDO::FETCH_ASSOC);
 
     if (!empty($existe['recebimento_id'])) {
+        return false;
+    }
+
+    // Evita reutilizar o mesmo recebivel em outro CR001.
+    $checkRec = $pdo->prepare("
+        SELECT 1
+        FROM armazem_cr001
+        WHERE recebimento_id = ?
+        LIMIT 1
+    ");
+    $checkRec->execute([$rec_id]);
+
+    if ($checkRec->fetchColumn()) {
         return false;
     }
 
@@ -116,26 +159,39 @@ function conciliar($pdo, $rec_id, $cm, $crcontador) {
 }
 
 /* =========================================================
-   EXECUÇÃO
+   EXECUCAO
 ========================================================= */
 $total = 0;
+$encontrados = count($seguros) + count($aprox);
 
-/* --- 1. EXECUTA SEGURO PRIMEIRO --- */
 foreach ($seguros as $m) {
     if (conciliar($pdo_master, $m['rec_id'], $m['CMCONTADOR'], $m['CRCONTADOR'])) {
         $total++;
     }
 }
 
-/* --- 2. EXECUTA APROXIMADO DEPOIS --- */
 foreach ($aprox as $m) {
     if (conciliar($pdo_master, $m['rec_id'], $m['CMCONTADOR'], $m['CRCONTADOR'])) {
         $total++;
     }
 }
 
-/* =========================================================
-   REDIRECIONA
-========================================================= */
-header("Location: conciliar_recebimentos.php?data=".$data."&auto=1&qtd=".$total);
+$totalGeral = $totalAnterior + $total;
+$temMais = $modo === 'seguro' && count($seguros) === $lote && $total > 0;
+
+$params = [
+    'data' => $data,
+    'auto' => 1,
+    'modo' => $modo,
+    'qtd' => $total,
+    'total' => $totalGeral,
+    'lote' => $lote,
+    'encontrados' => $encontrados,
+];
+
+if ($temMais) {
+    $params['continuar'] = 1;
+}
+
+header("Location: conciliar_recebimentos.php?" . http_build_query($params));
 exit;

@@ -17,7 +17,7 @@ $fim    = date('Y-m-d 03:00:00', strtotime($data . ' +1 day'));
    CONCILIADOS
 ========================================================= */
 $stmtOk = $pdo_master->prepare("
-    SELECT 
+    SELECT
         r.id AS rec_id,
         r.data_venda,
         r.valor_bruto,
@@ -101,10 +101,10 @@ $stmtSeguro->execute([$inicio, $fim, $inicio, $fim]);
 $matchSeguro = $stmtSeguro->fetchAll(PDO::FETCH_ASSOC);
 
 /* =========================================================
-   MATCH APROXIMADO - VALOR + TOLERÂNCIA DE 1 MINUTO
+   MATCH APROXIMADO - VALOR + TOLERANCIA DE 5 MINUTOS
 ========================================================= */
 $stmtAprox = $pdo_master->prepare("
-    SELECT 
+    SELECT
         r.id AS rec_id,
         r.data_venda,
         r.valor_bruto,
@@ -116,7 +116,7 @@ $stmtAprox = $pdo_master->prepare("
     FROM armazem_conciliacao_recebimentos r
     INNER JOIN armazem_cr001 c
         ON ABS(r.valor_bruto) = ABS(c.VLRPARCELA)
-       AND ABS(TIMESTAMPDIFF(MINUTE, r.data_venda, c.DTLANC)) <= 1
+       AND ABS(TIMESTAMPDIFF(MINUTE, r.data_venda, c.DTLANC)) <= 5
        AND DATE_FORMAT(r.data_venda, '%Y-%m-%d %H:%i') <> DATE_FORMAT(c.DTLANC, '%Y-%m-%d %H:%i')
     WHERE r.data_venda BETWEEN ? AND ?
       AND c.DTLANC BETWEEN ? AND ?
@@ -192,7 +192,7 @@ $matchDuplicado = $stmtDup->fetchAll(PDO::FETCH_ASSOC);
    RECEBÍVEIS NÃO CONCILIADOS
 ========================================================= */
 $stmtReceb = $pdo_master->prepare("
-    SELECT 
+    SELECT
         r.id,
         r.data_venda,
         r.valor_bruto,
@@ -208,7 +208,7 @@ $stmtReceb = $pdo_master->prepare("
           SELECT 1
           FROM armazem_cr001 c
           WHERE ABS(r.valor_bruto) = ABS(c.VLRPARCELA)
-            AND ABS(TIMESTAMPDIFF(MINUTE, r.data_venda, c.DTLANC)) <= 1
+            AND ABS(TIMESTAMPDIFF(MINUTE, r.data_venda, c.DTLANC)) <= 5
             AND c.DTLANC BETWEEN ? AND ?
             AND c.recebimento_id IS NULL
             AND (c.validado IS NULL OR c.validado <> 'S')
@@ -222,7 +222,7 @@ $recebimentos = $stmtReceb->fetchAll(PDO::FETCH_ASSOC);
    CR001 NÃO CONCILIADOS
 ========================================================= */
 $stmtCr = $pdo_master->prepare("
-    SELECT 
+    SELECT
         c.CRCONTADOR,
         c.DTLANC,
         c.VLRPARCELA,
@@ -235,7 +235,7 @@ $stmtCr = $pdo_master->prepare("
           SELECT 1
           FROM armazem_conciliacao_recebimentos r
           WHERE ABS(r.valor_bruto) = ABS(c.VLRPARCELA)
-            AND ABS(TIMESTAMPDIFF(MINUTE, r.data_venda, c.DTLANC)) <= 1
+            AND ABS(TIMESTAMPDIFF(MINUTE, r.data_venda, c.DTLANC)) <= 5
             AND r.data_venda BETWEEN ? AND ?
             AND NOT EXISTS (
                 SELECT 1
@@ -254,9 +254,27 @@ $cr001 = $stmtCr->fetchAll(PDO::FETCH_ASSOC);
         <h5>Conciliação de Recebimentos</h5>
 
         <?php if (!empty($_GET['auto'])): ?>
+            <?php
+                $modoAuto = ($_GET['modo'] ?? '') === 'aproximado' ? 'aproximada' : 'segura';
+                $qtdAuto = (int)($_GET['qtd'] ?? 0);
+                $totalAuto = (int)($_GET['total'] ?? $qtdAuto);
+                $loteAuto = (int)($_GET['lote'] ?? 50);
+                $continuarAuto = !empty($_GET['continuar']) && ($_GET['modo'] ?? '') === 'seguro';
+            ?>
             <div class="alert alert-success mt-2 mb-0">
-                ✔ Conciliação automática executada!
+                Conciliacao <?= $modoAuto ?> executada: <?= $qtdAuto ?> registro(s) atualizado(s) neste lote.
+                Total nesta execucao: <?= $totalAuto ?>.
+
+                <?php if ($continuarAuto): ?>
+                    <a
+                        href="conciliar_auto.php?modo=seguro&data=<?= urlencode($data) ?>&lote=<?= $loteAuto ?>&total=<?= $totalAuto ?>"
+                        class="btn btn-sm btn-success ms-2"
+                    >
+                        Continuar proximo lote
+                    </a>
+                <?php endif; ?>
             </div>
+
         <?php endif; ?>
 
         <form method="GET" class="row mt-2">
@@ -269,8 +287,14 @@ $cr001 = $stmtCr->fetchAll(PDO::FETCH_ASSOC);
             </div>
 
             <div class="col-md-2">
-                <a href="conciliar_auto.php?data=<?= urlencode($data) ?>" class="btn btn-success w-100">
-                    ⚡ Automático
+                <a href="conciliar_auto.php?modo=seguro&data=<?= urlencode($data) ?>&lote=50" class="btn btn-success w-100">
+                    Conciliar seguros
+                </a>
+            </div>
+
+            <div class="col-md-2">
+                <a href="conciliar_auto.php?modo=aproximado&data=<?= urlencode($data) ?>" class="btn btn-warning w-100">
+                    Conciliar aproximados
                 </a>
             </div>
 
@@ -375,7 +399,7 @@ $cr001 = $stmtCr->fetchAll(PDO::FETCH_ASSOC);
 
 <!-- MATCH APROXIMADO -->
 <div class="card shadow-sm mb-3">
-    <div class="card-header text-white" style="background-color:#6f42c1;">🟣 MATCH APROXIMADO (±1 MINUTO)</div>
+    <div class="card-header text-white" style="background-color:#6f42c1;">MATCH APROXIMADO (+/- 5 MINUTOS)</div>
     <div class="card-body p-2" style="max-height:300px; overflow:auto;">
         <table class="table table-sm table-bordered text-center mb-0">
             <thead>

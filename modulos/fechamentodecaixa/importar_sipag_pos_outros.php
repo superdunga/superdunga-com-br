@@ -84,12 +84,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['arquivo'])) {
                 if (stripos($status, 'Processada') === false) continue;
 
                 // 🔴 CMCONTADOR OUTROS
-                if (stripos($forma_pagamento, 'Débito') !== false) {
+                if (stripos($forma_pagamento, 'bito') !== false) {
                     $CMCONTADOR = 6;
-                } elseif (stripos($forma_pagamento, 'Crédito') !== false) {
-                    $CMCONTADOR = 14;
                 } else {
-                    continue;
+                    $CMCONTADOR = 14;
                 }
 
                 // VALORES
