@@ -47,6 +47,15 @@ $atalhos = [
         'visivel' => true,
     ],
     [
+        'titulo' => 'Mensagens WhatsApp',
+        'descricao' => 'Configure destinatarios, mensagens e acompanhe os envios.',
+        'href' => 'modulos/whatsapp/index.php',
+        'classe' => 'border-success',
+        'botao' => 'btn-success',
+        'icone' => 'WA',
+        'visivel' => $nivelUsuario === 'MASTER',
+    ],
+    [
         'titulo' => 'Gerenciar Usuarios',
         'descricao' => 'Cadastre, edite e revise acessos da equipe.',
         'href' => 'modulos/usuarios/listar.php',

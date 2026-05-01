@@ -11,6 +11,7 @@ $homeUrl = ($appBaseUrl ?: '') . '/index.php';
 $logoutUrl = ($appBaseUrl ?: '') . '/logout.php';
 $tesourariaUrl = ($appBaseUrl ?: '') . '/modulos/tesouraria/menu_tesouraria.php';
 $fechamentoUrl = ($appBaseUrl ?: '') . '/modulos/fechamentodecaixa/menu_fechamento.php';
+$whatsappUrl = ($appBaseUrl ?: '') . '/modulos/whatsapp/index.php';
 $usuariosUrl = ($appBaseUrl ?: '') . '/modulos/usuarios/listar.php';
 $empresasUrl = ($appBaseUrl ?: '') . '/modulos/empresas/listar.php';
 $usuarioNome = $_SESSION['usuario_nome'] ?? 'Usuario';
@@ -400,6 +401,11 @@ $homeUrlJson = htmlspecialchars(json_encode($homeUrl), ENT_QUOTES, 'UTF-8');
                 <li class="nav-item">
                     <a class="nav-link" href="<?= htmlspecialchars($fechamentoUrl) ?>">Fechamento</a>
                 </li>
+                <?php if ($nivelUsuario === 'MASTER'): ?>
+                    <li class="nav-item">
+                        <a class="nav-link" href="<?= htmlspecialchars($whatsappUrl) ?>">WhatsApp</a>
+                    </li>
+                <?php endif; ?>
                 <?php if ($nivelUsuario === 'MASTER' || $nivelUsuario === 'ADMIN'): ?>
                     <li class="nav-item">
                         <a class="nav-link" href="<?= htmlspecialchars($usuariosUrl) ?>">Usuarios</a>
