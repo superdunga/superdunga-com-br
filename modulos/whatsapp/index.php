@@ -77,7 +77,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
         if ($acao === 'salvar_mensagem') {
             $id = (int)($_POST['id'] ?? 0);
+            $categoria = postValue('categoria', 'Geral');
             $titulo = postValue('titulo');
+            $descricao = postValue('descricao');
             $conteudo = trim((string)($_POST['conteudo'] ?? ''));
             $ativo = postValue('ativo_mensagem', 'S') === 'S' ? 'S' : 'N';
 
@@ -86,12 +88,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
 
             if ($id > 0) {
-                $stmt = $pdo_master->prepare("UPDATE whatsapp_mensagens SET titulo = ?, conteudo = ?, ativo = ? WHERE id = ?");
-                $stmt->execute([$titulo, $conteudo, $ativo, $id]);
+                $stmt = $pdo_master->prepare("UPDATE whatsapp_mensagens SET categoria = ?, titulo = ?, descricao = ?, conteudo = ?, ativo = ? WHERE id = ?");
+                $stmt->execute([$categoria, $titulo, $descricao, $conteudo, $ativo, $id]);
                 $alerta = 'Mensagem atualizada.';
             } else {
-                $stmt = $pdo_master->prepare("INSERT INTO whatsapp_mensagens (titulo, conteudo, ativo) VALUES (?, ?, ?)");
-                $stmt->execute([$titulo, $conteudo, $ativo]);
+                $stmt = $pdo_master->prepare("INSERT INTO whatsapp_mensagens (categoria, titulo, descricao, conteudo, ativo) VALUES (?, ?, ?, ?, ?)");
+                $stmt->execute([$categoria, $titulo, $descricao, $conteudo, $ativo]);
                 $alerta = 'Mensagem cadastrada.';
             }
         }
@@ -140,10 +142,30 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $codigo = strtolower(preg_replace('/[^a-zA-Z0-9_]+/', '_', postValue('codigo')));
             $nome = postValue('nome_rotina');
             $descricao = trim((string)($_POST['descricao'] ?? ''));
+            $origemMensagem = postValue('origem_mensagem', 'TEXTO') === 'SISTEMA' ? 'SISTEMA' : 'TEXTO';
+            $geradorSistema = postValue('gerador_sistema');
             $mensagemId = (int)($_POST['mensagem_id'] ?? 0);
             $mensagemId = $mensagemId > 0 ? $mensagemId : null;
+            if ($origemMensagem === 'SISTEMA') {
+                $mensagemId = null;
+                if (!array_key_exists($geradorSistema, whatsappGeradoresSistema())) {
+                    throw new Exception('Selecione um gerador de mensagem do sistema.');
+                }
+            } else {
+                $geradorSistema = null;
+            }
             $ativo = postValue('ativo_rotina', 'S') === 'S' ? 'S' : 'N';
             $duplicidade = postValue('evitar_duplicidade_diaria', 'N') === 'S' ? 'S' : 'N';
+            $periodicidade = postValue('periodicidade', 'MANUAL');
+            if (!in_array($periodicidade, ['MANUAL', 'DIARIO', 'SEMANAL', 'MENSAL'], true)) {
+                $periodicidade = 'MANUAL';
+            }
+            $horario = postValue('horario');
+            $horario = $horario !== '' ? $horario : null;
+            $diasSemana = array_values(array_intersect(array_map('intval', $_POST['dias_semana'] ?? []), [1, 2, 3, 4, 5, 6, 7]));
+            $diasSemanaSql = !empty($diasSemana) ? implode(',', $diasSemana) : null;
+            $diaMes = (int)($_POST['dia_mes'] ?? 0);
+            $diaMes = $diaMes > 0 ? max(1, min(31, $diaMes)) : null;
             $destinatariosIds = array_values(array_unique(array_map('intval', $_POST['rotina_destinatarios'] ?? [])));
 
             if ($codigo === '' || $nome === '') {
@@ -153,23 +175,26 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             if ($id > 0) {
                 $stmt = $pdo_master->prepare("
                     UPDATE whatsapp_rotinas
-                    SET codigo = ?, nome = ?, descricao = ?, mensagem_id = ?, ativo = ?, evitar_duplicidade_diaria = ?
+                    SET codigo = ?, nome = ?, descricao = ?, mensagem_id = ?, origem_mensagem = ?, gerador_sistema = ?, ativo = ?, evitar_duplicidade_diaria = ?,
+                        periodicidade = ?, horario = ?, dias_semana = ?, dia_mes = ?
                     WHERE id = ?
                 ");
-                $stmt->execute([$codigo, $nome, $descricao, $mensagemId, $ativo, $duplicidade, $id]);
+                $stmt->execute([$codigo, $nome, $descricao, $mensagemId, $origemMensagem, $geradorSistema, $ativo, $duplicidade, $periodicidade, $horario, $diasSemanaSql, $diaMes, $id]);
                 $rotinaId = $id;
                 $alerta = 'Rotina atualizada.';
             } else {
                 $stmt = $pdo_master->prepare("
                     INSERT INTO whatsapp_rotinas
-                        (codigo, nome, descricao, mensagem_id, ativo, evitar_duplicidade_diaria)
+                        (codigo, nome, descricao, mensagem_id, origem_mensagem, gerador_sistema, ativo, evitar_duplicidade_diaria, periodicidade, horario, dias_semana, dia_mes)
                     VALUES
-                        (?, ?, ?, ?, ?, ?)
+                        (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ");
-                $stmt->execute([$codigo, $nome, $descricao, $mensagemId, $ativo, $duplicidade]);
+                $stmt->execute([$codigo, $nome, $descricao, $mensagemId, $origemMensagem, $geradorSistema, $ativo, $duplicidade, $periodicidade, $horario, $diasSemanaSql, $diaMes]);
                 $rotinaId = (int)$pdo_master->lastInsertId();
                 $alerta = 'Rotina cadastrada.';
             }
+
+            whatsappAtualizarProximaExecucao($pdo_master, $rotinaId);
 
             $stmt = $pdo_master->prepare("DELETE FROM whatsapp_rotina_destinatarios WHERE rotina_id = ?");
             $stmt->execute([$rotinaId]);
@@ -194,25 +219,46 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 throw new Exception('Rotina nao encontrada.');
             }
 
-            if ($rotina['codigo'] === 'resumo_diario') {
-                $mensagem = whatsappMensagemResumoDiario($pdo_master, 1);
-                $mensagemId = null;
-            } else {
-                $mensagemId = (int)($rotina['mensagem_id'] ?? 0);
-                if ($mensagemId <= 0) {
-                    throw new Exception('Esta rotina nao possui mensagem vinculada.');
-                }
-                $stmt = $pdo_master->prepare("SELECT * FROM whatsapp_mensagens WHERE id = ? AND ativo = 'S'");
-                $stmt->execute([$mensagemId]);
-                $mensagemRow = $stmt->fetch(PDO::FETCH_ASSOC);
-                if (!$mensagemRow) {
-                    throw new Exception('Mensagem ativa da rotina nao encontrada.');
-                }
-                $mensagem = $mensagemRow['conteudo'];
-            }
+            list($mensagem, $mensagemId) = whatsappMensagemRotina($pdo_master, $rotina);
 
             $resultado = whatsappEnviarRotina($pdo_master, $rotina, $mensagem, $mensagemId, $_SESSION['usuario_id'] ?? null);
             $alerta = "Rotina enviada: {$resultado['ok']} OK, {$resultado['falha']} erro(s).";
+        }
+
+        if ($acao === 'salvar_agendamento') {
+            $rotinaId = (int)($_POST['rotina_id'] ?? 0);
+            $periodicidade = postValue('periodicidade_agendamento', 'DIARIO');
+            if (!in_array($periodicidade, ['DIARIO', 'SEMANAL', 'MENSAL'], true)) {
+                $periodicidade = 'DIARIO';
+            }
+            $horario = postValue('horario_agendamento');
+            if ($rotinaId <= 0 || $horario === '') {
+                throw new Exception('Informe rotina e horario do agendamento.');
+            }
+            $diasSemana = array_values(array_intersect(array_map('intval', $_POST['dias_semana_agendamento'] ?? []), [1, 2, 3, 4, 5, 6, 7]));
+            $diasSemanaSql = !empty($diasSemana) ? implode(',', $diasSemana) : null;
+            $diaMes = (int)($_POST['dia_mes_agendamento'] ?? 0);
+            $diaMes = $diaMes > 0 ? max(1, min(31, $diaMes)) : null;
+
+            $stmt = $pdo_master->prepare("
+                INSERT INTO whatsapp_rotina_agendamentos
+                    (rotina_id, periodicidade, horario, dias_semana, dia_mes, ativo, proxima_execucao)
+                VALUES
+                    (?, ?, ?, ?, ?, 'S', NULL)
+            ");
+            $stmt->execute([$rotinaId, $periodicidade, $horario, $diasSemanaSql, $diaMes]);
+            whatsappAtualizarProximaAgendamento($pdo_master, (int)$pdo_master->lastInsertId());
+            $alerta = 'Agendamento cadastrado.';
+        }
+
+        if ($acao === 'excluir_agendamento') {
+            $agendamentoId = (int)($_POST['agendamento_id'] ?? 0);
+            if ($agendamentoId <= 0) {
+                throw new Exception('Agendamento nao informado.');
+            }
+            $stmt = $pdo_master->prepare("DELETE FROM whatsapp_rotina_agendamentos WHERE id = ?");
+            $stmt->execute([$agendamentoId]);
+            $alerta = 'Agendamento removido.';
         }
     } catch (Exception $e) {
         $erro = $e->getMessage();
@@ -220,10 +266,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 }
 
 $config = whatsappConfig($pdo_master);
+$geradoresSistema = whatsappGeradoresSistema();
 $destinatarios = $pdo_master->query("SELECT * FROM whatsapp_destinatarios ORDER BY ativo DESC, tipo, nome")->fetchAll(PDO::FETCH_ASSOC);
-$mensagens = $pdo_master->query("SELECT * FROM whatsapp_mensagens ORDER BY ativo DESC, titulo")->fetchAll(PDO::FETCH_ASSOC);
+$mensagens = $pdo_master->query("SELECT * FROM whatsapp_mensagens ORDER BY ativo DESC, categoria, titulo")->fetchAll(PDO::FETCH_ASSOC);
 $rotinas = $pdo_master->query("
-    SELECT r.*, m.titulo AS mensagem_titulo
+    SELECT r.*, m.titulo AS mensagem_titulo, m.categoria AS mensagem_categoria, m.descricao AS mensagem_descricao
     FROM whatsapp_rotinas r
     LEFT JOIN whatsapp_mensagens m ON m.id = r.mensagem_id
     ORDER BY r.ativo DESC, r.nome
@@ -231,6 +278,10 @@ $rotinas = $pdo_master->query("
 $rotinaDestinatarios = [];
 foreach ($pdo_master->query("SELECT rotina_id, destinatario_id FROM whatsapp_rotina_destinatarios") as $rd) {
     $rotinaDestinatarios[(int)$rd['rotina_id']][] = (int)$rd['destinatario_id'];
+}
+$agendamentosRotina = [];
+foreach ($pdo_master->query("SELECT * FROM whatsapp_rotina_agendamentos ORDER BY rotina_id, ativo DESC, proxima_execucao IS NULL, proxima_execucao, horario") as $ag) {
+    $agendamentosRotina[(int)$ag['rotina_id']][] = $ag;
 }
 $historico = $pdo_master->query("
     SELECT e.*, m.titulo, r.nome AS rotina_nome
@@ -240,6 +291,14 @@ $historico = $pdo_master->query("
     ORDER BY e.enviado_em DESC, e.id DESC
     LIMIT 50
 ")->fetchAll(PDO::FETCH_ASSOC);
+
+$cronUrl = '';
+if (!empty($config['agendamento_token'])) {
+    $scheme = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ? 'https' : 'http';
+    $host = $_SERVER['HTTP_HOST'] ?? 'www.superdunga.com.br';
+    $basePath = rtrim(dirname($_SERVER['SCRIPT_NAME'] ?? ''), '/\\');
+    $cronUrl = $scheme . '://' . $host . $basePath . '/executar_agendamentos.php?token=' . urlencode($config['agendamento_token']);
+}
 
 require __DIR__ . '/../../layout/header.php';
 ?>
@@ -252,6 +311,13 @@ require __DIR__ . '/../../layout/header.php';
     </div>
     <a href="../../index.php" class="btn btn-outline-secondary">Voltar ao painel</a>
 </div>
+
+<?php if ($cronUrl): ?>
+    <div class="alert alert-info">
+        <strong>URL do agendador:</strong>
+        <code><?= htmlspecialchars($cronUrl) ?></code>
+    </div>
+<?php endif; ?>
 
 <?php if ($alerta): ?>
     <div class="alert alert-success"><?= htmlspecialchars($alerta) ?></div>
@@ -420,11 +486,31 @@ require __DIR__ . '/../../layout/header.php';
                 <input type="text" name="nome_rotina" class="form-control" placeholder="Nome da rotina" required>
             </div>
             <div class="col-md-3">
-                <label class="form-label">Mensagem</label>
+                <label class="form-label">Origem</label>
+                <select name="origem_mensagem" class="form-select">
+                    <option value="TEXTO">Texto cadastrado</option>
+                    <option value="SISTEMA">Gerada pelo sistema</option>
+                </select>
+            </div>
+            <div class="col-md-3">
+                <label class="form-label">Mensagem cadastrada</label>
                 <select name="mensagem_id" class="form-select">
-                    <option value="">Gerada pelo sistema / sem mensagem fixa</option>
+                    <option value="">Sem mensagem fixa</option>
                     <?php foreach ($mensagens as $m): ?>
-                        <option value="<?= (int)$m['id'] ?>"><?= htmlspecialchars($m['titulo']) ?></option>
+                        <option value="<?= (int)$m['id'] ?>">
+                            <?= htmlspecialchars(($m['categoria'] ?? 'Geral') . ' - ' . $m['titulo'] . (!empty($m['descricao']) ? ' (' . $m['descricao'] . ')' : '')) ?>
+                        </option>
+                    <?php endforeach; ?>
+                </select>
+            </div>
+            <div class="col-md-4">
+                <label class="form-label">Gerador do sistema</label>
+                <select name="gerador_sistema" class="form-select">
+                    <option value="">Nao usar</option>
+                    <?php foreach ($geradoresSistema as $codigoGerador => $gerador): ?>
+                        <option value="<?= htmlspecialchars($codigoGerador) ?>">
+                            <?= htmlspecialchars($gerador['nome'] . ' - ' . $gerador['arquivo']) ?>
+                        </option>
                     <?php endforeach; ?>
                 </select>
             </div>
@@ -441,6 +527,34 @@ require __DIR__ . '/../../layout/header.php';
                     <option value="N">Permitir</option>
                     <option value="S">1 por dia</option>
                 </select>
+            </div>
+            <div class="col-md-3">
+                <label class="form-label">Periodicidade</label>
+                <select name="periodicidade" class="form-select">
+                    <option value="MANUAL">Manual</option>
+                    <option value="DIARIO">Diaria</option>
+                    <option value="SEMANAL">Semanal</option>
+                    <option value="MENSAL">Mensal</option>
+                </select>
+            </div>
+            <div class="col-md-2">
+                <label class="form-label">Horario</label>
+                <input type="time" name="horario" class="form-control" value="08:00">
+            </div>
+            <div class="col-md-2">
+                <label class="form-label">Dia do mes</label>
+                <input type="number" name="dia_mes" class="form-control" min="1" max="31" placeholder="1-31">
+            </div>
+            <div class="col-md-5">
+                <label class="form-label">Dias da semana</label>
+                <div class="d-flex flex-wrap gap-2">
+                    <?php foreach ([1 => 'Seg', 2 => 'Ter', 3 => 'Qua', 4 => 'Qui', 5 => 'Sex', 6 => 'Sab', 7 => 'Dom'] as $dia => $nomeDia): ?>
+                        <label class="border rounded px-2 py-1">
+                            <input type="checkbox" name="dias_semana[]" value="<?= $dia ?>">
+                            <?= $nomeDia ?>
+                        </label>
+                    <?php endforeach; ?>
+                </div>
             </div>
             <div class="col-12">
                 <label class="form-label">Descricao</label>
@@ -475,6 +589,8 @@ require __DIR__ . '/../../layout/header.php';
                         <th>Rotina</th>
                         <th>Mensagem</th>
                         <th>Destinatarios</th>
+                        <th>Agenda</th>
+                        <th>Proximo envio</th>
                         <th>Status</th>
                         <th>Ultima execucao</th>
                         <th class="text-center">Acoes</th>
@@ -482,17 +598,68 @@ require __DIR__ . '/../../layout/header.php';
                 </thead>
                 <tbody>
                     <?php if (empty($rotinas)): ?>
-                        <tr><td colspan="6" class="text-muted text-center">Nenhuma rotina cadastrada.</td></tr>
+                        <tr><td colspan="8" class="text-muted text-center">Nenhuma rotina cadastrada.</td></tr>
                     <?php endif; ?>
                     <?php foreach ($rotinas as $r): ?>
                         <?php $selecionados = $rotinaDestinatarios[(int)$r['id']] ?? []; ?>
+                        <?php
+                            $diasSelecionados = array_filter(array_map('intval', explode(',', (string)($r['dias_semana'] ?? ''))));
+                            $nomesDias = [1 => 'Seg', 2 => 'Ter', 3 => 'Qua', 4 => 'Qui', 5 => 'Sex', 6 => 'Sab', 7 => 'Dom'];
+                            $agendamentos = $agendamentosRotina[(int)$r['id']] ?? [];
+                            $agenda = count($agendamentos) . ' agendamento(s)';
+                            if ($r['periodicidade'] === 'SEMANAL' && !empty($diasSelecionados)) {
+                                $partesDias = [];
+                                foreach ($diasSelecionados as $diaAgenda) {
+                                    if (isset($nomesDias[$diaAgenda])) {
+                                        $partesDias[] = $nomesDias[$diaAgenda];
+                                    }
+                                }
+                                $agenda .= ' - ' . implode(', ', $partesDias);
+                            }
+                            if ($r['periodicidade'] === 'MENSAL' && !empty($r['dia_mes'])) {
+                                $agenda .= ' - dia ' . (int)$r['dia_mes'];
+                            }
+                            if (!empty($r['horario']) && $r['periodicidade'] !== 'MANUAL') {
+                                $agenda .= ' as ' . substr($r['horario'], 0, 5);
+                            }
+                        ?>
                         <tr>
                             <td>
                                 <strong><?= htmlspecialchars($r['nome']) ?></strong><br>
                                 <small class="text-muted"><?= htmlspecialchars($r['codigo']) ?></small>
                             </td>
-                            <td><?= htmlspecialchars($r['mensagem_titulo'] ?? ($r['codigo'] === 'resumo_diario' ? 'Gerada pelo sistema' : 'Sem mensagem')) ?></td>
+                            <td>
+                                <?php if (($r['origem_mensagem'] ?? 'TEXTO') === 'SISTEMA'): ?>
+                                    <?php $gerador = $geradoresSistema[$r['gerador_sistema'] ?? ''] ?? null; ?>
+                                    <?php if ($gerador): ?>
+                                        <strong><?= htmlspecialchars($gerador['nome']) ?></strong>
+                                        <br><small class="text-muted"><?= htmlspecialchars($gerador['descricao']) ?></small>
+                                        <br><code><?= htmlspecialchars($gerador['arquivo']) ?></code>
+                                    <?php else: ?>
+                                        <span class="text-danger">Gerador nao encontrado</span>
+                                    <?php endif; ?>
+                                <?php elseif (!empty($r['mensagem_titulo'])): ?>
+                                    <strong><?= htmlspecialchars(($r['mensagem_categoria'] ?? 'Geral') . ' - ' . $r['mensagem_titulo']) ?></strong>
+                                    <?php if (!empty($r['mensagem_descricao'])): ?>
+                                        <br><small class="text-muted"><?= htmlspecialchars($r['mensagem_descricao']) ?></small>
+                                    <?php endif; ?>
+                                <?php else: ?>
+                                    <?= htmlspecialchars($r['codigo'] === 'resumo_diario' ? 'Gerada pelo sistema' : 'Sem mensagem') ?>
+                                <?php endif; ?>
+                            </td>
                             <td><?= count($selecionados) ?> vinculado(s)</td>
+                            <td><?= htmlspecialchars($agenda) ?></td>
+                            <td>
+                                <?php if (empty($agendamentos)): ?>
+                                    -
+                                <?php else: ?>
+                                    <?php
+                                        $proximos = array_values(array_filter(array_column($agendamentos, 'proxima_execucao')));
+                                        sort($proximos);
+                                    ?>
+                                    <?= !empty($proximos) ? date('d/m/Y H:i', strtotime($proximos[0])) : '-' ?>
+                                <?php endif; ?>
+                            </td>
                             <td>
                                 <span class="badge bg-<?= $r['ativo'] === 'S' ? 'success' : 'secondary' ?>">
                                     <?= $r['ativo'] === 'S' ? 'Ativa' : 'Inativa' ?>
@@ -512,7 +679,7 @@ require __DIR__ . '/../../layout/header.php';
                             </td>
                         </tr>
                         <tr class="collapse" id="rotina<?= (int)$r['id'] ?>">
-                            <td colspan="6">
+                            <td colspan="8">
                                 <form method="post" class="row g-2">
                                     <input type="hidden" name="csrf" value="<?= htmlspecialchars($csrf) ?>">
                                     <input type="hidden" name="acao" value="salvar_rotina">
@@ -524,11 +691,27 @@ require __DIR__ . '/../../layout/header.php';
                                         <input type="text" name="nome_rotina" class="form-control" value="<?= htmlspecialchars($r['nome']) ?>" required>
                                     </div>
                                     <div class="col-md-3">
+                                        <select name="origem_mensagem" class="form-select">
+                                            <option value="TEXTO" <?= ($r['origem_mensagem'] ?? 'TEXTO') === 'TEXTO' ? 'selected' : '' ?>>Texto cadastrado</option>
+                                            <option value="SISTEMA" <?= ($r['origem_mensagem'] ?? 'TEXTO') === 'SISTEMA' ? 'selected' : '' ?>>Gerada pelo sistema</option>
+                                        </select>
+                                    </div>
+                                    <div class="col-md-3">
                                         <select name="mensagem_id" class="form-select">
-                                            <option value="">Gerada pelo sistema / sem mensagem fixa</option>
+                                            <option value="">Sem mensagem fixa</option>
                                             <?php foreach ($mensagens as $m): ?>
                                                 <option value="<?= (int)$m['id'] ?>" <?= (int)($r['mensagem_id'] ?? 0) === (int)$m['id'] ? 'selected' : '' ?>>
-                                                    <?= htmlspecialchars($m['titulo']) ?>
+                                                    <?= htmlspecialchars(($m['categoria'] ?? 'Geral') . ' - ' . $m['titulo'] . (!empty($m['descricao']) ? ' (' . $m['descricao'] . ')' : '')) ?>
+                                                </option>
+                                            <?php endforeach; ?>
+                                        </select>
+                                    </div>
+                                    <div class="col-md-4">
+                                        <select name="gerador_sistema" class="form-select">
+                                            <option value="">Nao usar</option>
+                                            <?php foreach ($geradoresSistema as $codigoGerador => $gerador): ?>
+                                                <option value="<?= htmlspecialchars($codigoGerador) ?>" <?= ($r['gerador_sistema'] ?? '') === $codigoGerador ? 'selected' : '' ?>>
+                                                    <?= htmlspecialchars($gerador['nome'] . ' - ' . $gerador['arquivo']) ?>
                                                 </option>
                                             <?php endforeach; ?>
                                         </select>
@@ -544,6 +727,30 @@ require __DIR__ . '/../../layout/header.php';
                                             <option value="N" <?= $r['evitar_duplicidade_diaria'] === 'N' ? 'selected' : '' ?>>Permitir duplicidade</option>
                                             <option value="S" <?= $r['evitar_duplicidade_diaria'] === 'S' ? 'selected' : '' ?>>1 por dia</option>
                                         </select>
+                                    </div>
+                                    <div class="col-md-3">
+                                        <select name="periodicidade" class="form-select">
+                                            <option value="MANUAL" <?= $r['periodicidade'] === 'MANUAL' ? 'selected' : '' ?>>Manual</option>
+                                            <option value="DIARIO" <?= $r['periodicidade'] === 'DIARIO' ? 'selected' : '' ?>>Diaria</option>
+                                            <option value="SEMANAL" <?= $r['periodicidade'] === 'SEMANAL' ? 'selected' : '' ?>>Semanal</option>
+                                            <option value="MENSAL" <?= $r['periodicidade'] === 'MENSAL' ? 'selected' : '' ?>>Mensal</option>
+                                        </select>
+                                    </div>
+                                    <div class="col-md-2">
+                                        <input type="time" name="horario" class="form-control" value="<?= htmlspecialchars(substr((string)($r['horario'] ?? ''), 0, 5)) ?>">
+                                    </div>
+                                    <div class="col-md-2">
+                                        <input type="number" name="dia_mes" class="form-control" min="1" max="31" value="<?= htmlspecialchars((string)($r['dia_mes'] ?? '')) ?>" placeholder="Dia do mes">
+                                    </div>
+                                    <div class="col-md-5">
+                                        <div class="d-flex flex-wrap gap-2">
+                                            <?php foreach ([1 => 'Seg', 2 => 'Ter', 3 => 'Qua', 4 => 'Qui', 5 => 'Sex', 6 => 'Sab', 7 => 'Dom'] as $dia => $nomeDia): ?>
+                                                <label class="border rounded px-2 py-1">
+                                                    <input type="checkbox" name="dias_semana[]" value="<?= $dia ?>" <?= in_array($dia, $diasSelecionados, true) ? 'checked' : '' ?>>
+                                                    <?= $nomeDia ?>
+                                                </label>
+                                            <?php endforeach; ?>
+                                        </div>
                                     </div>
                                     <div class="col-12">
                                         <input type="text" name="descricao" class="form-control" value="<?= htmlspecialchars($r['descricao'] ?? '') ?>">
@@ -568,6 +775,90 @@ require __DIR__ . '/../../layout/header.php';
                                         <button class="btn btn-primary w-100">Salvar rotina</button>
                                     </div>
                                 </form>
+
+                                <div class="border rounded p-3 mt-3">
+                                    <h3 class="h6 fw-bold mb-3">Agendamentos desta rotina</h3>
+
+                                    <form method="post" class="row g-2 mb-3">
+                                        <input type="hidden" name="csrf" value="<?= htmlspecialchars($csrf) ?>">
+                                        <input type="hidden" name="acao" value="salvar_agendamento">
+                                        <input type="hidden" name="rotina_id" value="<?= (int)$r['id'] ?>">
+
+                                        <div class="col-md-3">
+                                            <select name="periodicidade_agendamento" class="form-select">
+                                                <option value="DIARIO">Diario</option>
+                                                <option value="SEMANAL">Semanal</option>
+                                                <option value="MENSAL">Mensal</option>
+                                            </select>
+                                        </div>
+                                        <div class="col-md-2">
+                                            <input type="time" name="horario_agendamento" class="form-control" required>
+                                        </div>
+                                        <div class="col-md-2">
+                                            <input type="number" name="dia_mes_agendamento" class="form-control" min="1" max="31" placeholder="Dia do mes">
+                                        </div>
+                                        <div class="col-md-5">
+                                            <div class="d-flex flex-wrap gap-2">
+                                                <?php foreach ([1 => 'Seg', 2 => 'Ter', 3 => 'Qua', 4 => 'Qui', 5 => 'Sex', 6 => 'Sab', 7 => 'Dom'] as $dia => $nomeDia): ?>
+                                                    <label class="border rounded px-2 py-1">
+                                                        <input type="checkbox" name="dias_semana_agendamento[]" value="<?= $dia ?>">
+                                                        <?= $nomeDia ?>
+                                                    </label>
+                                                <?php endforeach; ?>
+                                            </div>
+                                        </div>
+                                        <div class="col-12">
+                                            <button class="btn btn-outline-primary w-100">Adicionar agendamento</button>
+                                        </div>
+                                    </form>
+
+                                    <div class="table-responsive">
+                                        <table class="table table-sm table-striped">
+                                            <thead>
+                                                <tr>
+                                                    <th>Periodicidade</th>
+                                                    <th>Horario</th>
+                                                    <th>Dias</th>
+                                                    <th>Proximo envio</th>
+                                                    <th></th>
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                <?php if (empty($agendamentos)): ?>
+                                                    <tr><td colspan="5" class="text-muted text-center">Nenhum agendamento cadastrado.</td></tr>
+                                                <?php endif; ?>
+                                                <?php foreach ($agendamentos as $ag): ?>
+                                                    <?php
+                                                        $diasAg = array_filter(array_map('intval', explode(',', (string)($ag['dias_semana'] ?? ''))));
+                                                        $diasTexto = [];
+                                                        foreach ($diasAg as $diaAg) {
+                                                            if (isset($nomesDias[$diaAg])) {
+                                                                $diasTexto[] = $nomesDias[$diaAg];
+                                                            }
+                                                        }
+                                                        if ($ag['periodicidade'] === 'MENSAL' && !empty($ag['dia_mes'])) {
+                                                            $diasTexto[] = 'Dia ' . (int)$ag['dia_mes'];
+                                                        }
+                                                    ?>
+                                                    <tr>
+                                                        <td><?= htmlspecialchars($ag['periodicidade']) ?></td>
+                                                        <td><?= htmlspecialchars(substr((string)$ag['horario'], 0, 5)) ?></td>
+                                                        <td><?= htmlspecialchars(!empty($diasTexto) ? implode(', ', $diasTexto) : '-') ?></td>
+                                                        <td><?= $ag['proxima_execucao'] ? date('d/m/Y H:i', strtotime($ag['proxima_execucao'])) : '-' ?></td>
+                                                        <td class="text-end">
+                                                            <form method="post" onsubmit="return confirm('Remover este agendamento?')">
+                                                                <input type="hidden" name="csrf" value="<?= htmlspecialchars($csrf) ?>">
+                                                                <input type="hidden" name="acao" value="excluir_agendamento">
+                                                                <input type="hidden" name="agendamento_id" value="<?= (int)$ag['id'] ?>">
+                                                                <button class="btn btn-sm btn-outline-danger">Remover</button>
+                                                            </form>
+                                                        </td>
+                                                    </tr>
+                                                <?php endforeach; ?>
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                </div>
                             </td>
                         </tr>
                     <?php endforeach; ?>
@@ -588,8 +879,16 @@ require __DIR__ . '/../../layout/header.php';
                     <input type="hidden" name="csrf" value="<?= htmlspecialchars($csrf) ?>">
                     <input type="hidden" name="acao" value="salvar_mensagem">
                     <div class="col-12">
+                        <label class="form-label">Categoria</label>
+                        <input type="text" name="categoria" class="form-control" value="Geral" placeholder="Ex: Caixa, Vendas, Financeiro" required>
+                    </div>
+                    <div class="col-12">
                         <label class="form-label">Titulo</label>
                         <input type="text" name="titulo" class="form-control" required>
+                    </div>
+                    <div class="col-12">
+                        <label class="form-label">Descricao curta</label>
+                        <input type="text" name="descricao" class="form-control" placeholder="Ex: Alerta de divergencia acima do limite">
                     </div>
                     <div class="col-12">
                         <label class="form-label">Mensagem</label>
@@ -624,7 +923,7 @@ require __DIR__ . '/../../layout/header.php';
                             <div class="accordion-item">
                                 <h3 class="accordion-header">
                                     <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#mensagem<?= (int)$m['id'] ?>">
-                                        <?= htmlspecialchars($m['titulo']) ?>
+                                        <?= htmlspecialchars(($m['categoria'] ?? 'Geral') . ' - ' . $m['titulo']) ?>
                                         <span class="badge ms-2 bg-<?= $m['ativo'] === 'S' ? 'success' : 'secondary' ?>">
                                             <?= $m['ativo'] === 'S' ? 'Ativa' : 'Inativa' ?>
                                         </span>
@@ -632,12 +931,18 @@ require __DIR__ . '/../../layout/header.php';
                                 </h3>
                                 <div id="mensagem<?= (int)$m['id'] ?>" class="accordion-collapse collapse" data-bs-parent="#mensagensAccordion">
                                     <div class="accordion-body">
+                                        <?php if (!empty($m['descricao'])): ?>
+                                            <div class="text-muted small mb-2"><?= htmlspecialchars($m['descricao']) ?></div>
+                                        <?php endif; ?>
                                         <div class="border rounded p-3 bg-light mb-3" style="white-space: pre-wrap;"><?= htmlspecialchars($m['conteudo']) ?></div>
 
                                         <form method="post" class="row g-2 mb-3">
                                             <input type="hidden" name="csrf" value="<?= htmlspecialchars($csrf) ?>">
                                             <input type="hidden" name="acao" value="salvar_mensagem">
                                             <input type="hidden" name="id" value="<?= (int)$m['id'] ?>">
+                                            <div class="col-md-4">
+                                                <input type="text" name="categoria" class="form-control" value="<?= htmlspecialchars($m['categoria'] ?? 'Geral') ?>" required>
+                                            </div>
                                             <div class="col-md-8">
                                                 <input type="text" name="titulo" class="form-control" value="<?= htmlspecialchars($m['titulo']) ?>" required>
                                             </div>
@@ -646,6 +951,9 @@ require __DIR__ . '/../../layout/header.php';
                                                     <option value="S" <?= $m['ativo'] === 'S' ? 'selected' : '' ?>>Ativa</option>
                                                     <option value="N" <?= $m['ativo'] === 'N' ? 'selected' : '' ?>>Inativa</option>
                                                 </select>
+                                            </div>
+                                            <div class="col-md-8">
+                                                <input type="text" name="descricao" class="form-control" value="<?= htmlspecialchars($m['descricao'] ?? '') ?>" placeholder="Descricao curta">
                                             </div>
                                             <div class="col-12">
                                                 <textarea name="conteudo" class="form-control" rows="4" required><?= htmlspecialchars($m['conteudo']) ?></textarea>
