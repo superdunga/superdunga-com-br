@@ -10,7 +10,7 @@ $data = $_GET['data'] ?? date('Y-m-d');
 $lote = (int)($_GET['lote'] ?? 50);
 $totalAnterior = (int)($_GET['total'] ?? 0);
 
-if (!in_array($modo, ['seguro', 'aproximado'], true)) {
+if (!in_array($modo, ['seguro', 'movimento', 'aproximado'], true)) {
     $modo = 'seguro';
 }
 
@@ -80,11 +80,75 @@ $sqlSeguro = "
 ";
 
 $seguros = [];
+$movimento = [];
 
 if ($modo === 'seguro') {
     $stmtSeguro = $pdo_master->prepare($sqlSeguro);
     $stmtSeguro->execute();
     $seguros = $stmtSeguro->fetchAll(PDO::FETCH_ASSOC);
+}
+
+/* =========================================================
+   MATCH POR MOVIMENTO - VALOR + CM + DATA_VENDA = DTEMISSAO
+========================================================= */
+$sqlMovimento = "
+    WITH rec AS (
+        SELECT
+            r.id,
+            r.CMCONTADOR,
+            r.valor_bruto,
+            DATE(r.data_venda) AS data_ref,
+            ROW_NUMBER() OVER (
+                PARTITION BY DATE(r.data_venda), r.valor_bruto, r.CMCONTADOR
+                ORDER BY r.id
+            ) AS rn,
+            COUNT(*) OVER (
+                PARTITION BY DATE(r.data_venda), r.valor_bruto, r.CMCONTADOR
+            ) AS qtd_rec
+        FROM armazem_conciliacao_recebimentos r
+        WHERE NOT EXISTS (
+            SELECT 1
+            FROM armazem_cr001 cx
+            WHERE cx.recebimento_id = r.id
+              AND COALESCE(cx.excluido_firebird, 'N') = 'N'
+        )
+    ),
+    cr AS (
+        SELECT
+            c.CRCONTADOR,
+            c.CMCONTADOR,
+            c.VLRPARCELA,
+            DATE(c.DTEMISSAO) AS data_ref,
+            ROW_NUMBER() OVER (
+                PARTITION BY DATE(c.DTEMISSAO), c.VLRPARCELA, c.CMCONTADOR
+                ORDER BY c.DTLANC ASC, c.CRCONTADOR ASC
+            ) AS rn,
+            COUNT(*) OVER (
+                PARTITION BY DATE(c.DTEMISSAO), c.VLRPARCELA, c.CMCONTADOR
+            ) AS qtd_cr
+        FROM armazem_cr001 c
+        WHERE c.recebimento_id IS NULL
+          AND c.CMCONTADOR <> 9
+          AND (c.validado IS NULL OR c.validado <> 'S')
+          AND COALESCE(c.excluido_firebird, 'N') = 'N'
+          AND NOT (c.CMCONTADOR = 1 AND c.STATUS = 'QT')
+    )
+    SELECT r.id rec_id, r.CMCONTADOR, c.CRCONTADOR
+    FROM rec r
+    JOIN cr c
+      ON ABS(r.valor_bruto) = ABS(c.VLRPARCELA)
+     AND r.CMCONTADOR = c.CMCONTADOR
+     AND r.data_ref = c.data_ref
+     AND r.rn = c.rn
+    WHERE r.qtd_rec = c.qtd_cr
+    ORDER BY r.data_ref ASC, r.id ASC, c.CRCONTADOR ASC
+    LIMIT $lote
+";
+
+if ($modo === 'movimento') {
+    $stmtMovimento = $pdo_master->prepare($sqlMovimento);
+    $stmtMovimento->execute();
+    $movimento = $stmtMovimento->fetchAll(PDO::FETCH_ASSOC);
 }
 
 /* =========================================================
@@ -169,9 +233,15 @@ function conciliar($pdo, $rec_id, $cm, $crcontador) {
    EXECUCAO
 ========================================================= */
 $total = 0;
-$encontrados = count($seguros) + count($aprox);
+$encontrados = count($seguros) + count($movimento) + count($aprox);
 
 foreach ($seguros as $m) {
+    if (conciliar($pdo_master, $m['rec_id'], $m['CMCONTADOR'], $m['CRCONTADOR'])) {
+        $total++;
+    }
+}
+
+foreach ($movimento as $m) {
     if (conciliar($pdo_master, $m['rec_id'], $m['CMCONTADOR'], $m['CRCONTADOR'])) {
         $total++;
     }
@@ -184,7 +254,9 @@ foreach ($aprox as $m) {
 }
 
 $totalGeral = $totalAnterior + $total;
-$temMais = $modo === 'seguro' && count($seguros) === $lote && $total > 0;
+$temMais = in_array($modo, ['seguro', 'movimento'], true)
+    && (($modo === 'seguro' && count($seguros) === $lote) || ($modo === 'movimento' && count($movimento) === $lote))
+    && $total > 0;
 
 $params = [
     'data' => $data,

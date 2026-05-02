@@ -266,11 +266,18 @@ $cr001 = $stmtCr->fetchAll(PDO::FETCH_ASSOC);
 
         <?php if (!empty($_GET['auto'])): ?>
             <?php
-                $modoAuto = ($_GET['modo'] ?? '') === 'aproximado' ? 'aproximada' : 'segura';
+                $modoParam = $_GET['modo'] ?? '';
+                if ($modoParam === 'aproximado') {
+                    $modoAuto = 'aproximada';
+                } elseif ($modoParam === 'movimento') {
+                    $modoAuto = 'por movimento';
+                } else {
+                    $modoAuto = 'segura';
+                }
                 $qtdAuto = (int)($_GET['qtd'] ?? 0);
                 $totalAuto = (int)($_GET['total'] ?? $qtdAuto);
                 $loteAuto = (int)($_GET['lote'] ?? 50);
-                $continuarAuto = !empty($_GET['continuar']) && ($_GET['modo'] ?? '') === 'seguro';
+                $continuarAuto = !empty($_GET['continuar']) && in_array($modoParam, ['seguro', 'movimento'], true);
             ?>
             <div class="alert alert-success mt-2 mb-0">
                 Conciliacao <?= $modoAuto ?> executada: <?= $qtdAuto ?> registro(s) atualizado(s) neste lote.
@@ -278,7 +285,7 @@ $cr001 = $stmtCr->fetchAll(PDO::FETCH_ASSOC);
 
                 <?php if ($continuarAuto): ?>
                     <a
-                        href="conciliar_auto.php?modo=seguro&data=<?= urlencode($data) ?>&lote=<?= $loteAuto ?>&total=<?= $totalAuto ?>"
+                        href="conciliar_auto.php?modo=<?= urlencode($modoParam) ?>&data=<?= urlencode($data) ?>&lote=<?= $loteAuto ?>&total=<?= $totalAuto ?>"
                         class="btn btn-sm btn-success ms-2"
                     >
                         Continuar proximo lote
@@ -300,6 +307,12 @@ $cr001 = $stmtCr->fetchAll(PDO::FETCH_ASSOC);
             <div class="col-md-2">
                 <a href="conciliar_auto.php?modo=seguro&data=<?= urlencode($data) ?>&lote=50" class="btn btn-success w-100">
                     Conciliar seguros
+                </a>
+            </div>
+
+            <div class="col-md-2">
+                <a href="conciliar_auto.php?modo=movimento&data=<?= urlencode($data) ?>&lote=50" class="btn btn-info w-100">
+                    Conciliar por movimento
                 </a>
             </div>
 
