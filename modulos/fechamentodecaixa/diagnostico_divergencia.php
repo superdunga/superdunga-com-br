@@ -16,6 +16,7 @@ $stmtPendSistema = $pdo_master->prepare("
           SELECT 1
           FROM armazem_cr001 c
           WHERE c.recebimento_id = r.id
+            AND COALESCE(c.excluido_firebird, 'N') = 'N'
       )
     ORDER BY r.data_venda ASC, r.id ASC
 ");
@@ -29,10 +30,21 @@ $stmtPendCR = $pdo_master->prepare("
       AND c.CMCONTADOR <> 9
       AND c.recebimento_id IS NULL
       AND NOT (c.CMCONTADOR = 1 AND c.STATUS = 'QT')
+      AND COALESCE(c.excluido_firebird, 'N') = 'N'
     ORDER BY c.DTLANC ASC, c.CRCONTADOR ASC
 ");
 $stmtPendCR->execute([$inicio, $fim]);
 $pendentesCR001 = $stmtPendCR->fetchAll(PDO::FETCH_ASSOC);
+
+$stmtExcluidosCR = $pdo_master->prepare("
+    SELECT c.*
+    FROM armazem_cr001 c
+    WHERE c.DTLANC BETWEEN ? AND ?
+      AND COALESCE(c.excluido_firebird, 'N') = 'S'
+    ORDER BY c.DTLANC ASC, c.CRCONTADOR ASC
+");
+$stmtExcluidosCR->execute([$inicio, $fim]);
+$excluidosCR001 = $stmtExcluidosCR->fetchAll(PDO::FETCH_ASSOC);
 
 $totalPendenteSistema = array_sum(array_column($pendentesSistema, 'valor_bruto'));
 $totalPendenteCR001 = array_sum(array_column($pendentesCR001, 'VLRPARCELA'));
@@ -136,6 +148,40 @@ $diferencaPendentes = $totalPendenteSistema - $totalPendenteCR001;
                         </table>
                     </div>
                 </div>
+            </div>
+        </div>
+
+        <div class="card border-secondary mt-3">
+            <div class="card-header bg-secondary text-white">CR001 excluidos no Firebird</div>
+            <div class="card-body p-2" style="max-height:320px; overflow:auto;">
+                <table class="table table-sm table-bordered text-center mb-0">
+                    <thead>
+                        <tr>
+                            <th>CR001</th>
+                            <th>Data</th>
+                            <th>Valor</th>
+                            <th>CM</th>
+                            <th>Recebivel</th>
+                            <th>Marcado em</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <?php if (empty($excluidosCR001)): ?>
+                            <tr><td colspan="6" class="text-muted">Nenhum registro</td></tr>
+                        <?php else: ?>
+                            <?php foreach ($excluidosCR001 as $c): ?>
+                                <tr>
+                                    <td><?= $c['CRCONTADOR'] ?></td>
+                                    <td><?= !empty($c['DTLANC']) ? date('d/m/Y H:i', strtotime($c['DTLANC'])) : '-' ?></td>
+                                    <td>R$ <?= number_format($c['VLRPARCELA'], 2, ',', '.') ?></td>
+                                    <td><?= $c['CMCONTADOR'] ?></td>
+                                    <td><?= $c['recebimento_id'] ?: '-' ?></td>
+                                    <td><?= !empty($c['data_exclusao_firebird']) ? date('d/m/Y H:i', strtotime($c['data_exclusao_firebird'])) : '-' ?></td>
+                                </tr>
+                            <?php endforeach; ?>
+                        <?php endif; ?>
+                    </tbody>
+                </table>
             </div>
         </div>
     </div>

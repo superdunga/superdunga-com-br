@@ -11,7 +11,7 @@ header('Content-Type: application/json');
 ========================= */
 $tabela = $_GET['tabela'] ?? 'bnc001';
 
-$tabelas_permitidas = ['bnc001', 'cr001', 'cr002', 'est007', 'zconfig005'];
+$tabelas_permitidas = ['bnc001', 'cr001', 'cr001_ativos', 'cr002', 'est007', 'zconfig005'];
 
 if (!in_array($tabela, $tabelas_permitidas)) {
     echo json_encode(["erro" => "Tabela inválida"]);
@@ -44,6 +44,43 @@ if (count($dados) === 0) {
 }
 
 $processados = 0;
+
+function garantirControleExclusaoCR001(PDO $pdo): void
+{
+    $colunas = [
+        'excluido_firebird' => "ALTER TABLE armazem_cr001 ADD excluido_firebird CHAR(1) NOT NULL DEFAULT 'N'",
+        'data_exclusao_firebird' => "ALTER TABLE armazem_cr001 ADD data_exclusao_firebird DATETIME NULL",
+        'motivo_sync' => "ALTER TABLE armazem_cr001 ADD motivo_sync VARCHAR(100) NULL",
+        'ultima_presenca_firebird' => "ALTER TABLE armazem_cr001 ADD ultima_presenca_firebird DATETIME NULL",
+    ];
+
+    $stmt = $pdo->prepare("
+        SELECT COUNT(*)
+        FROM information_schema.COLUMNS
+        WHERE TABLE_SCHEMA = DATABASE()
+          AND TABLE_NAME = 'armazem_cr001'
+          AND COLUMN_NAME = ?
+    ");
+
+    foreach ($colunas as $coluna => $sql) {
+        $stmt->execute([$coluna]);
+        if ((int)$stmt->fetchColumn() === 0) {
+            $pdo->exec($sql);
+        }
+    }
+
+    $stmt = $pdo->prepare("
+        SELECT COUNT(*)
+        FROM information_schema.STATISTICS
+        WHERE TABLE_SCHEMA = DATABASE()
+          AND TABLE_NAME = 'armazem_cr001'
+          AND INDEX_NAME = 'idx_cr001_excluido_dtlanc'
+    ");
+    $stmt->execute();
+    if ((int)$stmt->fetchColumn() === 0) {
+        $pdo->exec("ALTER TABLE armazem_cr001 ADD INDEX idx_cr001_excluido_dtlanc (excluido_firebird, DTLANC)");
+    }
+}
 
 /* =====================================================
    BNC001
@@ -141,6 +178,8 @@ if ($tabela === 'bnc001') {
 ===================================================== */
 elseif ($tabela === 'cr001') {
 
+    garantirControleExclusaoCR001($pdo_master);
+
     $sql = "
         INSERT INTO armazem_cr001 (
             EMPRESA, CRCONTADOR, DTVENDA, NUMPARCELA, NOTAFISCAL,
@@ -148,14 +187,16 @@ elseif ($tabela === 'cr001') {
             OBSERVACAO, NUMCH, DTEMISSAO, VLRPARCELA, PARCELA,
             DTVENC, VLRRESTANTE, VLRPAGO, DTPAGTO, STATUS,
             TIPODOCORIGEM, NUMDOCORIGEM, TIPOCR,
-            REGSTAMP, USERLANC, TIPOES, DTLANC, CHAVEINTEGRACAO
+            REGSTAMP, USERLANC, TIPOES, DTLANC, CHAVEINTEGRACAO,
+            excluido_firebird, data_exclusao_firebird, motivo_sync, ultima_presenca_firebird
         ) VALUES (
             :EMPRESA, :CRCONTADOR, :DTVENDA, :NUMPARCELA, :NOTAFISCAL,
             :TITULO, :VALORVENDA, :CLICONTADOR, :CMCONTADOR,
             :OBSERVACAO, :NUMCH, :DTEMISSAO, :VLRPARCELA, :PARCELA,
             :DTVENC, :VLRRESTANTE, :VLRPAGO, :DTPAGTO, :STATUS,
             :TIPODOCORIGEM, :NUMDOCORIGEM, :TIPOCR,
-            :REGSTAMP, :USERLANC, :TIPOES, :DTLANC, :CHAVEINTEGRACAO
+            :REGSTAMP, :USERLANC, :TIPOES, :DTLANC, :CHAVEINTEGRACAO,
+            'N', NULL, NULL, NOW()
         )
         ON DUPLICATE KEY UPDATE
             VALORVENDA = VALUES(VALORVENDA),
@@ -163,7 +204,11 @@ elseif ($tabela === 'cr001') {
             VLRPAGO = VALUES(VLRPAGO),
             VLRRESTANTE = VALUES(VLRRESTANTE),
             STATUS = VALUES(STATUS),
-            REGSTAMP = VALUES(REGSTAMP)
+            REGSTAMP = VALUES(REGSTAMP),
+            excluido_firebird = 'N',
+            data_exclusao_firebird = NULL,
+            motivo_sync = NULL,
+            ultima_presenca_firebird = NOW()
     ";
 
     $stmt = $pdo_master->prepare($sql);
@@ -206,6 +251,94 @@ elseif ($tabela === 'cr001') {
 
         $processados++;
     }
+}
+
+/* =====================================================
+   CR001 ATIVOS - FOTO PARA DETECTAR EXCLUSOES
+===================================================== */
+elseif ($tabela === 'cr001_ativos') {
+
+    garantirControleExclusaoCR001($pdo_master);
+
+    $inicio = $_GET['inicio'] ?? ($dados['inicio'] ?? null);
+    $fim = $_GET['fim'] ?? ($dados['fim'] ?? null);
+    $registros = $dados['registros'] ?? $dados['ativos'] ?? $dados;
+
+    if (!$inicio || !$fim || !is_array($registros)) {
+        echo json_encode([
+            "erro" => "Informe inicio, fim e a lista de CRCONTADOR ativos."
+        ]);
+        exit;
+    }
+
+    $ids = [];
+    foreach ($registros as $item) {
+        $crcontador = is_array($item) ? ($item['CRCONTADOR'] ?? null) : $item;
+        if (!empty($crcontador)) {
+            $ids[(int)$crcontador] = true;
+        }
+    }
+
+    if (empty($ids) && ($_GET['confirmar_vazio'] ?? '') !== '1') {
+        echo json_encode([
+            "erro" => "Lista de CRCONTADOR ativos vazia. Para marcar todos do periodo como excluidos, envie confirmar_vazio=1."
+        ]);
+        exit;
+    }
+
+    $pdo_master->beginTransaction();
+
+    $pdo_master->exec("
+        CREATE TEMPORARY TABLE tmp_cr001_ativos_sync (
+            CRCONTADOR INT NOT NULL PRIMARY KEY
+        ) ENGINE=Memory
+    ");
+
+    if (!empty($ids)) {
+        $stmtTmp = $pdo_master->prepare("INSERT IGNORE INTO tmp_cr001_ativos_sync (CRCONTADOR) VALUES (?)");
+        foreach (array_keys($ids) as $crcontador) {
+            $stmtTmp->execute([$crcontador]);
+        }
+    }
+
+    $stmtReativar = $pdo_master->prepare("
+        UPDATE armazem_cr001 c
+        INNER JOIN tmp_cr001_ativos_sync t
+            ON t.CRCONTADOR = c.CRCONTADOR
+        SET c.excluido_firebird = 'N',
+            c.data_exclusao_firebird = NULL,
+            c.motivo_sync = NULL,
+            c.ultima_presenca_firebird = NOW()
+        WHERE c.DTLANC BETWEEN ? AND ?
+    ");
+    $stmtReativar->execute([$inicio, $fim]);
+    $reativados = $stmtReativar->rowCount();
+
+    $stmtExcluir = $pdo_master->prepare("
+        UPDATE armazem_cr001 c
+        LEFT JOIN tmp_cr001_ativos_sync t
+            ON t.CRCONTADOR = c.CRCONTADOR
+        SET c.excluido_firebird = 'S',
+            c.data_exclusao_firebird = NOW(),
+            c.motivo_sync = 'Nao encontrado na foto CR001 do Firebird'
+        WHERE c.DTLANC BETWEEN ? AND ?
+          AND t.CRCONTADOR IS NULL
+          AND COALESCE(c.excluido_firebird, 'N') <> 'S'
+    ");
+    $stmtExcluir->execute([$inicio, $fim]);
+    $marcadosExcluidos = $stmtExcluir->rowCount();
+
+    $pdo_master->commit();
+
+    echo json_encode([
+        "status" => "ok",
+        "processados" => count($ids),
+        "reativados" => $reativados,
+        "marcados_excluidos" => $marcadosExcluidos,
+        "inicio" => $inicio,
+        "fim" => $fim
+    ]);
+    exit;
 }
 
 /* =====================================================

@@ -74,6 +74,7 @@ $datas = $stmtDatas->fetchAll(PDO::FETCH_COLUMN);
                         ON c.recebimento_id = r.id
                     WHERE r.data_venda BETWEEN ? AND ?
                       AND c.DTLANC BETWEEN ? AND ?
+                      AND COALESCE(c.excluido_firebird, 'N') = 'N'
                 ");
                 $stmt1->execute([$inicio, $fim, $inicio, $fim]);
                 $totalSistema = (float)$stmt1->fetchColumn();
@@ -87,6 +88,7 @@ $datas = $stmtDatas->fetchAll(PDO::FETCH_COLUMN);
                       AND r.data_venda BETWEEN ? AND ?
                       AND c.CMCONTADOR <> 9
                       AND NOT (c.CMCONTADOR = 1 AND c.STATUS = 'QT')
+                      AND COALESCE(c.excluido_firebird, 'N') = 'N'
                 ");
                 $stmt2->execute([$inicio, $fim, $inicio, $fim]);
                 $totalCR001 = (float)$stmt2->fetchColumn();
@@ -99,6 +101,7 @@ $datas = $stmtDatas->fetchAll(PDO::FETCH_COLUMN);
                           SELECT 1
                           FROM armazem_cr001 c
                           WHERE c.recebimento_id = r.id
+                            AND COALESCE(c.excluido_firebird, 'N') = 'N'
                       )
                 ");
                 $stmtPendRec->execute([$inicio, $fim]);
@@ -113,6 +116,7 @@ $datas = $stmtDatas->fetchAll(PDO::FETCH_COLUMN);
                       AND c.CMCONTADOR <> 9
                       AND c.recebimento_id IS NULL
                       AND NOT (c.CMCONTADOR = 1 AND c.STATUS = 'QT')
+                      AND COALESCE(c.excluido_firebird, 'N') = 'N'
                 ");
                 $stmtPendCr->execute([$inicio, $fim]);
                 [$pendentesCR001, $totalPendentesCR001] = $stmtPendCr->fetch(PDO::FETCH_NUM);

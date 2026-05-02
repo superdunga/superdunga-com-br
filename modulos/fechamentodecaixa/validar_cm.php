@@ -36,6 +36,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     data_validacao = NOW(),
                     usuario_validacao = ?
                 WHERE CRCONTADOR IN ($in)
+                  AND COALESCE(excluido_firebird, 'N') = 'N'
             ";
 
             $stmt = $pdo_master->prepare($sql);
@@ -65,6 +66,7 @@ $stmt = $pdo_master->prepare("
     WHERE c.DTLANC BETWEEN ? AND ?
       AND c.CMCONTADOR = 9
       AND (c.validado IS NULL OR c.validado = 'N')
+      AND COALESCE(c.excluido_firebird, 'N') = 'N'
     ORDER BY c.VLRPARCELA ASC
 ");
 

@@ -616,13 +616,70 @@ function whatsappMensagemResumoDiario(PDO $pdo, int $empresaId = 1): string
 
     $diferenca = $sistema - $tesouraria;
 
+    $stmt = $pdo->prepare("
+        SELECT COALESCE(SUM(r.valor_bruto), 0)
+        FROM armazem_conciliacao_recebimentos r
+        INNER JOIN armazem_cr001 c
+            ON c.recebimento_id = r.id
+        WHERE r.data_venda BETWEEN ? AND ?
+          AND c.DTLANC BETWEEN ? AND ?
+          AND COALESCE(c.excluido_firebird, 'N') = 'N'
+    ");
+    $stmt->execute([$inicio, $fim, $inicio, $fim]);
+    $totalSistemaRecebiveis = (float)$stmt->fetchColumn();
+
+    $stmt = $pdo->prepare("
+        SELECT COALESCE(SUM(c.VLRPARCELA), 0)
+        FROM armazem_cr001 c
+        INNER JOIN armazem_conciliacao_recebimentos r
+            ON r.id = c.recebimento_id
+        WHERE c.DTLANC BETWEEN ? AND ?
+          AND r.data_venda BETWEEN ? AND ?
+          AND c.CMCONTADOR <> 9
+          AND NOT (c.CMCONTADOR = 1 AND c.STATUS = 'QT')
+          AND COALESCE(c.excluido_firebird, 'N') = 'N'
+    ");
+    $stmt->execute([$inicio, $fim, $inicio, $fim]);
+    $totalCR001Recebiveis = (float)$stmt->fetchColumn();
+
+    $stmt = $pdo->prepare("
+        SELECT COALESCE(SUM(r.valor_bruto), 0)
+        FROM armazem_conciliacao_recebimentos r
+        WHERE r.data_venda BETWEEN ? AND ?
+          AND NOT EXISTS (
+              SELECT 1
+              FROM armazem_cr001 c
+              WHERE c.recebimento_id = r.id
+                AND COALESCE(c.excluido_firebird, 'N') = 'N'
+          )
+    ");
+    $stmt->execute([$inicio, $fim]);
+    $totalRecebiveisNaoConciliados = (float)$stmt->fetchColumn();
+
+    $stmt = $pdo->prepare("
+        SELECT COALESCE(SUM(c.VLRPARCELA), 0)
+        FROM armazem_cr001 c
+        WHERE c.DTLANC BETWEEN ? AND ?
+          AND c.CMCONTADOR <> 9
+          AND c.recebimento_id IS NULL
+          AND NOT (c.CMCONTADOR = 1 AND c.STATUS = 'QT')
+          AND COALESCE(c.excluido_firebird, 'N') = 'N'
+    ");
+    $stmt->execute([$inicio, $fim]);
+    $totalCR001NaoConciliados = (float)$stmt->fetchColumn();
+
+    $diferencaRecebiveis = ($totalSistemaRecebiveis + $totalRecebiveisNaoConciliados) - ($totalCR001Recebiveis + $totalCR001NaoConciliados);
+
     $msg = "*Resumo do Dia*\n\n";
     $msg .= date('d/m/Y') . "\n\n";
     $msg .= "Vendas: R$ " . number_format($vendas, 2, ',', '.') . "\n";
     $msg .= "Caixa Sistema: R$ " . number_format($sistema, 2, ',', '.') . "\n";
     $msg .= "Tesouraria: R$ " . number_format($tesouraria, 2, ',', '.') . "\n";
-    $msg .= "Diferenca: R$ " . number_format($diferenca, 2, ',', '.') . "\n\n";
-    $msg .= abs((float)$diferenca) < 0.01 ? "Caixa conferido" : "Divergencia no caixa";
+    $msg .= "Diferenca Caixa: R$ " . number_format($diferenca, 2, ',', '.') . "\n";
+    $msg .= "Diferenca Recebiveis: R$ " . number_format($diferencaRecebiveis, 2, ',', '.') . "\n\n";
+    $msg .= abs((float)$diferenca) < 0.01 && abs((float)$diferencaRecebiveis) < 0.01
+        ? "Caixa e recebiveis conferidos"
+        : "Ha divergencias para conferir";
 
     return $msg;
 }

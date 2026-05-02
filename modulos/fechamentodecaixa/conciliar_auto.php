@@ -47,6 +47,7 @@ $sqlSeguro = "
             SELECT 1
             FROM armazem_cr001 cx
             WHERE cx.recebimento_id = r.id
+              AND COALESCE(cx.excluido_firebird, 'N') = 'N'
         )
     ),
     cr AS (
@@ -65,6 +66,7 @@ $sqlSeguro = "
         FROM armazem_cr001 c
         WHERE c.recebimento_id IS NULL
           AND (c.validado IS NULL OR c.validado <> 'S')
+          AND COALESCE(c.excluido_firebird, 'N') = 'N'
     )
     SELECT r.id rec_id, r.CMCONTADOR, c.CRCONTADOR
     FROM rec r
@@ -102,10 +104,12 @@ $sqlAproximado = "
       AND c.DTLANC BETWEEN ? AND ?
       AND c.recebimento_id IS NULL
       AND (c.validado IS NULL OR c.validado <> 'S')
+      AND COALESCE(c.excluido_firebird, 'N') = 'N'
       AND NOT EXISTS (
           SELECT 1
           FROM armazem_cr001 cx
           WHERE cx.recebimento_id = r.id
+            AND COALESCE(cx.excluido_firebird, 'N') = 'N'
       )
 ";
 
@@ -127,6 +131,7 @@ function conciliar($pdo, $rec_id, $cm, $crcontador) {
         SELECT recebimento_id
         FROM armazem_cr001
         WHERE CRCONTADOR = ?
+          AND COALESCE(excluido_firebird, 'N') = 'N'
     ");
     $check->execute([$crcontador]);
     $existe = $check->fetch(PDO::FETCH_ASSOC);
@@ -140,6 +145,7 @@ function conciliar($pdo, $rec_id, $cm, $crcontador) {
         SELECT 1
         FROM armazem_cr001
         WHERE recebimento_id = ?
+          AND COALESCE(excluido_firebird, 'N') = 'N'
         LIMIT 1
     ");
     $checkRec->execute([$rec_id]);
@@ -153,6 +159,7 @@ function conciliar($pdo, $rec_id, $cm, $crcontador) {
         SET recebimento_id = ?, CMCONTADOR = ?
         WHERE CRCONTADOR = ?
         AND recebimento_id IS NULL
+        AND COALESCE(excluido_firebird, 'N') = 'N'
     ");
 
     return $update->execute([$rec_id, $cm, $crcontador]);

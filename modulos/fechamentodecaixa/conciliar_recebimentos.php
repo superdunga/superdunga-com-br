@@ -30,6 +30,7 @@ $stmtOk = $pdo_master->prepare("
     INNER JOIN armazem_cr001 c
         ON c.recebimento_id = r.id
     WHERE r.data_venda BETWEEN ? AND ?
+      AND COALESCE(c.excluido_firebird, 'N') = 'N'
     ORDER BY r.data_venda ASC, r.id ASC, c.CRCONTADOR ASC
 ");
 $stmtOk->execute([$inicio, $fim]);
@@ -59,6 +60,7 @@ $stmtSeguro = $pdo_master->prepare("
               SELECT 1
               FROM armazem_cr001 cx
               WHERE cx.recebimento_id = r.id
+                AND COALESCE(cx.excluido_firebird, 'N') = 'N'
           )
     ),
     cr AS (
@@ -79,6 +81,7 @@ $stmtSeguro = $pdo_master->prepare("
         WHERE c.DTLANC BETWEEN ? AND ?
           AND c.recebimento_id IS NULL
           AND (c.validado IS NULL OR c.validado <> 'S')
+          AND COALESCE(c.excluido_firebird, 'N') = 'N'
     )
     SELECT
         r.id AS rec_id,
@@ -122,10 +125,12 @@ $stmtAprox = $pdo_master->prepare("
       AND c.DTLANC BETWEEN ? AND ?
       AND c.recebimento_id IS NULL
       AND (c.validado IS NULL OR c.validado <> 'S')
+      AND COALESCE(c.excluido_firebird, 'N') = 'N'
       AND NOT EXISTS (
           SELECT 1
           FROM armazem_cr001 cx
           WHERE cx.recebimento_id = r.id
+            AND COALESCE(cx.excluido_firebird, 'N') = 'N'
       )
     ORDER BY r.valor_bruto ASC, r.data_venda ASC, c.DTLANC ASC
 ");
@@ -152,6 +157,7 @@ $stmtDup = $pdo_master->prepare("
               SELECT 1
               FROM armazem_cr001 cx
               WHERE cx.recebimento_id = r.id
+                AND COALESCE(cx.excluido_firebird, 'N') = 'N'
           )
     ),
     cr AS (
@@ -168,6 +174,7 @@ $stmtDup = $pdo_master->prepare("
         WHERE c.DTLANC BETWEEN ? AND ?
           AND c.recebimento_id IS NULL
           AND (c.validado IS NULL OR c.validado <> 'S')
+          AND COALESCE(c.excluido_firebird, 'N') = 'N'
     )
     SELECT
         r.id AS rec_id,
@@ -203,6 +210,7 @@ $stmtReceb = $pdo_master->prepare("
           SELECT 1
           FROM armazem_cr001 cx
           WHERE cx.recebimento_id = r.id
+            AND COALESCE(cx.excluido_firebird, 'N') = 'N'
       )
       AND NOT EXISTS (
           SELECT 1
@@ -212,6 +220,7 @@ $stmtReceb = $pdo_master->prepare("
             AND c.DTLANC BETWEEN ? AND ?
             AND c.recebimento_id IS NULL
             AND (c.validado IS NULL OR c.validado <> 'S')
+            AND COALESCE(c.excluido_firebird, 'N') = 'N'
       )
     ORDER BY r.data_venda ASC, r.id ASC
 ");
@@ -231,6 +240,7 @@ $stmtCr = $pdo_master->prepare("
     WHERE c.DTLANC BETWEEN ? AND ?
       AND c.recebimento_id IS NULL
       AND (c.validado IS NULL OR c.validado <> 'S')
+      AND COALESCE(c.excluido_firebird, 'N') = 'N'
       AND NOT EXISTS (
           SELECT 1
           FROM armazem_conciliacao_recebimentos r
@@ -241,6 +251,7 @@ $stmtCr = $pdo_master->prepare("
                 SELECT 1
                 FROM armazem_cr001 cx
                 WHERE cx.recebimento_id = r.id
+                  AND COALESCE(cx.excluido_firebird, 'N') = 'N'
             )
       )
     ORDER BY c.DTLANC ASC, c.CRCONTADOR ASC

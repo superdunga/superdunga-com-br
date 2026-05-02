@@ -45,6 +45,7 @@ $stmt = $pdo_master->prepare("
     SELECT recebimento_id
     FROM armazem_cr001
     WHERE CRCONTADOR = ?
+      AND COALESCE(excluido_firebird, 'N') = 'N'
 ");
 $stmt->execute([$cr_id]);
 $cr = $stmt->fetch(PDO::FETCH_ASSOC);
@@ -63,6 +64,7 @@ $stmt = $pdo_master->prepare("
         recebimento_id = ?
     WHERE CRCONTADOR = ?
     AND recebimento_id IS NULL
+    AND COALESCE(excluido_firebird, 'N') = 'N'
 ");
 $stmt->execute([
     $rec['CMCONTADOR'],

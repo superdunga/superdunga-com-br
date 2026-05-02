@@ -49,6 +49,7 @@ $stmtCr = $pdo_master->prepare("
     WHERE c.recebimento_id IS NULL
       AND c.CMCONTADOR <> 9
       AND (c.validado IS NULL OR c.validado <> 'S')
+      AND COALESCE(c.excluido_firebird, 'N') = 'N'
 
       -- mesma janela da tela principal
       AND c.DTLANC BETWEEN ? AND ?
@@ -89,6 +90,7 @@ if (empty($crs)) {
         WHERE c.recebimento_id IS NULL
           AND c.CMCONTADOR <> 9
           AND (c.validado IS NULL OR c.validado <> 'S')
+          AND COALESCE(c.excluido_firebird, 'N') = 'N'
 
           AND c.DTLANC BETWEEN DATE_SUB(?, INTERVAL 5 DAY)
                            AND DATE_ADD(?, INTERVAL 5 DAY)
@@ -121,6 +123,7 @@ if ($modoFallback && empty($crs)) {
         WHERE c.recebimento_id IS NULL
           AND c.CMCONTADOR <> 9
           AND (c.validado IS NULL OR c.validado <> 'S')
+          AND COALESCE(c.excluido_firebird, 'N') = 'N'
           AND ABS(c.VLRPARCELA) = ABS(?)
         ORDER BY distancia_minutos ASC, c.DTLANC ASC
         LIMIT 15

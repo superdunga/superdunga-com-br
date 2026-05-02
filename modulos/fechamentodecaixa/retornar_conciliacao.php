@@ -16,6 +16,7 @@ FROM armazem_cr001
 WHERE recebimento_id IS NOT NULL
   AND CRCONTADOR IS NOT NULL
   AND CMCONTADOR IS NOT NULL
+  AND COALESCE(excluido_firebird, 'N') = 'N'
   AND (enviado_firebird IS NULL OR enviado_firebird IN ('N','E'))
 LIMIT 500
 ";
