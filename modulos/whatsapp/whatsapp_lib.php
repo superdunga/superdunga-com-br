@@ -585,9 +585,8 @@ function whatsappMensagemResumoDiario(PDO $pdo, int $empresaId = 1): string
                 FROM armazem_zconfig005
                 WHERE CODCX IS NOT NULL
             ) z ON z.CODCX = b.CBCONTADOR
-            LEFT JOIN armazem_bnc001_ids_temp t
-                ON t.MOVCONTADOR = b.MOVCONTADOR
             WHERE b.DTLANC BETWEEN ? AND ?
+              AND COALESCE(b.deletado, 'N') <> 'S'
             GROUP BY
                 DATE(DATE_SUB(b.DTLANC, INTERVAL 7 HOUR)),
                 b.CBCONTADOR

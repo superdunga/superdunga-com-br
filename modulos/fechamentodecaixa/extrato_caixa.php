@@ -31,14 +31,11 @@ $stmt = $pdo_master->prepare("
         END AS valor_calculado,
 
         CASE 
-            WHEN t.MOVCONTADOR IS NULL THEN 'DELETADO'
+            WHEN COALESCE(b.deletado, 'N') = 'S' THEN 'DELETADO'
             ELSE 'ATIVO'
         END AS status
 
     FROM armazem_bnc001 b
-
-    LEFT JOIN armazem_bnc001_ids_temp t
-        ON t.MOVCONTADOR = b.MOVCONTADOR
 
     WHERE b.CBCONTADOR = ?
       AND b.DTLANC BETWEEN ? AND ?
