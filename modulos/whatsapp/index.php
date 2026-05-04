@@ -26,6 +26,31 @@ function requireCsrf(string $csrf): void
     }
 }
 
+function formatarAgendaWhatsapp(array $agendamento, array $nomesDias): string
+{
+    $periodicidade = (string)($agendamento['periodicidade'] ?? '');
+    $horario = !empty($agendamento['horario']) ? substr((string)$agendamento['horario'], 0, 5) : '--:--';
+
+    if ($periodicidade === 'SEMANAL') {
+        $diasAgendamento = array_filter(array_map('intval', explode(',', (string)($agendamento['dias_semana'] ?? ''))));
+        $diasTexto = [];
+        foreach ($diasAgendamento as $dia) {
+            if (isset($nomesDias[$dia])) {
+                $diasTexto[] = $nomesDias[$dia];
+            }
+        }
+
+        return 'Semanal' . (!empty($diasTexto) ? ' ' . implode(', ', $diasTexto) : '') . ' as ' . $horario;
+    }
+
+    if ($periodicidade === 'MENSAL') {
+        $diaMes = !empty($agendamento['dia_mes']) ? ' dia ' . (int)$agendamento['dia_mes'] : '';
+        return 'Mensal' . $diaMes . ' as ' . $horario;
+    }
+
+    return 'Diario as ' . $horario;
+}
+
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     try {
         requireCsrf($csrf);
@@ -314,8 +339,11 @@ require __DIR__ . '/../../layout/header.php';
 
 <?php if ($cronUrl): ?>
     <div class="alert alert-info">
-        <strong>URL do agendador:</strong>
-        <code><?= htmlspecialchars($cronUrl) ?></code>
+        <div class="fw-semibold mb-1">URL do agendador interno</div>
+        <div class="small mb-2">
+            Este token e gerado pelo SuperDunga para o cron executar as mensagens agendadas. Ele nao e o token da API Waseller.
+        </div>
+        <code class="d-block text-break"><?= htmlspecialchars($cronUrl) ?></code>
     </div>
 <?php endif; ?>
 
@@ -352,12 +380,15 @@ require __DIR__ . '/../../layout/header.php';
                     </div>
 
                     <div class="col-12">
-                        <label class="form-label">Token</label>
+                        <label class="form-label">Token da API Waseller</label>
                         <input type="password" name="token" class="form-control" value="<?= htmlspecialchars($config['token'] ?? '') ?>" required>
+                        <div class="form-text">
+                            Use aqui o token gerado no painel da Waseller para envio das mensagens.
+                        </div>
                     </div>
 
                     <div class="col-12">
-                        <label class="form-label">URL base da API</label>
+                        <label class="form-label">URL base da API Waseller</label>
                         <input type="url" name="api_base_url" class="form-control" value="<?= htmlspecialchars($config['api_base_url'] ?? 'https://api-whatsapp.wascript.com.br/api/enviar-texto') ?>" required>
                     </div>
 
@@ -606,22 +637,16 @@ require __DIR__ . '/../../layout/header.php';
                             $diasSelecionados = array_filter(array_map('intval', explode(',', (string)($r['dias_semana'] ?? ''))));
                             $nomesDias = [1 => 'Seg', 2 => 'Ter', 3 => 'Qua', 4 => 'Qui', 5 => 'Sex', 6 => 'Sab', 7 => 'Dom'];
                             $agendamentos = $agendamentosRotina[(int)$r['id']] ?? [];
-                            $agenda = count($agendamentos) . ' agendamento(s)';
-                            if ($r['periodicidade'] === 'SEMANAL' && !empty($diasSelecionados)) {
-                                $partesDias = [];
-                                foreach ($diasSelecionados as $diaAgenda) {
-                                    if (isset($nomesDias[$diaAgenda])) {
-                                        $partesDias[] = $nomesDias[$diaAgenda];
-                                    }
-                                }
-                                $agenda .= ' - ' . implode(', ', $partesDias);
+                            $agendamentosAtivos = array_values(array_filter($agendamentos, function ($ag) {
+                                return ($ag['ativo'] ?? 'N') === 'S';
+                            }));
+                            $partesAgenda = [];
+                            foreach ($agendamentosAtivos as $agendamentoAtivo) {
+                                $partesAgenda[] = formatarAgendaWhatsapp($agendamentoAtivo, $nomesDias);
                             }
-                            if ($r['periodicidade'] === 'MENSAL' && !empty($r['dia_mes'])) {
-                                $agenda .= ' - dia ' . (int)$r['dia_mes'];
-                            }
-                            if (!empty($r['horario']) && $r['periodicidade'] !== 'MANUAL') {
-                                $agenda .= ' as ' . substr($r['horario'], 0, 5);
-                            }
+                            $agenda = empty($partesAgenda)
+                                ? 'Sem agendamento ativo'
+                                : count($partesAgenda) . ' agendamento(s): ' . implode('; ', $partesAgenda);
                         ?>
                         <tr>
                             <td>
@@ -654,7 +679,7 @@ require __DIR__ . '/../../layout/header.php';
                                     -
                                 <?php else: ?>
                                     <?php
-                                        $proximos = array_values(array_filter(array_column($agendamentos, 'proxima_execucao')));
+                                        $proximos = array_values(array_filter(array_column($agendamentosAtivos, 'proxima_execucao')));
                                         sort($proximos);
                                     ?>
                                     <?= !empty($proximos) ? date('d/m/Y H:i', strtotime($proximos[0])) : '-' ?>
