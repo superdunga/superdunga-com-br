@@ -199,6 +199,36 @@ function garantirTabelaSnapshotAtivos(PDO $pdo): void
     ");
 }
 
+function garantirChaveEst006(PDO $pdo): void
+{
+    $stmt = $pdo->prepare("
+        SELECT COUNT(*)
+        FROM information_schema.STATISTICS
+        WHERE TABLE_SCHEMA = DATABASE()
+          AND TABLE_NAME = 'armazem_est006'
+          AND INDEX_NAME = 'uniq_est006_compraconta'
+    ");
+    $stmt->execute();
+    if ((int)$stmt->fetchColumn() > 0) {
+        $pdo->exec("ALTER TABLE armazem_est006 DROP INDEX uniq_est006_compraconta");
+    }
+
+    $stmt = $pdo->prepare("
+        SELECT COUNT(*)
+        FROM information_schema.STATISTICS
+        WHERE TABLE_SCHEMA = DATABASE()
+          AND TABLE_NAME = 'armazem_est006'
+          AND INDEX_NAME = 'uniq_est006_item_compra'
+    ");
+    $stmt->execute();
+    if ((int)$stmt->fetchColumn() === 0) {
+        $pdo->exec("
+            ALTER TABLE armazem_est006
+            ADD UNIQUE KEY uniq_est006_item_compra (ITEMCOMPRACONTADOR, COMPRACONTA)
+        ");
+    }
+}
+
 function processarAtivosFirebird(PDO $pdo, array $dados, array $config): void
 {
     $nomeTabela = $config['tabela_mysql'];
@@ -533,7 +563,7 @@ $configAtivosFirebird = [
     'cp004_ativos' => ['tabela_mysql' => 'armazem_cp004', 'coluna_chave' => 'CPCONTADOR', 'nome_firebird' => 'CP004'],
     'est004_ativos' => ['tabela_mysql' => 'armazem_est004', 'coluna_chave' => 'CODPRODUTO', 'nome_firebird' => 'EST004'],
     'est005_ativos' => ['tabela_mysql' => 'armazem_est005', 'coluna_chave' => 'COMPRACONTADOR', 'nome_firebird' => 'EST005'],
-    'est006_ativos' => ['tabela_mysql' => 'armazem_est006', 'coluna_chave' => 'COMPRACONTA', 'nome_firebird' => 'EST006'],
+    'est006_ativos' => ['tabela_mysql' => 'armazem_est006', 'colunas_chave' => ['ITEMCOMPRACONTADOR', 'COMPRACONTA'], 'nome_firebird' => 'EST006'],
     'est008_ativos' => ['tabela_mysql' => 'armazem_est008', 'colunas_chave' => ['EMPRESA', 'ITEMVENDACONTADOR', 'VENDACONTA', 'PRODUTO'], 'nome_firebird' => 'EST008'],
     'cr002_ativos' => ['tabela_mysql' => 'armazem_cr002', 'coluna_chave' => 'CLICONTADOR', 'nome_firebird' => 'CR002'],
     'zconfig005_ativos' => ['tabela_mysql' => 'armazem_zconfig005', 'coluna_chave' => 'CODUSER', 'nome_firebird' => 'ZCONFIG005'],
@@ -549,10 +579,14 @@ $configTabelasGenericas = [
     'cp003' => ['tabela_mysql' => 'armazem_cp003', 'chaves' => ['FCONTADOR']],
     'cp004' => ['tabela_mysql' => 'armazem_cp004', 'chaves' => ['CPCONTADOR']],
     'est005' => ['tabela_mysql' => 'armazem_est005', 'chaves' => ['COMPRACONTADOR']],
-    'est006' => ['tabela_mysql' => 'armazem_est006', 'chaves' => ['COMPRACONTA']],
+    'est006' => ['tabela_mysql' => 'armazem_est006', 'chaves' => ['ITEMCOMPRACONTADOR', 'COMPRACONTA']],
 ];
 
 if (isset($configTabelasGenericas[$tabela])) {
+    if ($tabela === 'est006') {
+        garantirChaveEst006($pdo_master);
+    }
+
     processarTabelaFirebirdGenerica(
         $pdo_master,
         $dados,

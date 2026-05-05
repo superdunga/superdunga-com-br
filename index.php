@@ -31,7 +31,7 @@ $atalhos = [
     [
         'titulo' => 'Auditoria das Compras',
         'descricao' => 'Acompanhamento e auditoria dos processos de compras.',
-        'href' => 'modulos/auditoria/listar.php',
+        'href' => 'modulos/auditoria/menu_auditoria.php',
         'classe' => 'border-info',
         'botao' => 'btn-info',
         'icone' => 'A',
