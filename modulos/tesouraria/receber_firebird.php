@@ -32,6 +32,10 @@ $tabelas_permitidas = [
     'est004_ativos',
     'est005_ativos',
     'est006_ativos',
+    'est008_ativos',
+    'cr002_ativos',
+    'zconfig005_ativos',
+    'est007_ativos',
 ];
 
 if (!in_array($tabela, $tabelas_permitidas)) {
@@ -103,8 +107,46 @@ function garantirControleExclusaoCR001(PDO $pdo): void
     }
 }
 
-function garantirControleExclusaoTabela(PDO $pdo, string $nomeTabela, string $colunaChave): void
+function normalizarColunasChave($colunasChave): array
 {
+    return is_array($colunasChave) ? array_values($colunasChave) : [$colunasChave];
+}
+
+function montarChaveAtivo($item, array $colunasChave): ?string
+{
+    if (!is_array($item) && count($colunasChave) === 1) {
+        return ($item !== null && $item !== '') ? (string)$item : null;
+    }
+
+    if (!is_array($item)) {
+        return null;
+    }
+
+    $partes = [];
+    foreach ($colunasChave as $coluna) {
+        if (!array_key_exists($coluna, $item) || $item[$coluna] === null || $item[$coluna] === '') {
+            return null;
+        }
+        $partes[] = (string)$item[$coluna];
+    }
+
+    return implode("\x1F", $partes);
+}
+
+function montarExpressaoChaveSql(string $alias, array $colunasChave): string
+{
+    $partes = array_map(
+        fn($coluna) => "COALESCE(CAST($alias.`$coluna` AS CHAR), '')",
+        $colunasChave
+    );
+
+    return count($partes) === 1 ? $partes[0] : 'CONCAT_WS(CHAR(31), ' . implode(', ', $partes) . ')';
+}
+
+function garantirControleExclusaoTabela(PDO $pdo, string $nomeTabela, $colunasChave): void
+{
+    $colunasChave = normalizarColunasChave($colunasChave);
+
     $colunas = [
         'excluido_firebird' => "ALTER TABLE `$nomeTabela` ADD excluido_firebird CHAR(1) NOT NULL DEFAULT 'N'",
         'data_exclusao_firebird' => "ALTER TABLE `$nomeTabela` ADD data_exclusao_firebird DATETIME NULL",
@@ -137,16 +179,34 @@ function garantirControleExclusaoTabela(PDO $pdo, string $nomeTabela, string $co
     ");
     $stmt->execute([$nomeTabela, $nomeIndice]);
     if ((int)$stmt->fetchColumn() === 0) {
-        $pdo->exec("ALTER TABLE `$nomeTabela` ADD INDEX `$nomeIndice` (excluido_firebird, `$colunaChave`)");
+        $colunasIndice = array_map(fn($coluna) => "`$coluna`", $colunasChave);
+        $pdo->exec("ALTER TABLE `$nomeTabela` ADD INDEX `$nomeIndice` (excluido_firebird, " . implode(', ', $colunasIndice) . ")");
     }
+}
+
+function garantirTabelaSnapshotAtivos(PDO $pdo): void
+{
+    $pdo->exec("
+        CREATE TABLE IF NOT EXISTS sync_firebird_ativos_temp (
+            sync_id VARCHAR(64) NOT NULL,
+            tabela VARCHAR(80) NOT NULL,
+            chave_sync VARCHAR(255) NOT NULL,
+            criado_em DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (sync_id, tabela, chave_sync),
+            INDEX idx_sync_firebird_ativos_temp_tabela (tabela, criado_em)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    ");
 }
 
 function processarAtivosFirebird(PDO $pdo, array $dados, array $config): void
 {
     $nomeTabela = $config['tabela_mysql'];
-    $colunaChave = $config['coluna_chave'];
+    $colunasChave = normalizarColunasChave($config['colunas_chave'] ?? $config['coluna_chave']);
     $tabelaFirebird = $config['nome_firebird'];
     $registros = $dados['registros'] ?? $dados['ativos'] ?? $dados;
+    $syncId = $_GET['sync_id'] ?? ($dados['sync_id'] ?? null);
+    $iniciar = ($_GET['iniciar'] ?? '') === '1';
+    $finalizar = ($_GET['finalizar'] ?? '') === '1';
 
     if (!is_array($registros)) {
         echo json_encode(["erro" => "Lista de ativos invalida."]);
@@ -155,20 +215,108 @@ function processarAtivosFirebird(PDO $pdo, array $dados, array $config): void
 
     $ids = [];
     foreach ($registros as $item) {
-        $id = is_array($item) ? ($item[$colunaChave] ?? null) : $item;
-        if ($id !== null && $id !== '') {
-            $ids[(string)$id] = true;
+        $id = montarChaveAtivo($item, $colunasChave);
+        if ($id !== null) {
+            $ids[$id] = true;
         }
     }
 
-    if (empty($ids) && ($_GET['confirmar_vazio'] ?? '') !== '1') {
+    if (empty($ids) && !$finalizar && ($_GET['confirmar_vazio'] ?? '') !== '1') {
         echo json_encode([
             "erro" => "Lista de ativos vazia. Para marcar todos como excluidos, envie confirmar_vazio=1."
         ]);
         exit;
     }
 
-    garantirControleExclusaoTabela($pdo, $nomeTabela, $colunaChave);
+    garantirControleExclusaoTabela($pdo, $nomeTabela, $colunasChave);
+
+    if ($syncId) {
+        garantirTabelaSnapshotAtivos($pdo);
+
+        if ($iniciar) {
+            $stmtLimpar = $pdo->prepare("DELETE FROM sync_firebird_ativos_temp WHERE sync_id = ? AND tabela = ?");
+            $stmtLimpar->execute([$syncId, $nomeTabela]);
+        }
+
+        if (!empty($ids)) {
+            $stmtSnapshot = $pdo->prepare("
+                INSERT IGNORE INTO sync_firebird_ativos_temp (sync_id, tabela, chave_sync)
+                VALUES (?, ?, ?)
+            ");
+            foreach (array_keys($ids) as $id) {
+                $stmtSnapshot->execute([$syncId, $nomeTabela, $id]);
+            }
+        }
+
+        if (!$finalizar) {
+            echo json_encode([
+                "status" => "ok",
+                "tabela" => $nomeTabela,
+                "sync_id" => $syncId,
+                "recebidos" => count($ids),
+                "finalizado" => false
+            ]);
+            exit;
+        }
+
+        $exprChave = montarExpressaoChaveSql('m', $colunasChave);
+
+        $pdo->beginTransaction();
+        try {
+            $stmtReativar = $pdo->prepare("
+                UPDATE `$nomeTabela` m
+                INNER JOIN sync_firebird_ativos_temp t
+                    ON t.sync_id = ?
+                   AND t.tabela = ?
+                   AND $exprChave = t.chave_sync
+                SET m.excluido_firebird = 'N',
+                    m.data_exclusao_firebird = NULL,
+                    m.motivo_sync = NULL,
+                    m.ultima_presenca_firebird = NOW()
+            ");
+            $stmtReativar->execute([$syncId, $nomeTabela]);
+            $reativados = $stmtReativar->rowCount();
+
+            $stmtExcluir = $pdo->prepare("
+                UPDATE `$nomeTabela` m
+                LEFT JOIN sync_firebird_ativos_temp t
+                    ON t.sync_id = ?
+                   AND t.tabela = ?
+                   AND $exprChave = t.chave_sync
+                SET m.excluido_firebird = 'S',
+                    m.data_exclusao_firebird = NOW(),
+                    m.motivo_sync = ?
+                WHERE t.chave_sync IS NULL
+                  AND COALESCE(m.excluido_firebird, 'N') <> 'S'
+            ");
+            $stmtExcluir->execute([$syncId, $nomeTabela, "Nao encontrado na foto $tabelaFirebird do Firebird"]);
+            $marcadosExcluidos = $stmtExcluir->rowCount();
+
+            $stmtContar = $pdo->prepare("SELECT COUNT(*) FROM sync_firebird_ativos_temp WHERE sync_id = ? AND tabela = ?");
+            $stmtContar->execute([$syncId, $nomeTabela]);
+            $totalSnapshot = (int)$stmtContar->fetchColumn();
+
+            $stmtLimpar = $pdo->prepare("DELETE FROM sync_firebird_ativos_temp WHERE sync_id = ? AND tabela = ?");
+            $stmtLimpar->execute([$syncId, $nomeTabela]);
+
+            $pdo->commit();
+        } catch (Throwable $e) {
+            $pdo->rollBack();
+            throw $e;
+        }
+
+        echo json_encode([
+            "status" => "ok",
+            "tabela" => $nomeTabela,
+            "chave" => $colunasChave,
+            "sync_id" => $syncId,
+            "processados" => $totalSnapshot,
+            "reativados" => $reativados,
+            "marcados_excluidos" => $marcadosExcluidos,
+            "finalizado" => true
+        ]);
+        exit;
+    }
 
     $pdo->beginTransaction();
 
@@ -189,7 +337,7 @@ function processarAtivosFirebird(PDO $pdo, array $dados, array $config): void
         $stmtReativar = $pdo->prepare("
             UPDATE `$nomeTabela` m
             INNER JOIN tmp_firebird_ativos_sync t
-                ON CAST(m.`$colunaChave` AS CHAR) = t.id
+                ON " . montarExpressaoChaveSql('m', $colunasChave) . " = t.id
             SET m.excluido_firebird = 'N',
                 m.data_exclusao_firebird = NULL,
                 m.motivo_sync = NULL,
@@ -201,7 +349,7 @@ function processarAtivosFirebird(PDO $pdo, array $dados, array $config): void
         $stmtExcluir = $pdo->prepare("
             UPDATE `$nomeTabela` m
             LEFT JOIN tmp_firebird_ativos_sync t
-                ON CAST(m.`$colunaChave` AS CHAR) = t.id
+                ON " . montarExpressaoChaveSql('m', $colunasChave) . " = t.id
             SET m.excluido_firebird = 'S',
                 m.data_exclusao_firebird = NOW(),
                 m.motivo_sync = ?
@@ -220,7 +368,7 @@ function processarAtivosFirebird(PDO $pdo, array $dados, array $config): void
     echo json_encode([
         "status" => "ok",
         "tabela" => $nomeTabela,
-        "chave" => $colunaChave,
+        "chave" => $colunasChave,
         "processados" => count($ids),
         "reativados" => $reativados,
         "marcados_excluidos" => $marcadosExcluidos
@@ -358,6 +506,10 @@ $configAtivosFirebird = [
     'est004_ativos' => ['tabela_mysql' => 'armazem_est004', 'coluna_chave' => 'CODPRODUTO', 'nome_firebird' => 'EST004'],
     'est005_ativos' => ['tabela_mysql' => 'armazem_est005', 'coluna_chave' => 'COMPRACONTADOR', 'nome_firebird' => 'EST005'],
     'est006_ativos' => ['tabela_mysql' => 'armazem_est006', 'coluna_chave' => 'COMPRACONTA', 'nome_firebird' => 'EST006'],
+    'est008_ativos' => ['tabela_mysql' => 'armazem_est008', 'colunas_chave' => ['EMPRESA', 'ITEMVENDACONTADOR', 'VENDACONTA', 'PRODUTO'], 'nome_firebird' => 'EST008'],
+    'cr002_ativos' => ['tabela_mysql' => 'armazem_cr002', 'coluna_chave' => 'CLICONTADOR', 'nome_firebird' => 'CR002'],
+    'zconfig005_ativos' => ['tabela_mysql' => 'armazem_zconfig005', 'coluna_chave' => 'CODUSER', 'nome_firebird' => 'ZCONFIG005'],
+    'est007_ativos' => ['tabela_mysql' => 'armazem_est007', 'coluna_chave' => 'VENDACONTADOR', 'nome_firebird' => 'EST007'],
 ];
 
 if (isset($configAtivosFirebird[$tabela])) {
