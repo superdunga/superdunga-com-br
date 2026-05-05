@@ -4,7 +4,18 @@ require '../../config/conexao.php';
 
 /* 🔒 CONTROLE DE ACESSO (MASTER OU GERENTE) */
 if (!temNivel('GERENTE')) {
-    die('Acesso negado.');
+    require '../../layout/header.php';
+    ?>
+    <div class="card shadow-sm">
+        <div class="card-body text-center py-5">
+            <h1 class="h4 fw-bold mb-2">Acesso negado</h1>
+            <p class="text-muted mb-4">Seu usuario nao possui permissao para acessar o historico de inventarios.</p>
+            <a href="menu_tesouraria.php" class="btn btn-primary">Voltar para Tesouraria</a>
+        </div>
+    </div>
+    <?php
+    require '../../layout/footer.php';
+    exit;
 }
 
 $empresa_id = $_SESSION['empresa_id'];
