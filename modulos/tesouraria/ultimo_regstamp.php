@@ -18,6 +18,9 @@ $tabelas_permitidas = [
     'bnc001',
     'cr001',
     'cr002',
+    'cp001',
+    'cp003',
+    'cp004',
     'est007',
     'est004',
     'est008'

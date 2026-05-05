@@ -16,6 +16,9 @@ $tabelas_permitidas = [
     'cr001',
     'cr001_ativos',
     'cr002',
+    'cp001',
+    'cp003',
+    'cp004',
     'est007',
     'est004',
     'est008',
@@ -223,6 +226,97 @@ function processarAtivosFirebird(PDO $pdo, array $dados, array $config): void
     exit;
 }
 
+function processarTabelaFirebirdGenerica(PDO $pdo, array $dados, string $nomeTabela, array $chavesObrigatorias, array $colunasIgnoradas = []): void
+{
+    $colunasIgnoradas = array_merge($colunasIgnoradas, [
+        'excluido_firebird',
+        'data_exclusao_firebird',
+        'motivo_sync',
+        'ultima_presenca_firebird',
+    ]);
+
+    $stmtColunas = $pdo->prepare("
+        SELECT COLUMN_NAME
+        FROM information_schema.COLUMNS
+        WHERE TABLE_SCHEMA = DATABASE()
+          AND TABLE_NAME = ?
+        ORDER BY ORDINAL_POSITION
+    ");
+    $stmtColunas->execute([$nomeTabela]);
+
+    $colunas = array_values(array_filter($stmtColunas->fetchAll(PDO::FETCH_COLUMN), function ($coluna) use ($colunasIgnoradas) {
+        return !in_array($coluna, $colunasIgnoradas, true);
+    }));
+
+    if (empty($colunas)) {
+        echo json_encode(["erro" => "Tabela sem colunas mapeadas: $nomeTabela"]);
+        exit;
+    }
+
+    $colunasSql = implode(', ', array_map(function ($coluna) {
+        return "`$coluna`";
+    }, $colunas));
+
+    $valoresSql = implode(', ', array_map(function ($coluna) {
+        return ":$coluna";
+    }, $colunas));
+
+    $atualizacoes = [];
+    foreach ($colunas as $coluna) {
+        if (in_array($coluna, $chavesObrigatorias, true)) {
+            continue;
+        }
+        $atualizacoes[] = "`$coluna` = VALUES(`$coluna`)";
+    }
+
+    $sql = "
+        INSERT INTO `$nomeTabela` ($colunasSql)
+        VALUES ($valoresSql)
+        ON DUPLICATE KEY UPDATE
+            " . implode(",\n            ", $atualizacoes) . "
+    ";
+
+    $stmt = $pdo->prepare($sql);
+    $processadosLocal = 0;
+
+    $pdo->beginTransaction();
+
+    try {
+        foreach ($dados as $d) {
+            $temChaves = true;
+            foreach ($chavesObrigatorias as $chave) {
+                if (!isset($d[$chave]) || $d[$chave] === '') {
+                    $temChaves = false;
+                    break;
+                }
+            }
+
+            if (!$temChaves) {
+                continue;
+            }
+
+            $params = [];
+            foreach ($colunas as $coluna) {
+                $params[":$coluna"] = $d[$coluna] ?? null;
+            }
+
+            $stmt->execute($params);
+            $processadosLocal++;
+        }
+
+        $pdo->commit();
+    } catch (Throwable $e) {
+        $pdo->rollBack();
+        throw $e;
+    }
+
+    echo json_encode([
+        "status" => "ok",
+        "processados" => $processadosLocal
+    ]);
+    exit;
+}
+
 $configAtivosFirebird = [
     'bnc005_ativos' => ['tabela_mysql' => 'armazem_bnc005', 'coluna_chave' => 'ESCONTADOR', 'nome_firebird' => 'BNC005'],
     'cp001_ativos' => ['tabela_mysql' => 'armazem_cp001', 'coluna_chave' => 'CPCONTADOR', 'nome_firebird' => 'CP001'],
@@ -235,6 +329,21 @@ $configAtivosFirebird = [
 
 if (isset($configAtivosFirebird[$tabela])) {
     processarAtivosFirebird($pdo_master, $dados, $configAtivosFirebird[$tabela]);
+}
+
+$configTabelasGenericas = [
+    'cp001' => ['tabela_mysql' => 'armazem_cp001', 'chaves' => ['CPCONTADOR']],
+    'cp003' => ['tabela_mysql' => 'armazem_cp003', 'chaves' => ['FCONTADOR']],
+    'cp004' => ['tabela_mysql' => 'armazem_cp004', 'chaves' => ['QTCPCONTADOR']],
+];
+
+if (isset($configTabelasGenericas[$tabela])) {
+    processarTabelaFirebirdGenerica(
+        $pdo_master,
+        $dados,
+        $configTabelasGenericas[$tabela]['tabela_mysql'],
+        $configTabelasGenericas[$tabela]['chaves']
+    );
 }
 
 /* =====================================================
