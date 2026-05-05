@@ -354,7 +354,7 @@ $configAtivosFirebird = [
     'bnc005_ativos' => ['tabela_mysql' => 'armazem_bnc005', 'coluna_chave' => 'ESCONTADOR', 'nome_firebird' => 'BNC005'],
     'cp001_ativos' => ['tabela_mysql' => 'armazem_cp001', 'coluna_chave' => 'CPCONTADOR', 'nome_firebird' => 'CP001'],
     'cp003_ativos' => ['tabela_mysql' => 'armazem_cp003', 'coluna_chave' => 'FCONTADOR', 'nome_firebird' => 'CP003'],
-    'cp004_ativos' => ['tabela_mysql' => 'armazem_cp004', 'coluna_chave' => 'QTCPCONTADOR', 'nome_firebird' => 'CP004'],
+    'cp004_ativos' => ['tabela_mysql' => 'armazem_cp004', 'coluna_chave' => 'CPCONTADOR', 'nome_firebird' => 'CP004'],
     'est004_ativos' => ['tabela_mysql' => 'armazem_est004', 'coluna_chave' => 'CODPRODUTO', 'nome_firebird' => 'EST004'],
     'est005_ativos' => ['tabela_mysql' => 'armazem_est005', 'coluna_chave' => 'COMPRACONTADOR', 'nome_firebird' => 'EST005'],
     'est006_ativos' => ['tabela_mysql' => 'armazem_est006', 'coluna_chave' => 'COMPRACONTA', 'nome_firebird' => 'EST006'],
@@ -367,7 +367,7 @@ if (isset($configAtivosFirebird[$tabela])) {
 $configTabelasGenericas = [
     'cp001' => ['tabela_mysql' => 'armazem_cp001', 'chaves' => ['CPCONTADOR']],
     'cp003' => ['tabela_mysql' => 'armazem_cp003', 'chaves' => ['FCONTADOR']],
-    'cp004' => ['tabela_mysql' => 'armazem_cp004', 'chaves' => ['QTCPCONTADOR']],
+    'cp004' => ['tabela_mysql' => 'armazem_cp004', 'chaves' => ['CPCONTADOR']],
     'est005' => ['tabela_mysql' => 'armazem_est005', 'chaves' => ['COMPRACONTADOR']],
     'est006' => ['tabela_mysql' => 'armazem_est006', 'chaves' => ['COMPRACONTA']],
 ];
