@@ -75,13 +75,13 @@ if (!empty($vendasIds)) {
         FROM armazem_est008 i
         LEFT JOIN armazem_est004 p
             ON p.CONTAPRODUTO = i.PRODUTO
-        WHERE i.VENDACONTA IN ($placeholders)
-        ORDER BY i.VENDACONTA, i.ITEMVENDACONTADOR
+        WHERE i.ITEMVENDACONTADOR IN ($placeholders)
+        ORDER BY i.ITEMVENDACONTADOR, i.VENDACONTA
     ");
     $stmtItens->execute($vendasIds);
 
     while ($item = $stmtItens->fetch(PDO::FETCH_ASSOC)) {
-        $itensPorVenda[(int)$item['VENDACONTA']][] = $item;
+        $itensPorVenda[(int)$item['ITEMVENDACONTADOR']][] = $item;
     }
 }
 
@@ -126,7 +126,7 @@ foreach ($vendas as $v) {
                     <tbody>
                         <?php foreach ($itens as $item): ?>
                             <tr>
-                                <td><?= htmlspecialchars($item['ITEMVENDACONTADOR']) ?></td>
+                                <td><?= htmlspecialchars($item['VENDACONTA']) ?></td>
                                 <td><?= htmlspecialchars($item['CODPRODUTO'] ?? $item['PRODUTO']) ?></td>
                                 <td><?= htmlspecialchars($item['DESCPRODUTO'] ?? '') ?></td>
                                 <td><?= number_format((float)$item['QTDE'], 3, ',', '.') ?> <?= htmlspecialchars($item['UNIDADE'] ?? '') ?></td>
