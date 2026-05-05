@@ -135,10 +135,9 @@ function montarChaveAtivo($item, array $colunasChave): ?string
 
 function montarExpressaoChaveSql(string $alias, array $colunasChave): string
 {
-    $partes = array_map(
-        fn($coluna) => "COALESCE(CAST($alias.`$coluna` AS CHAR), '')",
-        $colunasChave
-    );
+    $partes = array_map(function ($coluna) use ($alias) {
+        return "COALESCE(CAST($alias.`$coluna` AS CHAR), '')";
+    }, $colunasChave);
 
     return count($partes) === 1 ? $partes[0] : 'CONCAT_WS(CHAR(31), ' . implode(', ', $partes) . ')';
 }
@@ -179,7 +178,9 @@ function garantirControleExclusaoTabela(PDO $pdo, string $nomeTabela, $colunasCh
     ");
     $stmt->execute([$nomeTabela, $nomeIndice]);
     if ((int)$stmt->fetchColumn() === 0) {
-        $colunasIndice = array_map(fn($coluna) => "`$coluna`", $colunasChave);
+        $colunasIndice = array_map(function ($coluna) {
+            return "`$coluna`";
+        }, $colunasChave);
         $pdo->exec("ALTER TABLE `$nomeTabela` ADD INDEX `$nomeIndice` (excluido_firebird, " . implode(', ', $colunasIndice) . ")");
     }
 }
