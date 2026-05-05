@@ -236,7 +236,7 @@ function processarTabelaFirebirdGenerica(PDO $pdo, array $dados, string $nomeTab
     ]);
 
     $stmtColunas = $pdo->prepare("
-        SELECT COLUMN_NAME
+        SELECT COLUMN_NAME, DATA_TYPE
         FROM information_schema.COLUMNS
         WHERE TABLE_SCHEMA = DATABASE()
           AND TABLE_NAME = ?
@@ -244,9 +244,17 @@ function processarTabelaFirebirdGenerica(PDO $pdo, array $dados, string $nomeTab
     ");
     $stmtColunas->execute([$nomeTabela]);
 
-    $colunas = array_values(array_filter($stmtColunas->fetchAll(PDO::FETCH_COLUMN), function ($coluna) use ($colunasIgnoradas) {
-        return !in_array($coluna, $colunasIgnoradas, true);
-    }));
+    $colunas = [];
+    $tiposColunas = [];
+    foreach ($stmtColunas->fetchAll(PDO::FETCH_ASSOC) as $colunaInfo) {
+        $coluna = $colunaInfo['COLUMN_NAME'];
+        if (in_array($coluna, $colunasIgnoradas, true)) {
+            continue;
+        }
+
+        $colunas[] = $coluna;
+        $tiposColunas[$coluna] = strtolower((string)$colunaInfo['DATA_TYPE']);
+    }
 
     if (empty($colunas)) {
         echo json_encode(["erro" => "Tabela sem colunas mapeadas: $nomeTabela"]);
@@ -297,7 +305,16 @@ function processarTabelaFirebirdGenerica(PDO $pdo, array $dados, string $nomeTab
 
             $params = [];
             foreach ($colunas as $coluna) {
-                $params[":$coluna"] = $d[$coluna] ?? null;
+                $valor = $d[$coluna] ?? null;
+
+                if (in_array($tiposColunas[$coluna] ?? '', ['date', 'datetime', 'timestamp', 'time'], true)) {
+                    $valorTexto = trim((string)$valor);
+                    if ($valor === null || $valorTexto === '' || !preg_match('/^\d{4}-\d{2}-\d{2}/', $valorTexto)) {
+                        $valor = null;
+                    }
+                }
+
+                $params[":$coluna"] = $valor;
             }
 
             $stmt->execute($params);

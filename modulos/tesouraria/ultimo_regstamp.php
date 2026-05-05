@@ -31,6 +31,13 @@ if (!in_array($tabela, $tabelas_permitidas)) {
     exit;
 }
 
+if ($tabela === 'cp004') {
+    echo json_encode([
+        'ultima_regstamp' => '1900-01-01 00:00:00'
+    ]);
+    exit;
+}
+
 /* =========================
    NOME REAL DA TABELA
 ========================= */
