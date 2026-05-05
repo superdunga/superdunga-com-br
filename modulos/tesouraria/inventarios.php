@@ -3,9 +3,8 @@ require '../../config/auth.php';
 require '../../config/conexao.php';
 
 /* 🔒 CONTROLE DE ACESSO (MASTER OU GERENTE) */
-if (!in_array($_SESSION['nivel'], ['MASTER', 'GERENTE'])) {
-    header('Location: ../../index.php');
-    exit;
+if (!temNivel('GERENTE')) {
+    die('Acesso negado.');
 }
 
 $empresa_id = $_SESSION['empresa_id'];

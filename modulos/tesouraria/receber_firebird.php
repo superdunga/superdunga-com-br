@@ -222,6 +222,13 @@ function processarAtivosFirebird(PDO $pdo, array $dados, array $config): void
         }
     }
 
+    if (!$syncId && ($_GET['confirmar_snapshot'] ?? '') !== '1') {
+        echo json_encode([
+            "erro" => "Envio de ativos exige sync_id e finalizacao. Para envio unico completo, informe confirmar_snapshot=1."
+        ]);
+        exit;
+    }
+
     if (empty($ids) && !$finalizar && ($_GET['confirmar_vazio'] ?? '') !== '1') {
         echo json_encode([
             "erro" => "Lista de ativos vazia. Para marcar todos como excluidos, envie confirmar_vazio=1."
