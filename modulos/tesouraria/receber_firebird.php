@@ -314,6 +314,20 @@ function processarTabelaFirebirdGenerica(PDO $pdo, array $dados, string $nomeTab
                     }
                 }
 
+                if (in_array($tiposColunas[$coluna] ?? '', ['decimal', 'double', 'float'], true)) {
+                    $valorTexto = trim((string)$valor);
+                    if ($valor === null || $valorTexto === '' || !is_numeric($valorTexto)) {
+                        $valor = null;
+                    }
+                }
+
+                if (in_array($tiposColunas[$coluna] ?? '', ['int', 'bigint', 'smallint', 'mediumint', 'tinyint'], true)) {
+                    $valorTexto = trim((string)$valor);
+                    if ($valor === null || $valorTexto === '' || !preg_match('/^-?\d+$/', $valorTexto)) {
+                        $valor = null;
+                    }
+                }
+
                 $params[":$coluna"] = $valor;
             }
 
