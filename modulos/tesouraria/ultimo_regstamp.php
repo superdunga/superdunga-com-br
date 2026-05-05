@@ -23,6 +23,8 @@ $tabelas_permitidas = [
     'cp004',
     'est007',
     'est004',
+    'est005',
+    'est006',
     'est008'
 ];
 

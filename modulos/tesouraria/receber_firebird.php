@@ -21,6 +21,8 @@ $tabelas_permitidas = [
     'cp004',
     'est007',
     'est004',
+    'est005',
+    'est006',
     'est008',
     'zconfig005',
     'bnc005_ativos',
@@ -366,6 +368,8 @@ $configTabelasGenericas = [
     'cp001' => ['tabela_mysql' => 'armazem_cp001', 'chaves' => ['CPCONTADOR']],
     'cp003' => ['tabela_mysql' => 'armazem_cp003', 'chaves' => ['FCONTADOR']],
     'cp004' => ['tabela_mysql' => 'armazem_cp004', 'chaves' => ['QTCPCONTADOR']],
+    'est005' => ['tabela_mysql' => 'armazem_est005', 'chaves' => ['COMPRACONTADOR']],
+    'est006' => ['tabela_mysql' => 'armazem_est006', 'chaves' => ['COMPRACONTA']],
 ];
 
 if (isset($configTabelasGenericas[$tabela])) {
