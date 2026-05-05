@@ -31,37 +31,123 @@ $data_fim    = date('Y-m-d 03:00:00', strtotime($data . ' +1 day'));
         <table class="table table-sm table-bordered">
             <thead class="table-dark">
                 <tr>
-                    <th>NUMDOC</th>
+                    <th>Venda</th>
+                    <th>CM</th>
                     <th>Valor</th>
+                    <th>Detalhe</th>
                 </tr>
             </thead>
             <tbody>
 
 <?php
 $stmt = $pdo_master->prepare("
-    SELECT NUMDOC, MAX(TOTGERAL) AS valor
+    SELECT
+        VENDACONTADOR,
+        CMCONTADOR,
+        TOTGERAL AS valor
     FROM armazem_est007
     WHERE DTLANC BETWEEN ? AND ?
       AND USERLANC = ?
       AND CANCELADO = 'N'
-    GROUP BY NUMDOC
+    ORDER BY VENDACONTADOR
 ");
 $stmt->execute([$data_inicio, $data_fim, $usuario]);
+$vendas = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+$itensPorVenda = [];
+$vendasIds = array_values(array_filter(array_map(function ($venda) {
+    return (int)($venda['VENDACONTADOR'] ?? 0);
+}, $vendas)));
+
+if (!empty($vendasIds)) {
+    $placeholders = implode(',', array_fill(0, count($vendasIds), '?'));
+    $stmtItens = $pdo_master->prepare("
+        SELECT
+            i.VENDACONTA,
+            i.ITEMVENDACONTADOR,
+            i.PRODUTO,
+            i.QTDE,
+            i.VALOR,
+            i.TOTPROD,
+            p.CODPRODUTO,
+            p.DESCPRODUTO,
+            p.UNIDADE
+        FROM armazem_est008 i
+        LEFT JOIN armazem_est004 p
+            ON p.CONTAPRODUTO = i.PRODUTO
+        WHERE i.VENDACONTA IN ($placeholders)
+        ORDER BY i.VENDACONTA, i.ITEMVENDACONTADOR
+    ");
+    $stmtItens->execute($vendasIds);
+
+    while ($item = $stmtItens->fetch(PDO::FETCH_ASSOC)) {
+        $itensPorVenda[(int)$item['VENDACONTA']][] = $item;
+    }
+}
 
 $total_venda = 0;
 
-while ($v = $stmt->fetch(PDO::FETCH_ASSOC)) {
+foreach ($vendas as $v) {
     $total_venda += $v['valor'];
-    echo "<tr>
-            <td>{$v['NUMDOC']}</td>
-            <td>R$ " . number_format($v['valor'], 2, ',', '.') . "</td>
-          </tr>";
+    $vendaId = (int)$v['VENDACONTADOR'];
+    $collapseId = 'itens-venda-' . $vendaId;
+    $itens = $itensPorVenda[$vendaId] ?? [];
+?>
+<tr>
+    <td><?= $vendaId ?></td>
+    <td><?= htmlspecialchars($v['CMCONTADOR'] ?? '') ?></td>
+    <td>R$ <?= number_format((float)$v['valor'], 2, ',', '.') ?></td>
+    <td>
+        <button class="btn btn-sm btn-outline-primary"
+                type="button"
+                data-bs-toggle="collapse"
+                data-bs-target="#<?= $collapseId ?>">
+            Detalhe
+        </button>
+    </td>
+</tr>
+<tr class="collapse" id="<?= $collapseId ?>">
+    <td colspan="4" class="bg-light">
+        <?php if (empty($itens)): ?>
+            <div class="text-muted small">Nenhum item encontrado para esta venda.</div>
+        <?php else: ?>
+            <div class="table-responsive">
+                <table class="table table-sm table-bordered mb-0">
+                    <thead>
+                        <tr>
+                            <th>Item</th>
+                            <th>Produto</th>
+                            <th>Descricao</th>
+                            <th>Qtde</th>
+                            <th>Unitario</th>
+                            <th>Total</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <?php foreach ($itens as $item): ?>
+                            <tr>
+                                <td><?= htmlspecialchars($item['ITEMVENDACONTADOR']) ?></td>
+                                <td><?= htmlspecialchars($item['CODPRODUTO'] ?? $item['PRODUTO']) ?></td>
+                                <td><?= htmlspecialchars($item['DESCPRODUTO'] ?? '') ?></td>
+                                <td><?= number_format((float)$item['QTDE'], 3, ',', '.') ?> <?= htmlspecialchars($item['UNIDADE'] ?? '') ?></td>
+                                <td>R$ <?= number_format((float)$item['VALOR'], 2, ',', '.') ?></td>
+                                <td>R$ <?= number_format((float)$item['TOTPROD'], 2, ',', '.') ?></td>
+                            </tr>
+                        <?php endforeach; ?>
+                    </tbody>
+                </table>
+            </div>
+        <?php endif; ?>
+    </td>
+</tr>
+<?php
 }
 ?>
 
 <tr class="table-secondary fw-bold">
-    <td>Total</td>
+    <td colspan="2">Total</td>
     <td>R$ <?php echo number_format($total_venda, 2, ',', '.'); ?></td>
+    <td></td>
 </tr>
 
             </tbody>

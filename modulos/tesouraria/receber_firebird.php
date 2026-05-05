@@ -17,6 +17,8 @@ $tabelas_permitidas = [
     'cr001_ativos',
     'cr002',
     'est007',
+    'est004',
+    'est008',
     'zconfig005',
     'bnc005_ativos',
     'cp001_ativos',
@@ -597,6 +599,127 @@ elseif ($tabela === 'zconfig005') {
 }
 
 /* =====================================================
+   EST004 - PRODUTOS
+===================================================== */
+elseif ($tabela === 'est004') {
+
+    $sql = "
+        INSERT INTO armazem_est004 (
+            EMPRESA, CODPRODUTO, CONTAPRODUTO, DESCPRODUTO,
+            UNIDADE, REFERENCIA, ESPECIFICACAO, GRUPO, SUBGRUPO,
+            PRECOCUSTO, CUSTOMEDIO, PRECOVENDA, PRECOPRAZO1,
+            ESTINICIAL, ESTOQUE, ESTMINIMO, ESTMAXIMO,
+            PRECOCOMPRA, MEDIACOMPRA, MEDIACUSTO, PRECOFINAL,
+            MEDIAFINAL, MLUCRO1, PVENDA1, MLUCRO2, PVENDA2,
+            DTULTCOMPRA, DOCCOMPRA, ULTFORNECEDOR, DTULTVENDA,
+            DOCVENDA, ULTCLIENTE, MARCA, EMB_QTDE,
+            ULTQTDECOMPRADA, INATIVO, NOMEREGISTRA, REFERENCIA2,
+            REGSTAMP, CLASSIFICACAO, TIPOAPARELHO, VENDA_AVULSA,
+            NOMEFISCAL, PRODUTOFINAL, DTPREVISTA, DTULTALTERACAO,
+            REFERENCIA4, USERLANC, DTLANC, USERALT, DTALT,
+            PVENDA1ANT, USERALTPRECO
+        ) VALUES (
+            :EMPRESA, :CODPRODUTO, :CONTAPRODUTO, :DESCPRODUTO,
+            :UNIDADE, :REFERENCIA, :ESPECIFICACAO, :GRUPO, :SUBGRUPO,
+            :PRECOCUSTO, :CUSTOMEDIO, :PRECOVENDA, :PRECOPRAZO1,
+            :ESTINICIAL, :ESTOQUE, :ESTMINIMO, :ESTMAXIMO,
+            :PRECOCOMPRA, :MEDIACOMPRA, :MEDIACUSTO, :PRECOFINAL,
+            :MEDIAFINAL, :MLUCRO1, :PVENDA1, :MLUCRO2, :PVENDA2,
+            :DTULTCOMPRA, :DOCCOMPRA, :ULTFORNECEDOR, :DTULTVENDA,
+            :DOCVENDA, :ULTCLIENTE, :MARCA, :EMB_QTDE,
+            :ULTQTDECOMPRADA, :INATIVO, :NOMEREGISTRA, :REFERENCIA2,
+            :REGSTAMP, :CLASSIFICACAO, :TIPOAPARELHO, :VENDA_AVULSA,
+            :NOMEFISCAL, :PRODUTOFINAL, :DTPREVISTA, :DTULTALTERACAO,
+            :REFERENCIA4, :USERLANC, :DTLANC, :USERALT, :DTALT,
+            :PVENDA1ANT, :USERALTPRECO
+        )
+        ON DUPLICATE KEY UPDATE
+            CONTAPRODUTO = VALUES(CONTAPRODUTO),
+            DESCPRODUTO = VALUES(DESCPRODUTO),
+            UNIDADE = VALUES(UNIDADE),
+            REFERENCIA = VALUES(REFERENCIA),
+            GRUPO = VALUES(GRUPO),
+            SUBGRUPO = VALUES(SUBGRUPO),
+            PRECOVENDA = VALUES(PRECOVENDA),
+            ESTOQUE = VALUES(ESTOQUE),
+            INATIVO = VALUES(INATIVO),
+            NOMEFISCAL = VALUES(NOMEFISCAL),
+            REGSTAMP = VALUES(REGSTAMP),
+            USERALT = VALUES(USERALT),
+            DTALT = VALUES(DTALT)
+    ";
+
+    $stmt = $pdo_master->prepare($sql);
+    $pdo_master->beginTransaction();
+
+    foreach ($dados as $d) {
+        if (empty($d['CODPRODUTO'])) {
+            continue;
+        }
+
+        $stmt->execute([
+            ':EMPRESA' => $d['EMPRESA'] ?? null,
+            ':CODPRODUTO' => $d['CODPRODUTO'] ?? null,
+            ':CONTAPRODUTO' => $d['CONTAPRODUTO'] ?? null,
+            ':DESCPRODUTO' => $d['DESCPRODUTO'] ?? null,
+            ':UNIDADE' => $d['UNIDADE'] ?? null,
+            ':REFERENCIA' => $d['REFERENCIA'] ?? null,
+            ':ESPECIFICACAO' => $d['ESPECIFICACAO'] ?? null,
+            ':GRUPO' => $d['GRUPO'] ?? null,
+            ':SUBGRUPO' => $d['SUBGRUPO'] ?? null,
+            ':PRECOCUSTO' => $d['PRECOCUSTO'] ?? null,
+            ':CUSTOMEDIO' => $d['CUSTOMEDIO'] ?? null,
+            ':PRECOVENDA' => $d['PRECOVENDA'] ?? null,
+            ':PRECOPRAZO1' => $d['PRECOPRAZO1'] ?? null,
+            ':ESTINICIAL' => $d['ESTINICIAL'] ?? null,
+            ':ESTOQUE' => $d['ESTOQUE'] ?? null,
+            ':ESTMINIMO' => $d['ESTMINIMO'] ?? null,
+            ':ESTMAXIMO' => $d['ESTMAXIMO'] ?? null,
+            ':PRECOCOMPRA' => $d['PRECOCOMPRA'] ?? null,
+            ':MEDIACOMPRA' => $d['MEDIACOMPRA'] ?? null,
+            ':MEDIACUSTO' => $d['MEDIACUSTO'] ?? null,
+            ':PRECOFINAL' => $d['PRECOFINAL'] ?? null,
+            ':MEDIAFINAL' => $d['MEDIAFINAL'] ?? null,
+            ':MLUCRO1' => $d['MLUCRO1'] ?? null,
+            ':PVENDA1' => $d['PVENDA1'] ?? null,
+            ':MLUCRO2' => $d['MLUCRO2'] ?? null,
+            ':PVENDA2' => $d['PVENDA2'] ?? null,
+            ':DTULTCOMPRA' => $d['DTULTCOMPRA'] ?? null,
+            ':DOCCOMPRA' => $d['DOCCOMPRA'] ?? null,
+            ':ULTFORNECEDOR' => $d['ULTFORNECEDOR'] ?? null,
+            ':DTULTVENDA' => $d['DTULTVENDA'] ?? null,
+            ':DOCVENDA' => $d['DOCVENDA'] ?? null,
+            ':ULTCLIENTE' => $d['ULTCLIENTE'] ?? null,
+            ':MARCA' => $d['MARCA'] ?? null,
+            ':EMB_QTDE' => $d['EMB_QTDE'] ?? null,
+            ':ULTQTDECOMPRADA' => $d['ULTQTDECOMPRADA'] ?? null,
+            ':INATIVO' => $d['INATIVO'] ?? null,
+            ':NOMEREGISTRA' => $d['NOMEREGISTRA'] ?? null,
+            ':REFERENCIA2' => $d['REFERENCIA2'] ?? null,
+            ':REGSTAMP' => $d['REGSTAMP'] ?? null,
+            ':CLASSIFICACAO' => $d['CLASSIFICACAO'] ?? null,
+            ':TIPOAPARELHO' => $d['TIPOAPARELHO'] ?? null,
+            ':VENDA_AVULSA' => $d['VENDA_AVULSA'] ?? null,
+            ':NOMEFISCAL' => $d['NOMEFISCAL'] ?? null,
+            ':PRODUTOFINAL' => $d['PRODUTOFINAL'] ?? null,
+            ':DTPREVISTA' => $d['DTPREVISTA'] ?? null,
+            ':DTULTALTERACAO' => $d['DTULTALTERACAO'] ?? null,
+            ':REFERENCIA4' => $d['REFERENCIA4'] ?? null,
+            ':USERLANC' => $d['USERLANC'] ?? null,
+            ':DTLANC' => $d['DTLANC'] ?? null,
+            ':USERALT' => $d['USERALT'] ?? null,
+            ':DTALT' => $d['DTALT'] ?? null,
+            ':PVENDA1ANT' => $d['PVENDA1ANT'] ?? null,
+            ':USERALTPRECO' => $d['USERALTPRECO'] ?? null,
+        ]);
+
+        $processados++;
+    }
+
+    $pdo_master->commit();
+}
+
+/* =====================================================
    EST007
 ===================================================== */
 elseif ($tabela === 'est007') {
@@ -629,6 +752,7 @@ elseif ($tabela === 'est007') {
         )
         ON DUPLICATE KEY UPDATE
             TOTGERAL = VALUES(TOTGERAL),
+            CMCONTADOR = VALUES(CMCONTADOR),
             CANCELADO = VALUES(CANCELADO),
             REGSTAMP = VALUES(REGSTAMP)
     ";
@@ -681,6 +805,107 @@ elseif ($tabela === 'est007') {
             ':DEVOLUCAO' => $d['DEVOLUCAO'] ?? null,
             ':TIPOES' => $d['TIPOES'] ?? null,
             ':HRVENDA' => $d['HRVENDA'] ?? null
+        ]);
+
+        $processados++;
+    }
+
+    $pdo_master->commit();
+}
+
+/* =====================================================
+   EST008 - ITENS DA VENDA
+===================================================== */
+elseif ($tabela === 'est008') {
+
+    $stmtIndice = $pdo_master->prepare("
+        SELECT COUNT(*)
+        FROM information_schema.STATISTICS
+        WHERE TABLE_SCHEMA = DATABASE()
+          AND TABLE_NAME = 'armazem_est008'
+          AND INDEX_NAME = 'uniq_est008_item_venda'
+    ");
+    $stmtIndice->execute();
+    if ((int)$stmtIndice->fetchColumn() === 0) {
+        $pdo_master->exec("
+            ALTER TABLE armazem_est008
+            ADD UNIQUE KEY uniq_est008_item_venda
+                (EMPRESA, ITEMVENDACONTADOR, VENDACONTA, PRODUTO)
+        ");
+    }
+
+    $sql = "
+        INSERT INTO armazem_est008 (
+            EMPRESA, ITEMVENDACONTADOR, VENDACONTA, PRODUTO,
+            QTDE, VALOR, TOTPROD, TIPOVENDA, PESOTROCA,
+            PCUSTO, REL1, CFOPVENDA, TOTCUSTO, CANCELADO,
+            CLASSIFICACAO, REGSTAMP, CODVENDITEM, PRODPROMO,
+            USERLANC, USERALTERA, QTDECX, PESOCX, PRECODIA,
+            SOMARTOTVENDA, MOVESTOQUE, TABELAPRECO,
+            SITUACAOENTREGA, VLRRATEIODESCONTO
+        ) VALUES (
+            :EMPRESA, :ITEMVENDACONTADOR, :VENDACONTA, :PRODUTO,
+            :QTDE, :VALOR, :TOTPROD, :TIPOVENDA, :PESOTROCA,
+            :PCUSTO, :REL1, :CFOPVENDA, :TOTCUSTO, :CANCELADO,
+            :CLASSIFICACAO, :REGSTAMP, :CODVENDITEM, :PRODPROMO,
+            :USERLANC, :USERALTERA, :QTDECX, :PESOCX, :PRECODIA,
+            :SOMARTOTVENDA, :MOVESTOQUE, :TABELAPRECO,
+            :SITUACAOENTREGA, :VLRRATEIODESCONTO
+        )
+        ON DUPLICATE KEY UPDATE
+            QTDE = VALUES(QTDE),
+            VALOR = VALUES(VALOR),
+            TOTPROD = VALUES(TOTPROD),
+            CANCELADO = VALUES(CANCELADO),
+            CLASSIFICACAO = VALUES(CLASSIFICACAO),
+            REGSTAMP = VALUES(REGSTAMP),
+            USERALTERA = VALUES(USERALTERA),
+            QTDECX = VALUES(QTDECX),
+            PESOCX = VALUES(PESOCX),
+            PRECODIA = VALUES(PRECODIA),
+            SOMARTOTVENDA = VALUES(SOMARTOTVENDA),
+            MOVESTOQUE = VALUES(MOVESTOQUE),
+            SITUACAOENTREGA = VALUES(SITUACAOENTREGA),
+            VLRRATEIODESCONTO = VALUES(VLRRATEIODESCONTO)
+    ";
+
+    $stmt = $pdo_master->prepare($sql);
+    $pdo_master->beginTransaction();
+
+    foreach ($dados as $d) {
+        if (empty($d['ITEMVENDACONTADOR']) || empty($d['VENDACONTA']) || empty($d['PRODUTO'])) {
+            continue;
+        }
+
+        $stmt->execute([
+            ':EMPRESA' => $d['EMPRESA'] ?? null,
+            ':ITEMVENDACONTADOR' => $d['ITEMVENDACONTADOR'] ?? null,
+            ':VENDACONTA' => $d['VENDACONTA'] ?? null,
+            ':PRODUTO' => $d['PRODUTO'] ?? null,
+            ':QTDE' => $d['QTDE'] ?? null,
+            ':VALOR' => $d['VALOR'] ?? null,
+            ':TOTPROD' => $d['TOTPROD'] ?? null,
+            ':TIPOVENDA' => $d['TIPOVENDA'] ?? null,
+            ':PESOTROCA' => $d['PESOTROCA'] ?? null,
+            ':PCUSTO' => $d['PCUSTO'] ?? null,
+            ':REL1' => $d['REL1'] ?? null,
+            ':CFOPVENDA' => $d['CFOPVENDA'] ?? null,
+            ':TOTCUSTO' => $d['TOTCUSTO'] ?? null,
+            ':CANCELADO' => $d['CANCELADO'] ?? null,
+            ':CLASSIFICACAO' => $d['CLASSIFICACAO'] ?? null,
+            ':REGSTAMP' => $d['REGSTAMP'] ?? null,
+            ':CODVENDITEM' => $d['CODVENDITEM'] ?? null,
+            ':PRODPROMO' => $d['PRODPROMO'] ?? null,
+            ':USERLANC' => $d['USERLANC'] ?? null,
+            ':USERALTERA' => $d['USERALTERA'] ?? null,
+            ':QTDECX' => $d['QTDECX'] ?? null,
+            ':PESOCX' => $d['PESOCX'] ?? null,
+            ':PRECODIA' => $d['PRECODIA'] ?? null,
+            ':SOMARTOTVENDA' => $d['SOMARTOTVENDA'] ?? null,
+            ':MOVESTOQUE' => $d['MOVESTOQUE'] ?? null,
+            ':TABELAPRECO' => $d['TABELAPRECO'] ?? null,
+            ':SITUACAOENTREGA' => $d['SITUACAOENTREGA'] ?? null,
+            ':VLRRATEIODESCONTO' => $d['VLRRATEIODESCONTO'] ?? null,
         ]);
 
         $processados++;

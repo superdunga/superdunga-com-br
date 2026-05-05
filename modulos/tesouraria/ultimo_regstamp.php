@@ -18,7 +18,9 @@ $tabelas_permitidas = [
     'bnc001',
     'cr001',
     'cr002',
-    'est007'
+    'est007',
+    'est004',
+    'est008'
 ];
 
 if (!in_array($tabela, $tabelas_permitidas)) {

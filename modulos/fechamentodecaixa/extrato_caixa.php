@@ -39,6 +39,7 @@ $stmt = $pdo_master->prepare("
 
     WHERE b.CBCONTADOR = ?
       AND b.DTLANC BETWEEN ? AND ?
+      AND COALESCE(b.deletado, 'N') <> 'S'
 
     ORDER BY b.DTLANC
 ");

@@ -208,6 +208,11 @@ $firebird_nao = $pdo_master->query("
         f.deletado
     FROM armazem_bnc001 f
     WHERE f.CBCONTADOR = 8
+      AND f.DTMOV > '2026-04-15'
+      AND (
+          COALESCE(f.deletado, 'N') <> 'S'
+          OR f.DTMOV >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)
+      )
       AND CAST(f.VALORMOV AS CHAR) REGEXP '^-?[0-9]+(\\\\.[0-9]+)?$'
       AND NOT EXISTS (
           SELECT 1
@@ -361,39 +366,10 @@ require '../../layout/header.php';
     </div>
 </div>
 
-<!-- CONCILIADOS -->
-<div class="card shadow-sm mb-3">
-    <div class="card-body">
-        <h5>Conciliados (<?= count($conciliados) ?>)</h5>
-
-        <div class="table-responsive">
-            <table class="table table-sm table-bordered">
-                <tr>
-                    <th>ID</th>
-                    <th>Data</th>
-                    <th>Valor</th>
-                    <th>Obs</th>
-                    <th>Firebird</th>
-                </tr>
-
-                <?php foreach ($conciliados as $c): ?>
-                    <tr>
-                        <td><?= $c['id'] ?></td>
-                        <td><?= $c['data_mov'] ?></td>
-                        <td>R$ <?= number_format((float)$c['valor_operacao'], 2, ',', '.') ?></td>
-                        <td><?= htmlspecialchars($c['observacao']) ?></td>
-                        <td><?= $c['firebird_id'] ?></td>
-                    </tr>
-                <?php endforeach; ?>
-            </table>
-        </div>
-    </div>
-</div>
-
 <!-- FIREBIRD NAO CONCILIADOS -->
 <div class="card shadow-sm mb-3">
     <div class="card-body">
-        <h5>Firebird nao conciliados (<?= count($firebird_nao) ?>)</h5>
+        <h5>Firebird nao conciliados apos 15/04/2026 (<?= count($firebird_nao) ?>)</h5>
         <p class="text-muted small mb-3">
             Esta lista inclui lancamentos ativos e deletados do Firebird. Deletados aparecem apenas para conferencia e nao entram na conciliacao automatica/manual.
         </p>
@@ -421,6 +397,35 @@ require '../../layout/header.php';
                                 <span class="badge bg-success">Ativo</span>
                             <?php endif; ?>
                         </td>
+                    </tr>
+                <?php endforeach; ?>
+            </table>
+        </div>
+    </div>
+</div>
+
+<!-- CONCILIADOS -->
+<div class="card shadow-sm mb-3">
+    <div class="card-body">
+        <h5>Conciliados (<?= count($conciliados) ?>)</h5>
+
+        <div class="table-responsive">
+            <table class="table table-sm table-bordered">
+                <tr>
+                    <th>ID</th>
+                    <th>Data</th>
+                    <th>Valor</th>
+                    <th>Obs</th>
+                    <th>Firebird</th>
+                </tr>
+
+                <?php foreach ($conciliados as $c): ?>
+                    <tr>
+                        <td><?= $c['id'] ?></td>
+                        <td><?= $c['data_mov'] ?></td>
+                        <td>R$ <?= number_format((float)$c['valor_operacao'], 2, ',', '.') ?></td>
+                        <td><?= htmlspecialchars($c['observacao']) ?></td>
+                        <td><?= $c['firebird_id'] ?></td>
                     </tr>
                 <?php endforeach; ?>
             </table>
