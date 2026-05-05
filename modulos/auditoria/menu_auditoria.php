@@ -10,6 +10,13 @@ $opcoes = [
         'icone' => 'CP',
         'botao' => 'btn-info',
     ],
+    [
+        'titulo' => 'Itens fora do padrao',
+        'descricao' => 'Revise itens de compra com margem acima ou abaixo do limite.',
+        'href' => 'itens_fora_padrao.php',
+        'icone' => 'MV',
+        'botao' => 'btn-warning',
+    ],
 ];
 ?>
 
