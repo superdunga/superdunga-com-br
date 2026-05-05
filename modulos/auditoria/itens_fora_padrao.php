@@ -35,7 +35,7 @@ garantirTabelaVerificados($pdo_master);
 $dataIni = $_GET['data_ini'] ?? date('Y-m-01');
 $dataFim = $_GET['data_fim'] ?? date('Y-m-d');
 $fornecedor = trim($_GET['fornecedor'] ?? '');
-$documento = trim($_GET['documento'] ?? '');
+$descricao = trim($_GET['descricao'] ?? '');
 $limiteMargem = 60;
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['acao'] ?? '') === 'verificar') {
@@ -89,9 +89,9 @@ if ($fornecedor !== '') {
     $params[] = ctype_digit($fornecedor) ? (int)$fornecedor : 0;
 }
 
-if ($documento !== '') {
-    $where[] = "c.NUMDOC LIKE ?";
-    $params[] = "%$documento%";
+if ($descricao !== '') {
+    $where[] = "p.DESCPRODUTO LIKE ?";
+    $params[] = "%$descricao%";
 }
 
 $whereSql = implode(' AND ', $where);
@@ -161,8 +161,8 @@ require '../../layout/header.php';
                 <input type="text" name="fornecedor" class="form-control" value="<?= htmlspecialchars($fornecedor) ?>">
             </div>
             <div class="col-md-2">
-                <label class="form-label small text-muted">Documento</label>
-                <input type="text" name="documento" class="form-control" value="<?= htmlspecialchars($documento) ?>">
+                <label class="form-label small text-muted">Descricao</label>
+                <input type="text" name="descricao" class="form-control" value="<?= htmlspecialchars($descricao) ?>">
             </div>
             <div class="col-md-2 d-flex align-items-end">
                 <button class="btn btn-primary w-100">Filtrar</button>
