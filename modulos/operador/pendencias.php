@@ -18,6 +18,18 @@ function garantirTabelaPendenciasOperador(PDO $pdo): void
             INDEX idx_operador_pendencias_data (data_referencia)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
     ");
+
+    $pdo->exec("
+        CREATE TABLE IF NOT EXISTS tesouraria_firebird_conferidos (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            movcontador INT NOT NULL,
+            usuario_id INT NOT NULL,
+            usuario_nome VARCHAR(150) NULL,
+            conferido_em DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE KEY uniq_firebird_conferido (movcontador),
+            INDEX idx_firebird_conferido_em (conferido_em)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    ");
 }
 
 function moedaOperador($valor): string
@@ -48,6 +60,11 @@ function contarTesourariaPendencias(PDO $pdo): array
               SELECT 1
               FROM tesouraria_movimentacoes tx
               WHERE tx.firebird_id = f.MOVCONTADOR
+          )
+          AND NOT EXISTS (
+              SELECT 1
+              FROM tesouraria_firebird_conferidos fc
+              WHERE fc.movcontador = f.MOVCONTADOR
           )
     ")->fetchColumn();
 

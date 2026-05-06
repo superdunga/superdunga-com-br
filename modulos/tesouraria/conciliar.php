@@ -9,6 +9,24 @@ $linhas_afetadas = 0;
 $erro_conciliacao = '';
 $erro_manual = $_GET['erro_manual'] ?? '';
 $sucesso_manual = isset($_GET['manual']) && $_GET['manual'] === '1';
+$sucesso_conferido = isset($_GET['conferido']) && $_GET['conferido'] === '1';
+
+function garantirTabelaFirebirdConferidos(PDO $pdo): void
+{
+    $pdo->exec("
+        CREATE TABLE IF NOT EXISTS tesouraria_firebird_conferidos (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            movcontador INT NOT NULL,
+            usuario_id INT NOT NULL,
+            usuario_nome VARCHAR(150) NULL,
+            conferido_em DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE KEY uniq_firebird_conferido (movcontador),
+            INDEX idx_firebird_conferido_em (conferido_em)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    ");
+}
+
+garantirTabelaFirebirdConferidos($pdo_master);
 
 if (empty($_SESSION['csrf_conciliar_tesouraria'])) {
     $_SESSION['csrf_conciliar_tesouraria'] = bin2hex(random_bytes(32));
@@ -80,6 +98,56 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['acao'] ?? '') === 'concili
         header('Location: conciliar.php?erro_manual=' . urlencode($e->getMessage()));
         exit;
     }
+}
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['acao'] ?? '') === 'marcar_firebird_conferido') {
+    if ($_SESSION['nivel'] !== 'MASTER') {
+        header('Location: conciliar.php?erro_manual=acesso_negado');
+        exit;
+    }
+
+    $firebirdId = (int)($_POST['firebird_id'] ?? 0);
+    $token = $_POST['csrf_token'] ?? '';
+
+    if (!hash_equals($csrfToken, $token)) {
+        header('Location: conciliar.php?erro_manual=token');
+        exit;
+    }
+
+    if ($firebirdId > 0) {
+        $stmtCheckDeletado = $pdo_master->prepare("
+            SELECT COALESCE(deletado, 'N')
+            FROM armazem_bnc001
+            WHERE MOVCONTADOR = ?
+            LIMIT 1
+        ");
+        $stmtCheckDeletado->execute([$firebirdId]);
+        $deletado = $stmtCheckDeletado->fetchColumn();
+
+        if ($deletado !== 'S') {
+            header('Location: conciliar.php?erro_manual=conferido_apenas_deletado');
+            exit;
+        }
+
+        $stmt = $pdo_master->prepare("
+            INSERT INTO tesouraria_firebird_conferidos
+                (movcontador, usuario_id, usuario_nome)
+            VALUES
+                (?, ?, ?)
+            ON DUPLICATE KEY UPDATE
+                usuario_id = VALUES(usuario_id),
+                usuario_nome = VALUES(usuario_nome),
+                conferido_em = NOW()
+        ");
+        $stmt->execute([
+            $firebirdId,
+            (int)$_SESSION['usuario_id'],
+            $_SESSION['usuario_nome'] ?? null
+        ]);
+    }
+
+    header('Location: conciliar.php?conferido=1');
+    exit;
 }
 
 // EXECUTA A CONCILIACAO AUTOMATICA AO ABRIR A PAGINA
@@ -219,6 +287,11 @@ $firebird_nao = $pdo_master->query("
           FROM tesouraria_movimentacoes tx
           WHERE tx.firebird_id = f.MOVCONTADOR
       )
+      AND NOT EXISTS (
+          SELECT 1
+          FROM tesouraria_firebird_conferidos fc
+          WHERE fc.movcontador = f.MOVCONTADOR
+      )
     ORDER BY f.DTMOV DESC
 ")->fetchAll(PDO::FETCH_ASSOC);
 
@@ -233,6 +306,12 @@ require '../../layout/header.php';
         <?php if ($sucesso_manual): ?>
             <div class="alert alert-success">
                 Conciliacao manual realizada com sucesso.
+            </div>
+        <?php endif; ?>
+
+        <?php if ($sucesso_conferido): ?>
+            <div class="alert alert-success">
+                Lancamento Firebird marcado como conferido.
             </div>
         <?php endif; ?>
 
@@ -382,6 +461,9 @@ require '../../layout/header.php';
                     <th>HISTMOV</th>
                     <th>Valor</th>
                     <th>Status</th>
+                    <?php if ($_SESSION['nivel'] === 'MASTER'): ?>
+                        <th>Conferido</th>
+                    <?php endif; ?>
                 </tr>
 
                 <?php foreach ($firebird_nao as $f): ?>
@@ -397,6 +479,22 @@ require '../../layout/header.php';
                                 <span class="badge bg-success">Ativo</span>
                             <?php endif; ?>
                         </td>
+                        <?php if ($_SESSION['nivel'] === 'MASTER' && $f['deletado'] === 'S'): ?>
+                            <td>
+                                <form method="POST" class="m-0">
+                                    <input type="hidden" name="acao" value="marcar_firebird_conferido">
+                                    <input type="hidden" name="firebird_id" value="<?= (int)$f['MOVCONTADOR'] ?>">
+                                    <input type="hidden" name="csrf_token" value="<?= htmlspecialchars($csrfToken) ?>">
+                                    <button type="submit" class="btn btn-sm btn-outline-success">
+                                        Conferido
+                                    </button>
+                                </form>
+                            </td>
+                        <?php elseif ($_SESSION['nivel'] === 'MASTER'): ?>
+                            <td class="text-muted small">
+                                Conciliacao obrigatoria
+                            </td>
+                        <?php endif; ?>
                     </tr>
                 <?php endforeach; ?>
             </table>
