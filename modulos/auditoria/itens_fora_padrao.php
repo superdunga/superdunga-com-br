@@ -38,7 +38,8 @@ $dataIniSql = date('Y-m-d 00:00:00', strtotime($dataIni));
 $dataFimSql = date('Y-m-d 23:59:59', strtotime($dataFim));
 $fornecedor = trim($_GET['fornecedor'] ?? '');
 $descricao = trim($_GET['descricao'] ?? '');
-$limiteMargem = 60;
+$margemMinima = 20;
+$margemMaxima = 100;
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['acao'] ?? '') === 'verificar') {
     $itemcomprador = (int)($_POST['itemcomprador'] ?? 0);
@@ -78,11 +79,12 @@ $where = [
     "COALESCE(i.CANCELADO, 'N') <> 'S'",
     "COALESCE(p.excluido_firebird, 'N') <> 'S'",
     "p.PRECOFINAL > 0",
-    "ABS(((p.PVENDA1ANT / p.PRECOFINAL) - 1) * 100) >= ?",
+    "p.PVENDA1 > 0",
+    "(((p.PVENDA1 / p.PRECOFINAL) - 1) * 100 < ? OR ((p.PVENDA1 / p.PRECOFINAL) - 1) * 100 > ?)",
     "v.id IS NULL",
     "c.DTEMISSAO BETWEEN ? AND ?"
 ];
-$params = [$limiteMargem, $dataIniSql, $dataFimSql];
+$params = [$margemMinima, $margemMaxima, $dataIniSql, $dataFimSql];
 
 if ($fornecedor !== '') {
     $where[] = "(f.NOME LIKE ? OR f.APELIDO LIKE ? OR c.FORNECEDOR = ?)";
@@ -112,8 +114,8 @@ $stmt = $pdo_master->prepare("
         p.CODPRODUTO,
         p.DESCPRODUTO,
         p.PRECOFINAL,
-        p.PVENDA1ANT,
-        ((p.PVENDA1ANT / p.PRECOFINAL) - 1) * 100 AS margem
+        p.PVENDA1,
+        ((p.PVENDA1 / p.PRECOFINAL) - 1) * 100 AS margem
     FROM armazem_est006 i
     INNER JOIN armazem_est005 c
         ON c.COMPRACONTADOR = i.ITEMCOMPRACONTADOR
@@ -126,7 +128,7 @@ $stmt = $pdo_master->prepare("
        AND v.compraconta = i.COMPRACONTA
        AND v.produto = i.PRODUTO
     WHERE $whereSql
-    ORDER BY ABS(((p.PVENDA1ANT / p.PRECOFINAL) - 1) * 100) DESC, c.DTEMISSAO DESC
+    ORDER BY ABS(((p.PVENDA1 / p.PRECOFINAL) - 1) * 100 - 20) DESC, c.DTEMISSAO DESC
     LIMIT 500
 ");
 $stmt->execute($params);
@@ -139,7 +141,7 @@ require '../../layout/header.php';
     <div class="card-header d-flex flex-wrap justify-content-between align-items-center gap-2">
         <div>
             <h1 class="h5 mb-1">Itens fora do padrao</h1>
-            <small class="text-muted">Itens com margem igual ou superior a <?= $limiteMargem ?>% para cima ou para baixo.</small>
+            <small class="text-muted">Itens com margem abaixo de <?= $margemMinima ?>% ou acima de <?= $margemMaxima ?>%.</small>
         </div>
         <a href="menu_auditoria.php" class="btn btn-outline-secondary">Voltar</a>
     </div>
@@ -207,7 +209,7 @@ require '../../layout/header.php';
                             <td class="text-end"><?= numero($item['QTDE'], 3) ?></td>
                             <td class="text-end"><?= moeda($item['TOTPRODCHEIO']) ?></td>
                             <td class="text-end"><?= moeda($item['PRECOFINAL']) ?></td>
-                            <td class="text-end"><?= moeda($item['PVENDA1ANT']) ?></td>
+                            <td class="text-end"><?= moeda($item['PVENDA1']) ?></td>
                             <td class="text-end fw-bold <?= (float)$item['margem'] < 0 ? 'text-danger' : 'text-success' ?>">
                                 <?= numero($item['margem'], 2) ?>%
                             </td>

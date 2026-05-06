@@ -206,7 +206,11 @@ function contarItensForaPadrao(PDO $pdo, string $dataIni, string $dataFim): arra
           AND COALESCE(i.CANCELADO, 'N') <> 'S'
           AND COALESCE(p.excluido_firebird, 'N') <> 'S'
           AND p.PRECOFINAL > 0
-          AND ABS(((p.PVENDA1ANT / p.PRECOFINAL) - 1) * 100) >= 60
+          AND p.PVENDA1 > 0
+          AND (
+              ((p.PVENDA1 / p.PRECOFINAL) - 1) * 100 < 20
+              OR ((p.PVENDA1 / p.PRECOFINAL) - 1) * 100 > 100
+          )
           AND v.id IS NULL
           AND c.DTEMISSAO BETWEEN ? AND ?
     ");
@@ -292,7 +296,7 @@ $tarefas = [
     ], contarPrazoPendente($pdo_master, $mes)),
     'itens_fora_padrao' => array_merge([
         'titulo' => 'Itens fora do padrao',
-        'descricao' => 'Compras do mes corrente com margem acima ou abaixo de 60%.',
+        'descricao' => 'Compras do mes corrente com margem abaixo de 20% ou acima de 100%.',
         'link' => '../auditoria/itens_fora_padrao.php?data_ini=' . urlencode($dataIniMes) . '&data_fim=' . urlencode($dataFimMes),
     ], contarItensForaPadrao($pdo_master, $dataIniMes, $dataFimMes)),
 ];
