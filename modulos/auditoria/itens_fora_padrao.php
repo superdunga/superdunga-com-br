@@ -34,6 +34,8 @@ garantirTabelaVerificados($pdo_master);
 
 $dataIni = $_GET['data_ini'] ?? date('Y-m-01');
 $dataFim = $_GET['data_fim'] ?? date('Y-m-d');
+$dataIniSql = date('Y-m-d 00:00:00', strtotime($dataIni));
+$dataFimSql = date('Y-m-d 23:59:59', strtotime($dataFim));
 $fornecedor = trim($_GET['fornecedor'] ?? '');
 $descricao = trim($_GET['descricao'] ?? '');
 $limiteMargem = 60;
@@ -78,9 +80,9 @@ $where = [
     "p.PRECOFINAL > 0",
     "ABS(((p.PVENDA1ANT / p.PRECOFINAL) - 1) * 100) >= ?",
     "v.id IS NULL",
-    "DATE(c.DTEMISSAO) BETWEEN ? AND ?"
+    "c.DTEMISSAO BETWEEN ? AND ?"
 ];
-$params = [$limiteMargem, $dataIni, $dataFim];
+$params = [$limiteMargem, $dataIniSql, $dataFimSql];
 
 if ($fornecedor !== '') {
     $where[] = "(f.NOME LIKE ? OR f.APELIDO LIKE ? OR c.FORNECEDOR = ?)";

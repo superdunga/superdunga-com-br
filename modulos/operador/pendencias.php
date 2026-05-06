@@ -169,6 +169,9 @@ function contarPrazoPendente(PDO $pdo, string $mes): array
 
 function contarItensForaPadrao(PDO $pdo, string $dataIni, string $dataFim): array
 {
+    $dataIniSql = date('Y-m-d 00:00:00', strtotime($dataIni));
+    $dataFimSql = date('Y-m-d 23:59:59', strtotime($dataFim));
+
     $stmt = $pdo->prepare("
         SELECT COUNT(*)
         FROM armazem_est006 i
@@ -188,9 +191,9 @@ function contarItensForaPadrao(PDO $pdo, string $dataIni, string $dataFim): arra
           AND p.PRECOFINAL > 0
           AND ABS(((p.PVENDA1ANT / p.PRECOFINAL) - 1) * 100) >= 60
           AND v.id IS NULL
-          AND DATE(c.DTEMISSAO) BETWEEN ? AND ?
+          AND c.DTEMISSAO BETWEEN ? AND ?
     ");
-    $stmt->execute([$dataIni, $dataFim]);
+    $stmt->execute([$dataIniSql, $dataFimSql]);
     $quantidade = (int)$stmt->fetchColumn();
 
     return [
