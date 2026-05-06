@@ -1,10 +1,5 @@
 <?php
-session_start();
-
-if (!isset($_SESSION['usuario_id'])) {
-    header("Location: login.php");
-    exit;
-}
+require 'config/auth.php';
 
 $usuarioNome = $_SESSION['usuario_nome'] ?? 'Usuario';
 $nivelUsuario = $_SESSION['nivel'] ?? '';
