@@ -219,6 +219,7 @@ if ($modoEdicao) {
                   AND valor_entregue = ?
                   AND valor_troco = ?
                   AND observacao = ?
+                  AND DATE(data_mov) = DATE(?)
                 ORDER BY id DESC
                 LIMIT 1
             ");
@@ -230,7 +231,8 @@ if ($modoEdicao) {
                 round($saldo, 2),
                 round($totalSaida, 2),
                 round($totalEntrada, 2),
-                $observacao
+                $observacao,
+                $data_mov
             ]);
 
             $jaExiste = $verifica->fetch(PDO::FETCH_ASSOC);

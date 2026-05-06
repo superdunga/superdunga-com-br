@@ -32,7 +32,10 @@ $data_fim    = date('Y-m-d 03:00:00', strtotime($data . ' +1 day'));
             <thead class="table-dark">
                 <tr>
                     <th>Venda</th>
+                    <th>Data/Hora</th>
                     <th>CM</th>
+                    <th>Cliente</th>
+                    <th>Nome do Cliente</th>
                     <th>Valor</th>
                     <th>Detalhe</th>
                 </tr>
@@ -42,14 +45,19 @@ $data_fim    = date('Y-m-d 03:00:00', strtotime($data . ' +1 day'));
 <?php
 $stmt = $pdo_master->prepare("
     SELECT
-        VENDACONTADOR,
-        CMCONTADOR,
-        TOTGERAL AS valor
-    FROM armazem_est007
-    WHERE DTLANC BETWEEN ? AND ?
-      AND USERLANC = ?
-      AND CANCELADO = 'N'
-    ORDER BY VENDACONTADOR
+        e.VENDACONTADOR,
+        e.DTLANC,
+        e.CMCONTADOR,
+        e.CLIENTE,
+        COALESCE(c.NOME, c.APELIDO, '') AS nome_cliente,
+        e.TOTGERAL AS valor
+    FROM armazem_est007 e
+    LEFT JOIN armazem_cr002 c
+        ON c.CLICONTADOR = e.CLIENTE
+    WHERE e.DTLANC BETWEEN ? AND ?
+      AND e.USERLANC = ?
+      AND e.CANCELADO = 'N'
+    ORDER BY e.DTLANC, e.VENDACONTADOR
 ");
 $stmt->execute([$data_inicio, $data_fim, $usuario]);
 $vendas = $stmt->fetchAll(PDO::FETCH_ASSOC);
@@ -95,7 +103,10 @@ foreach ($vendas as $v) {
 ?>
 <tr>
     <td><?= $vendaId ?></td>
+    <td><?= !empty($v['DTLANC']) ? date('d/m/Y H:i', strtotime($v['DTLANC'])) : '' ?></td>
     <td><?= htmlspecialchars($v['CMCONTADOR'] ?? '') ?></td>
+    <td><?= htmlspecialchars($v['CLIENTE'] ?? '') ?></td>
+    <td><?= htmlspecialchars($v['nome_cliente'] ?? '') ?></td>
     <td>R$ <?= number_format((float)$v['valor'], 2, ',', '.') ?></td>
     <td>
         <button class="btn btn-sm btn-outline-primary"
@@ -107,7 +118,7 @@ foreach ($vendas as $v) {
     </td>
 </tr>
 <tr class="collapse" id="<?= $collapseId ?>">
-    <td colspan="4" class="bg-light">
+    <td colspan="7" class="bg-light">
         <?php if (empty($itens)): ?>
             <div class="text-muted small">Nenhum item encontrado para esta venda.</div>
         <?php else: ?>
@@ -145,7 +156,7 @@ foreach ($vendas as $v) {
 ?>
 
 <tr class="table-secondary fw-bold">
-    <td colspan="2">Total</td>
+    <td colspan="5">Total</td>
     <td>R$ <?php echo number_format($total_venda, 2, ',', '.'); ?></td>
     <td></td>
 </tr>
