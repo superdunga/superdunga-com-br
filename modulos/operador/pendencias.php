@@ -225,6 +225,28 @@ function contarItensForaPadrao(PDO $pdo, string $dataIni, string $dataFim): arra
     ];
 }
 
+function contarClientesSemValidacaoCM(PDO $pdo): array
+{
+    $stmt = $pdo->prepare("
+        SELECT COUNT(*), COALESCE(SUM(c.VLRPARCELA), 0)
+        FROM armazem_cr001 c
+        WHERE c.CMCONTADOR = 9
+          AND (c.validado IS NULL OR c.validado = 'N')
+          AND COALESCE(c.excluido_firebird, 'N') = 'N'
+    ");
+    $stmt->execute();
+    [$quantidade, $total] = $stmt->fetch(PDO::FETCH_NUM);
+    $quantidade = (int)$quantidade;
+
+    return [
+        'quantidade' => $quantidade,
+        'detalhes' => [
+            'Clientes sem validacao' => $quantidade,
+            'Valor total' => moedaOperador($total),
+        ],
+    ];
+}
+
 function buscarChecks(PDO $pdo, int $usuarioId, int $empresaId, string $data): array
 {
     $stmt = $pdo->prepare("
@@ -299,6 +321,11 @@ $tarefas = [
         'descricao' => 'Compras do mes corrente com margem abaixo de 20% ou acima de 100%.',
         'link' => '../auditoria/itens_fora_padrao.php?data_ini=' . urlencode($dataIniMes) . '&data_fim=' . urlencode($dataFimMes),
     ], contarItensForaPadrao($pdo_master, $dataIniMes, $dataFimMes)),
+    'validacao_cm' => array_merge([
+        'titulo' => 'Clientes sem validacao CM',
+        'descricao' => 'Todos os recebimentos CM 9 ainda sem check de validacao.',
+        'link' => '../fechamentodecaixa/validar_cm.php?todos=1',
+    ], contarClientesSemValidacaoCM($pdo_master)),
 ];
 
 $bloqueiosPendentes = 0;

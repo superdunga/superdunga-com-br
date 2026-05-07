@@ -35,6 +35,7 @@ function redirecionarPendenciasOperador(): void
         '/modulos/tesouraria/conciliar.php',
         '/modulos/fechamentodecaixa/conciliacao_dinheiro_divergentes.php',
         '/modulos/fechamentodecaixa/extrato_caixa.php',
+        '/modulos/fechamentodecaixa/validar_cm.php',
         '/modulos/fechamentodecaixa/resumo_prazo.php',
         '/modulos/fechamentodecaixa/diagnostico_divergencia.php',
         '/modulos/auditoria/itens_fora_padrao.php',
