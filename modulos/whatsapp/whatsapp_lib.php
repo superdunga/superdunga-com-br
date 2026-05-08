@@ -669,6 +669,66 @@ function whatsappMensagemResumoDiario(PDO $pdo, int $empresaId = 1): string
 
     $diferencaRecebiveis = ($totalSistemaRecebiveis + $totalRecebiveisNaoConciliados) - ($totalCR001Recebiveis + $totalCR001NaoConciliados);
 
+    $stmt = $pdo->prepare("
+        SELECT
+            v.CLIENTE,
+            COALESCE(NULLIF(c.NOME, ''), CONCAT('Cliente ', v.CLIENTE)) AS nome_cliente,
+            SUM(v.TOTGERAL) AS total
+        FROM armazem_est007 v
+        LEFT JOIN armazem_cr002 c
+            ON c.CLICONTADOR = v.CLIENTE
+        WHERE v.DTLANC BETWEEN ? AND ?
+          AND v.CANCELADO = 'N'
+          AND v.CMCONTADOR = 9
+        GROUP BY v.CLIENTE, nome_cliente
+        ORDER BY total DESC
+        LIMIT 10
+    ");
+    $stmt->execute([$inicio, $fim]);
+    $maioresClientes = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+    $stmt = $pdo->prepare("
+        SELECT
+            i.PRODUTO,
+            COALESCE(NULLIF(p.DESCPRODUTO, ''), CONCAT('Produto ', i.PRODUTO)) AS descricao,
+            SUM(i.QTDE) AS quantidade
+        FROM armazem_est008 i
+        INNER JOIN armazem_est007 v
+            ON v.VENDACONTADOR = i.ITEMVENDACONTADOR
+        LEFT JOIN armazem_est004 p
+            ON p.CONTAPRODUTO = i.PRODUTO
+        WHERE v.DTLANC BETWEEN ? AND ?
+          AND v.CANCELADO = 'N'
+          AND COALESCE(i.CANCELADO, 'N') = 'N'
+          AND COALESCE(i.excluido_firebird, 'N') = 'N'
+        GROUP BY i.PRODUTO, descricao
+        ORDER BY quantidade DESC
+        LIMIT 10
+    ");
+    $stmt->execute([$inicio, $fim]);
+    $produtosQuantidade = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+    $stmt = $pdo->prepare("
+        SELECT
+            i.PRODUTO,
+            COALESCE(NULLIF(p.DESCPRODUTO, ''), CONCAT('Produto ', i.PRODUTO)) AS descricao,
+            SUM(i.TOTPROD) AS total
+        FROM armazem_est008 i
+        INNER JOIN armazem_est007 v
+            ON v.VENDACONTADOR = i.ITEMVENDACONTADOR
+        LEFT JOIN armazem_est004 p
+            ON p.CONTAPRODUTO = i.PRODUTO
+        WHERE v.DTLANC BETWEEN ? AND ?
+          AND v.CANCELADO = 'N'
+          AND COALESCE(i.CANCELADO, 'N') = 'N'
+          AND COALESCE(i.excluido_firebird, 'N') = 'N'
+        GROUP BY i.PRODUTO, descricao
+        ORDER BY total DESC
+        LIMIT 10
+    ");
+    $stmt->execute([$inicio, $fim]);
+    $produtosValor = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
     $msg = "*Resumo do Dia*\n\n";
     $msg .= date('d/m/Y') . "\n\n";
     $msg .= "Vendas: R$ " . number_format($vendas, 2, ',', '.') . "\n";
@@ -679,6 +739,33 @@ function whatsappMensagemResumoDiario(PDO $pdo, int $empresaId = 1): string
     $msg .= abs((float)$diferenca) < 0.01 && abs((float)$diferencaRecebiveis) < 0.01
         ? "Caixa e recebiveis conferidos"
         : "Ha divergencias para conferir";
+
+    $msg .= "\n\n*10 Maiores clientes do dia*\n";
+    if (empty($maioresClientes)) {
+        $msg .= "Sem vendas CM 9 no periodo\n";
+    } else {
+        foreach ($maioresClientes as $idx => $cliente) {
+            $msg .= ($idx + 1) . ". " . $cliente['nome_cliente'] . " - R$ " . number_format((float)$cliente['total'], 2, ',', '.') . "\n";
+        }
+    }
+
+    $msg .= "\n*10 Produtos mais vendidos (qtd)*\n";
+    if (empty($produtosQuantidade)) {
+        $msg .= "Sem itens vendidos no periodo\n";
+    } else {
+        foreach ($produtosQuantidade as $idx => $produto) {
+            $msg .= ($idx + 1) . ". " . $produto['descricao'] . " - " . number_format((float)$produto['quantidade'], 2, ',', '.') . "\n";
+        }
+    }
+
+    $msg .= "\n*10 Produtos mais vendidos (valor)*\n";
+    if (empty($produtosValor)) {
+        $msg .= "Sem itens vendidos no periodo\n";
+    } else {
+        foreach ($produtosValor as $idx => $produto) {
+            $msg .= ($idx + 1) . ". " . $produto['descricao'] . " - R$ " . number_format((float)$produto['total'], 2, ',', '.') . "\n";
+        }
+    }
 
     return $msg;
 }

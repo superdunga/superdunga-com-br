@@ -1273,7 +1273,11 @@ elseif ($tabela === 'est008') {
             SOMARTOTVENDA = VALUES(SOMARTOTVENDA),
             MOVESTOQUE = VALUES(MOVESTOQUE),
             SITUACAOENTREGA = VALUES(SITUACAOENTREGA),
-            VLRRATEIODESCONTO = VALUES(VLRRATEIODESCONTO)
+            VLRRATEIODESCONTO = VALUES(VLRRATEIODESCONTO),
+            excluido_firebird = 'N',
+            data_exclusao_firebird = NULL,
+            motivo_sync = NULL,
+            ultima_presenca_firebird = NOW()
     ";
 
     $stmt = $pdo_master->prepare($sql);
