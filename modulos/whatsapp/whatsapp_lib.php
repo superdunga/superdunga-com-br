@@ -247,6 +247,12 @@ function whatsappGeradoresSistema(): array
             'arquivo' => 'modulos/whatsapp/whatsapp_lib.php',
             'funcao' => 'whatsappMensagemConciliacaoTesouraria',
         ],
+        'clientes_vencidos' => [
+            'nome' => 'Clientes vencidos',
+            'descricao' => 'Lista clientes com valores vencidos por faixa de atraso.',
+            'arquivo' => 'modulos/whatsapp/whatsapp_lib.php',
+            'funcao' => 'whatsappMensagemClientesVencidos',
+        ],
     ];
 }
 
@@ -484,6 +490,10 @@ function whatsappMensagemRotina(PDO $pdo, array $rotina): array
 
         if ($gerador === 'conciliacao_tesouraria') {
             return [whatsappMensagemConciliacaoTesouraria($pdo), null];
+        }
+
+        if ($gerador === 'clientes_vencidos') {
+            return [whatsappMensagemClientesVencidos($pdo), null];
         }
 
         throw new Exception('Gerador de mensagem do sistema nao encontrado.');
@@ -816,6 +826,145 @@ function whatsappMensagemAcompanhamentoVendas(PDO $pdo, ?DateTime $base = null):
     return $msg;
 }
 
+function whatsappMensagemClientesVencidos(PDO $pdo, ?DateTime $base = null): string
+{
+    date_default_timezone_set('America/Sao_Paulo');
+
+    $base = $base ?: new DateTime('now');
+    $hoje = $base->format('Y-m-d');
+
+    $stmt = $pdo->prepare("
+        SELECT
+            cr.CLICONTADOR,
+            COALESCE(NULLIF(cli.NOME, ''), NULLIF(cli.APELIDO, ''), CONCAT('Cliente ', cr.CLICONTADOR)) AS nome_cliente,
+            SUM(
+                CASE
+                    WHEN DATEDIFF(?, DATE(cr.DTVENC)) > 60 THEN cr.VLRRESTANTE
+                    ELSE 0
+                END
+            ) AS acima_60,
+            SUM(
+                CASE
+                    WHEN DATEDIFF(?, DATE(cr.DTVENC)) BETWEEN 31 AND 60 THEN cr.VLRRESTANTE
+                    ELSE 0
+                END
+            ) AS entre_30_60,
+            SUM(
+                CASE
+                    WHEN DATEDIFF(?, DATE(cr.DTVENC)) BETWEEN 1 AND 30 THEN cr.VLRRESTANTE
+                    ELSE 0
+                END
+            ) AS abaixo_30,
+            SUM(cr.VLRRESTANTE) AS total
+        FROM armazem_cr001 cr
+        LEFT JOIN armazem_cr002 cli
+            ON cli.CLICONTADOR = cr.CLICONTADOR
+        WHERE DATE(cr.DTVENC) < ?
+          AND cr.CMCONTADOR = 9
+          AND COALESCE(cr.VLRRESTANTE, 0) > 0
+          AND COALESCE(cr.excluido_firebird, 'N') = 'N'
+          AND (cr.STATUS IS NULL OR cr.STATUS <> 'QT')
+        GROUP BY cr.CLICONTADOR, nome_cliente
+        HAVING total > 0
+        ORDER BY acima_60 DESC, total DESC, nome_cliente ASC
+    ");
+    $stmt->execute([$hoje, $hoje, $hoje, $hoje]);
+    $clientes = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+    $stmt = $pdo->prepare("
+        SELECT
+            SUM(CASE WHEN DATEDIFF(?, DATE(DTVENC)) > 60 THEN VLRRESTANTE ELSE 0 END) AS acima_60,
+            SUM(CASE WHEN DATEDIFF(?, DATE(DTVENC)) BETWEEN 31 AND 60 THEN VLRRESTANTE ELSE 0 END) AS entre_30_60,
+            SUM(CASE WHEN DATEDIFF(?, DATE(DTVENC)) BETWEEN 1 AND 30 THEN VLRRESTANTE ELSE 0 END) AS abaixo_30,
+            SUM(VLRRESTANTE) AS total
+        FROM armazem_cr001
+        WHERE DATE(DTVENC) < ?
+          AND CMCONTADOR = 9
+          AND COALESCE(VLRRESTANTE, 0) > 0
+          AND COALESCE(excluido_firebird, 'N') = 'N'
+          AND (STATUS IS NULL OR STATUS <> 'QT')
+    ");
+    $stmt->execute([$hoje, $hoje, $hoje, $hoje]);
+    $totais = $stmt->fetch(PDO::FETCH_ASSOC) ?: [];
+
+    $arquivoUrl = null;
+    $visualizacaoUrl = null;
+    if (!empty($clientes)) {
+        $pastaRelatorios = realpath(__DIR__ . '/../../uploads');
+        if ($pastaRelatorios === false) {
+            $pastaRelatorios = __DIR__ . '/../../uploads';
+        }
+
+        $pastaRelatorios .= '/relatorios/whatsapp';
+        if (!is_dir($pastaRelatorios)) {
+            mkdir($pastaRelatorios, 0755, true);
+        }
+
+        $baseArquivo = 'clientes_vencidos_' . $base->format('Ymd') . '_' . bin2hex(random_bytes(4));
+        $nomeArquivo = $baseArquivo . '.xls';
+        $nomeVisualizacao = $baseArquivo . '.html';
+        $caminhoArquivo = $pastaRelatorios . '/' . $nomeArquivo;
+        $caminhoVisualizacao = $pastaRelatorios . '/' . $nomeVisualizacao;
+
+        $html = "<html><head><meta charset=\"UTF-8\"></head><body>";
+        $html .= "<table border=\"1\">";
+        $html .= "<thead><tr>";
+        $html .= "<th>NOME DO CLIENTE</th>";
+        $html .= "<th>Valores com mais de 60 dias de vencido</th>";
+        $html .= "<th>Valores entre 30 e 60 dias de vencido</th>";
+        $html .= "<th>Valores com menos de 30 dias de vencido</th>";
+        $html .= "<th>Valor Total</th>";
+        $html .= "</tr></thead><tbody>";
+
+        foreach ($clientes as $cliente) {
+            $html .= "<tr>";
+            $html .= "<td>" . htmlspecialchars($cliente['nome_cliente'], ENT_QUOTES, 'UTF-8') . "</td>";
+            $html .= "<td style=\"mso-number-format:'0,00';\">" . number_format((float)$cliente['acima_60'], 2, ',', '') . "</td>";
+            $html .= "<td style=\"mso-number-format:'0,00';\">" . number_format((float)$cliente['entre_30_60'], 2, ',', '') . "</td>";
+            $html .= "<td style=\"mso-number-format:'0,00';\">" . number_format((float)$cliente['abaixo_30'], 2, ',', '') . "</td>";
+            $html .= "<td style=\"mso-number-format:'0,00';\">" . number_format((float)$cliente['total'], 2, ',', '') . "</td>";
+            $html .= "</tr>";
+        }
+
+        $html .= "</tbody></table>";
+        $html .= "</body></html>";
+
+        if (
+            file_put_contents($caminhoArquivo, $html) !== false
+            && file_put_contents($caminhoVisualizacao, $html) !== false
+        ) {
+            $scheme = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ? 'https' : 'https';
+            $host = $_SERVER['HTTP_HOST'] ?? 'www.superdunga.com.br';
+            $arquivoUrl = $scheme . '://' . $host . '/uploads/relatorios/whatsapp/' . rawurlencode($nomeArquivo);
+            $visualizacaoUrl = $scheme . '://' . $host . '/uploads/relatorios/whatsapp/' . rawurlencode($nomeVisualizacao);
+        }
+    }
+
+    $msg = "*Clientes Vencidos*\n\n";
+    $msg .= $base->format('d/m/Y') . "\n\n";
+    $msg .= "Total >60 dias: R$ " . number_format((float)($totais['acima_60'] ?? 0), 2, ',', '.') . "\n";
+    $msg .= "Total 30 a 60 dias: R$ " . number_format((float)($totais['entre_30_60'] ?? 0), 2, ',', '.') . "\n";
+    $msg .= "Total <30 dias: R$ " . number_format((float)($totais['abaixo_30'] ?? 0), 2, ',', '.') . "\n";
+    $msg .= "Valor Total: R$ " . number_format((float)($totais['total'] ?? 0), 2, ',', '.') . "\n\n";
+
+    if (empty($clientes)) {
+        return $msg . "Nenhum cliente com valor vencido.";
+    }
+
+    $msg .= "Relatorio completo cliente por cliente em arquivo Excel.\n";
+    $msg .= "Clientes no arquivo: " . count($clientes) . "\n";
+    $msg .= "Ordenado por maior valor acima de 60 dias.\n";
+
+    if ($arquivoUrl) {
+        $msg .= "\nVisualizar: " . $visualizacaoUrl;
+        $msg .= "\nExcel: " . $arquivoUrl;
+    } else {
+        $msg .= "\nNao foi possivel gerar o arquivo do relatorio.";
+    }
+
+    return trim($msg);
+}
+
 function whatsappMensagemConciliacaoTesouraria(PDO $pdo): string
 {
     date_default_timezone_set('America/Sao_Paulo');
@@ -826,11 +975,7 @@ function whatsappMensagemConciliacaoTesouraria(PDO $pdo): string
         SELECT COUNT(*) AS qtd, COALESCE(SUM(valor_operacao), 0) AS total
         FROM tesouraria_movimentacoes
         WHERE conciliado = 'N'
-          AND data_mov >= '2026-04-23 00:00:00'
-          AND (
-              observacao IS NULL
-              OR UPPER(observacao) NOT LIKE '%TROCA%'
-          )
+          AND tipo_operacao <> 'T'
     ");
     $resumoTesouraria = $stmt->fetch(PDO::FETCH_ASSOC);
 
@@ -838,12 +983,8 @@ function whatsappMensagemConciliacaoTesouraria(PDO $pdo): string
         SELECT id, data_mov, valor_operacao, observacao
         FROM tesouraria_movimentacoes
         WHERE conciliado = 'N'
-          AND data_mov >= '2026-04-23 00:00:00'
-          AND (
-              observacao IS NULL
-              OR UPPER(observacao) NOT LIKE '%TROCA%'
-          )
-        ORDER BY data_mov ASC, id ASC
+          AND tipo_operacao <> 'T'
+        ORDER BY data_mov DESC, id DESC
         LIMIT ?
     ");
     $stmt->bindValue(1, $limiteListagem, PDO::PARAM_INT);
@@ -854,11 +995,21 @@ function whatsappMensagemConciliacaoTesouraria(PDO $pdo): string
         SELECT COUNT(*) AS qtd, COALESCE(SUM(f.VALORMOV), 0) AS total
         FROM armazem_bnc001 f
         WHERE f.CBCONTADOR = 8
-          AND f.DTMOV >= '2026-04-16 00:00:00'
+          AND f.DTMOV > '2026-04-15'
+          AND (
+              COALESCE(f.deletado, 'N') <> 'S'
+              OR f.DTMOV >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)
+          )
+          AND CAST(f.VALORMOV AS CHAR) REGEXP '^-?[0-9]+(\\\\.[0-9]+)?$'
           AND NOT EXISTS (
               SELECT 1
               FROM tesouraria_movimentacoes tx
               WHERE tx.firebird_id = f.MOVCONTADOR
+          )
+          AND NOT EXISTS (
+              SELECT 1
+              FROM tesouraria_firebird_conferidos fc
+              WHERE fc.movcontador = f.MOVCONTADOR
           )
     ");
     $resumoFirebird = $stmt->fetch(PDO::FETCH_ASSOC);
@@ -867,13 +1018,23 @@ function whatsappMensagemConciliacaoTesouraria(PDO $pdo): string
         SELECT f.MOVCONTADOR, f.DTMOV, f.VALORMOV, f.HISTMOV
         FROM armazem_bnc001 f
         WHERE f.CBCONTADOR = 8
-          AND f.DTMOV >= '2026-04-16 00:00:00'
+          AND f.DTMOV > '2026-04-15'
+          AND (
+              COALESCE(f.deletado, 'N') <> 'S'
+              OR f.DTMOV >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)
+          )
+          AND CAST(f.VALORMOV AS CHAR) REGEXP '^-?[0-9]+(\\\\.[0-9]+)?$'
           AND NOT EXISTS (
               SELECT 1
               FROM tesouraria_movimentacoes tx
               WHERE tx.firebird_id = f.MOVCONTADOR
           )
-        ORDER BY f.DTMOV ASC, f.MOVCONTADOR ASC
+          AND NOT EXISTS (
+              SELECT 1
+              FROM tesouraria_firebird_conferidos fc
+              WHERE fc.movcontador = f.MOVCONTADOR
+          )
+        ORDER BY f.DTMOV DESC, f.MOVCONTADOR DESC
         LIMIT ?
     ");
     $stmt->bindValue(1, $limiteListagem, PDO::PARAM_INT);
@@ -883,7 +1044,7 @@ function whatsappMensagemConciliacaoTesouraria(PDO $pdo): string
     $msg = "*Conciliacao Tesouraria*\n\n";
     $msg .= "Gerado em: " . date('d/m/Y H:i') . "\n\n";
 
-    $msg .= "*Tesouraria nao conciliados desde 23/04/2026*\n";
+    $msg .= "*Pendentes de Conciliacao*\n";
     $msg .= "Qtde: " . (int)($resumoTesouraria['qtd'] ?? 0) . " | Total: R$ " . number_format((float)($resumoTesouraria['total'] ?? 0), 2, ',', '.') . "\n";
     if (empty($tesouraria)) {
         $msg .= "Nenhum lancamento.\n";
@@ -898,7 +1059,7 @@ function whatsappMensagemConciliacaoTesouraria(PDO $pdo): string
         }
     }
 
-    $msg .= "\n*Firebird BNC001 nao conciliados - Caixa 8 desde 16/04/2026*\n";
+    $msg .= "\n*Firebird BNC001 nao conciliados*\n";
     $msg .= "Qtde: " . (int)($resumoFirebird['qtd'] ?? 0) . " | Total: R$ " . number_format((float)($resumoFirebird['total'] ?? 0), 2, ',', '.') . "\n";
     if (empty($firebird)) {
         $msg .= "Nenhum lancamento.";
