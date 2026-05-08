@@ -3,6 +3,125 @@ require '../../config/auth.php';
 require '../../config/conexao.php';
 
 $empresa_id = $_SESSION['empresa_id'];
+$isMaster = ($_SESSION['nivel'] ?? '') === 'MASTER';
+
+/* =========================
+   EXCLUIR MOVIMENTACAO (MASTER)
+========================= */
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['acao'] ?? '') === 'excluir_movimentacao') {
+    if (!$isMaster) {
+        die('Acesso negado.');
+    }
+
+    $movId = (int)($_POST['movimentacao_id'] ?? 0);
+    $redirectQuery = preg_replace('/[^a-zA-Z0-9_%=&.+\-]/', '', $_POST['redirect_query'] ?? '');
+    $redirectUrl = 'extrato.php' . ($redirectQuery !== '' ? '?' . $redirectQuery : '');
+
+    if ($movId <= 0) {
+        header("Location: {$redirectUrl}");
+        exit;
+    }
+
+    try {
+        $pdo_master->beginTransaction();
+
+        $stmtMov = $pdo_master->prepare("
+            SELECT id
+            FROM tesouraria_movimentacoes
+            WHERE id = ?
+              AND empresa_id = ?
+            FOR UPDATE
+        ");
+        $stmtMov->execute([$movId, $empresa_id]);
+        $mov = $stmtMov->fetch(PDO::FETCH_ASSOC);
+
+        if (!$mov) {
+            throw new Exception('Movimentacao nao encontrada.');
+        }
+
+        $stmtDetalhes = $pdo_master->prepare("
+            SELECT tipo, tipo_dinheiro_id, quantidade
+            FROM tesouraria_movimentacoes_detalhes
+            WHERE movimentacao_id = ?
+        ");
+        $stmtDetalhes->execute([$movId]);
+        $detalhes = $stmtDetalhes->fetchAll(PDO::FETCH_ASSOC);
+
+        $stmtReverteEntrada = $pdo_master->prepare("
+            UPDATE tesouraria_estoque
+            SET quantidade = quantidade - ?
+            WHERE tipo_dinheiro_id = ?
+        ");
+
+        $stmtReverteSaida = $pdo_master->prepare("
+            UPDATE tesouraria_estoque
+            SET quantidade = quantidade + ?
+            WHERE tipo_dinheiro_id = ?
+        ");
+        $stmtInsereEstoque = $pdo_master->prepare("
+            INSERT INTO tesouraria_estoque (tipo_dinheiro_id, quantidade)
+            VALUES (?, ?)
+        ");
+
+        foreach ($detalhes as $det) {
+            if ($det['tipo'] === 'entrada') {
+                $stmtReverteEntrada->execute([
+                    (int)$det['quantidade'],
+                    (int)$det['tipo_dinheiro_id']
+                ]);
+            } else {
+                $stmtReverteSaida->execute([
+                    (int)$det['quantidade'],
+                    (int)$det['tipo_dinheiro_id']
+                ]);
+
+                if ($stmtReverteSaida->rowCount() === 0) {
+                    $stmtInsereEstoque->execute([
+                        (int)$det['tipo_dinheiro_id'],
+                        (int)$det['quantidade']
+                    ]);
+                }
+            }
+        }
+
+        $stmtArquivos = $pdo_master->prepare("
+            SELECT caminho_arquivo
+            FROM tesouraria_comprovantes
+            WHERE movimentacao_id = ?
+        ");
+        $stmtArquivos->execute([$movId]);
+        $arquivosRemover = $stmtArquivos->fetchAll(PDO::FETCH_COLUMN);
+
+        $pdo_master->prepare("DELETE FROM tesouraria_movimentacoes_detalhes WHERE movimentacao_id = ?")->execute([$movId]);
+        $pdo_master->prepare("DELETE FROM tesouraria_comprovantes WHERE movimentacao_id = ?")->execute([$movId]);
+        $pdo_master->prepare("DELETE FROM tesouraria_movimentacoes WHERE id = ? AND empresa_id = ?")->execute([$movId, $empresa_id]);
+
+        $pdo_master->commit();
+
+        $baseUploads = realpath(__DIR__ . '/../../uploads/comprovantes');
+        if ($baseUploads) {
+            foreach ($arquivosRemover as $arquivo) {
+                $arquivoRelativo = str_replace(['\\', '/'], DIRECTORY_SEPARATOR, (string)$arquivo);
+                $arquivoRelativo = preg_replace('#^uploads[\\\\/]comprovantes[\\\\/]#', '', $arquivoRelativo);
+                $caminho = realpath($baseUploads . DIRECTORY_SEPARATOR . $arquivoRelativo);
+
+                if ($caminho && strpos($caminho, $baseUploads) === 0 && is_file($caminho)) {
+                    @unlink($caminho);
+                }
+            }
+        }
+
+        $separador = strpos($redirectUrl, '?') === false ? '?' : '&';
+        header("Location: {$redirectUrl}{$separador}excluido=1");
+        exit;
+    } catch (Throwable $e) {
+        if ($pdo_master->inTransaction()) {
+            $pdo_master->rollBack();
+        }
+
+        die('Erro ao excluir movimentacao: ' . $e->getMessage());
+    }
+}
 
 /* =========================
    FILTROS
@@ -17,6 +136,12 @@ $tipo = $_GET['tipo'] ?? '';
 
 // HISTÓRICO
 $historico = $_GET['historico'] ?? '';
+$queryAtual = http_build_query([
+    'data_ini' => $data_ini,
+    'data_fim' => $data_fim,
+    'tipo' => $tipo,
+    'historico' => $historico
+]);
 
 $where = "WHERE m.empresa_id = ?";
 $params = [$empresa_id];
@@ -93,7 +218,7 @@ $movimentacoes = $stmt->fetchAll(PDO::FETCH_ASSOC);
 ========================= */
 $detalhesMov = [];
 
-if ($_SESSION['nivel'] === 'MASTER') {
+if ($isMaster) {
 
     $sql = "
         SELECT 
@@ -121,6 +246,12 @@ require '../../layout/header.php';
     <div class="card-body">
 
         <h4 class="mb-3">Extrato da Tesouraria</h4>
+
+        <?php if (!empty($_GET['excluido'])): ?>
+            <div class="alert alert-success">
+                Movimentacao excluida com sucesso.
+            </div>
+        <?php endif; ?>
 
         <!-- FILTROS -->
         <form method="GET" class="row g-2 mb-3">
@@ -199,7 +330,7 @@ require '../../layout/header.php';
                             <td>
                                 <div class="d-flex align-items-center gap-1">
 
-                                    <?php if ($_SESSION['nivel'] === 'MASTER'): ?>
+                                    <?php if ($isMaster): ?>
 
                                         <button 
                                             class="btn btn-sm btn-outline-dark"
@@ -214,6 +345,16 @@ require '../../layout/header.php';
                                            title="Editar">
                                             ✏️
                                         </a>
+
+                                        <form method="POST" class="d-inline"
+                                              onsubmit="return confirm('Excluir definitivamente a movimentacao #<?= (int)$m['id'] ?>? Esta acao tambem reverte o estoque da tesouraria.');">
+                                            <input type="hidden" name="acao" value="excluir_movimentacao">
+                                            <input type="hidden" name="movimentacao_id" value="<?= (int)$m['id'] ?>">
+                                            <input type="hidden" name="redirect_query" value="<?= htmlspecialchars($queryAtual) ?>">
+                                            <button type="submit" class="btn btn-sm btn-outline-danger" title="Excluir">
+                                                Excluir
+                                            </button>
+                                        </form>
 
                                     <?php endif; ?>
 
@@ -258,7 +399,7 @@ require '../../layout/header.php';
 </div>
 
 <!-- MODAIS (INALTERADO) -->
-<?php if ($_SESSION['nivel'] === 'MASTER'): ?>
+<?php if ($isMaster): ?>
 <?php foreach ($movimentacoes as $m): ?>
 
 <div class="modal fade" id="modalMov<?= $m['id'] ?>" tabindex="-1">
