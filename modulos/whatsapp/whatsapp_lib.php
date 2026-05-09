@@ -2,6 +2,12 @@
 
 function whatsappEnsureTables(PDO $pdo): void
 {
+    static $executado = false;
+    if ($executado) {
+        return;
+    }
+    $executado = true;
+
     $pdo->exec("
         CREATE TABLE IF NOT EXISTS whatsapp_config (
             id TINYINT UNSIGNED NOT NULL PRIMARY KEY,
@@ -59,9 +65,14 @@ function whatsappEnsureTables(PDO $pdo): void
     ");
 
     whatsappEnsureColumn($pdo, 'whatsapp_envios', 'rotina_id', 'ALTER TABLE whatsapp_envios ADD rotina_id INT UNSIGNED NULL AFTER id');
+    whatsappEnsureColumn($pdo, 'whatsapp_config', 'empresa_id', 'ALTER TABLE whatsapp_config ADD empresa_id INT NOT NULL DEFAULT 1 AFTER id');
     whatsappEnsureColumn($pdo, 'whatsapp_config', 'agendamento_token', 'ALTER TABLE whatsapp_config ADD agendamento_token VARCHAR(64) NULL AFTER api_base_url');
+    whatsappEnsureColumn($pdo, 'whatsapp_destinatarios', 'empresa_id', 'ALTER TABLE whatsapp_destinatarios ADD empresa_id INT NOT NULL DEFAULT 1 AFTER id');
+    whatsappEnsureColumn($pdo, 'whatsapp_mensagens', 'empresa_id', 'ALTER TABLE whatsapp_mensagens ADD empresa_id INT NOT NULL DEFAULT 1 AFTER id');
     whatsappEnsureColumn($pdo, 'whatsapp_mensagens', 'categoria', "ALTER TABLE whatsapp_mensagens ADD categoria VARCHAR(80) NOT NULL DEFAULT 'Geral' AFTER id");
     whatsappEnsureColumn($pdo, 'whatsapp_mensagens', 'descricao', 'ALTER TABLE whatsapp_mensagens ADD descricao VARCHAR(255) NULL AFTER titulo');
+    whatsappEnsureColumn($pdo, 'whatsapp_rotinas', 'empresa_id', 'ALTER TABLE whatsapp_rotinas ADD empresa_id INT NOT NULL DEFAULT 1 AFTER id');
+    whatsappEnsureColumn($pdo, 'whatsapp_envios', 'empresa_id', 'ALTER TABLE whatsapp_envios ADD empresa_id INT NOT NULL DEFAULT 1 AFTER id');
     whatsappEnsureColumn($pdo, 'whatsapp_rotinas', 'origem_mensagem', "ALTER TABLE whatsapp_rotinas ADD origem_mensagem ENUM('TEXTO','SISTEMA') NOT NULL DEFAULT 'TEXTO' AFTER mensagem_id");
     whatsappEnsureColumn($pdo, 'whatsapp_rotinas', 'gerador_sistema', 'ALTER TABLE whatsapp_rotinas ADD gerador_sistema VARCHAR(80) NULL AFTER origem_mensagem');
     whatsappEnsureColumn($pdo, 'whatsapp_rotinas', 'periodicidade', "ALTER TABLE whatsapp_rotinas ADD periodicidade ENUM('MANUAL','DIARIO','SEMANAL','MENSAL') NOT NULL DEFAULT 'MANUAL' AFTER evitar_duplicidade_diaria");
@@ -93,6 +104,8 @@ function whatsappEnsureTables(PDO $pdo): void
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
     ");
 
+    whatsappEnsureCompanyIndexes($pdo);
+
     $pdo->exec("
         CREATE TABLE IF NOT EXISTS whatsapp_rotina_destinatarios (
             rotina_id INT UNSIGNED NOT NULL,
@@ -119,41 +132,41 @@ function whatsappEnsureTables(PDO $pdo): void
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
     ");
 
-    $stmt = $pdo->query("SELECT COUNT(*) FROM whatsapp_config");
+    $stmt = $pdo->query("SELECT COUNT(*) FROM whatsapp_config WHERE empresa_id = 1");
     if ((int)$stmt->fetchColumn() === 0) {
         $stmt = $pdo->prepare("
-            INSERT INTO whatsapp_config (id, nome, token, api_base_url, ativo)
-            VALUES (1, 'Principal', '', 'https://api-whatsapp.wascript.com.br/api/enviar-texto', 'S')
+            INSERT INTO whatsapp_config (id, empresa_id, nome, token, api_base_url, ativo)
+            VALUES (1, 1, 'Principal', '', 'https://api-whatsapp.wascript.com.br/api/enviar-texto', 'S')
         ");
         $stmt->execute();
     }
 
-    $stmt = $pdo->query("SELECT agendamento_token FROM whatsapp_config WHERE id = 1");
+    $stmt = $pdo->query("SELECT agendamento_token FROM whatsapp_config WHERE empresa_id = 1 LIMIT 1");
     if (trim((string)$stmt->fetchColumn()) === '') {
         $token = function_exists('random_bytes') ? bin2hex(random_bytes(24)) : md5(uniqid('', true));
-        $stmt = $pdo->prepare("UPDATE whatsapp_config SET agendamento_token = ? WHERE id = 1");
+        $stmt = $pdo->prepare("UPDATE whatsapp_config SET agendamento_token = ? WHERE empresa_id = 1");
         $stmt->execute([$token]);
     }
 
-    $stmt = $pdo->query("SELECT COUNT(*) FROM whatsapp_destinatarios");
+    $stmt = $pdo->query("SELECT COUNT(*) FROM whatsapp_destinatarios WHERE empresa_id = 1");
     if ((int)$stmt->fetchColumn() === 0) {
         $stmt = $pdo->prepare("
-            INSERT INTO whatsapp_destinatarios (nome, tipo, numero, ativo)
-            VALUES ('Grupo Resumo Diario', 'GRUPO', ?, 'S')
+            INSERT INTO whatsapp_destinatarios (empresa_id, nome, tipo, numero, ativo)
+            VALUES (1, 'Grupo Resumo Diario', 'GRUPO', ?, 'S')
         ");
         $stmt->execute(['120363161715233488']);
     }
 
-    $stmt = $pdo->prepare("SELECT id FROM whatsapp_rotinas WHERE codigo = 'resumo_diario'");
+    $stmt = $pdo->prepare("SELECT id FROM whatsapp_rotinas WHERE empresa_id = 1 AND codigo = 'resumo_diario'");
     $stmt->execute();
     $rotinaId = (int)$stmt->fetchColumn();
 
     if ($rotinaId <= 0) {
         $stmt = $pdo->prepare("
             INSERT INTO whatsapp_rotinas
-                (codigo, nome, descricao, mensagem_id, origem_mensagem, gerador_sistema, ativo, evitar_duplicidade_diaria, periodicidade, horario, proxima_execucao)
+                (empresa_id, codigo, nome, descricao, mensagem_id, origem_mensagem, gerador_sistema, ativo, evitar_duplicidade_diaria, periodicidade, horario, proxima_execucao)
             VALUES
-                ('resumo_diario', 'Resumo Diario', 'Resumo automatico com vendas, caixa sistema, tesouraria e diferenca.', NULL, 'SISTEMA', 'resumo_diario', 'S', 'S', 'DIARIO', '21:00:00', NULL)
+                (1, 'resumo_diario', 'Resumo Diario', 'Resumo automatico com vendas, caixa sistema, tesouraria e diferenca.', NULL, 'SISTEMA', 'resumo_diario', 'S', 'S', 'DIARIO', '21:00:00', NULL)
         ");
         $stmt->execute();
         $rotinaId = (int)$pdo->lastInsertId();
@@ -168,6 +181,7 @@ function whatsappEnsureTables(PDO $pdo): void
                 mensagem_id = NULL
             WHERE id = ?
               AND codigo = 'resumo_diario'
+              AND empresa_id = 1
         ");
         $stmt->execute([$rotinaId]);
         whatsappAtualizarProximaExecucao($pdo, $rotinaId);
@@ -219,9 +233,43 @@ function whatsappEnsureColumn(PDO $pdo, string $table, string $column, string $a
     }
 }
 
-function whatsappConfig(PDO $pdo): ?array
+function whatsappEnsureCompanyIndexes(PDO $pdo): void
 {
-    $stmt = $pdo->query("SELECT * FROM whatsapp_config WHERE id = 1");
+    try {
+        $pdo->exec("ALTER TABLE whatsapp_config ADD UNIQUE KEY uq_whatsapp_config_empresa (empresa_id)");
+    } catch (Throwable $e) {
+    }
+
+    try {
+        $pdo->exec("ALTER TABLE whatsapp_destinatarios ADD INDEX idx_whatsapp_dest_empresa (empresa_id, ativo)");
+    } catch (Throwable $e) {
+    }
+
+    try {
+        $pdo->exec("ALTER TABLE whatsapp_mensagens ADD INDEX idx_whatsapp_msg_empresa (empresa_id, ativo)");
+    } catch (Throwable $e) {
+    }
+
+    try {
+        $pdo->exec("ALTER TABLE whatsapp_envios ADD INDEX idx_whatsapp_envios_empresa (empresa_id, enviado_em)");
+    } catch (Throwable $e) {
+    }
+
+    try {
+        $pdo->exec("ALTER TABLE whatsapp_rotinas DROP INDEX uq_whatsapp_rotinas_codigo");
+    } catch (Throwable $e) {
+    }
+
+    try {
+        $pdo->exec("ALTER TABLE whatsapp_rotinas ADD UNIQUE KEY uq_whatsapp_rotinas_empresa_codigo (empresa_id, codigo)");
+    } catch (Throwable $e) {
+    }
+}
+
+function whatsappConfig(PDO $pdo, int $empresaId = 1): ?array
+{
+    $stmt = $pdo->prepare("SELECT * FROM whatsapp_config WHERE empresa_id = ? LIMIT 1");
+    $stmt->execute([$empresaId]);
     $config = $stmt->fetch(PDO::FETCH_ASSOC);
     return $config ?: null;
 }
@@ -303,13 +351,15 @@ function whatsappSend(PDO $pdo, array $config, array $destinatario, string $mens
 
 function whatsappRegisterSend(PDO $pdo, ?int $mensagemId, array $destinatario, string $mensagem, string $status, ?string $resposta, ?string $erro, ?int $usuarioId, ?int $rotinaId = null): array
 {
+    $empresaId = (int)($destinatario['empresa_id'] ?? 1);
     $stmt = $pdo->prepare("
         INSERT INTO whatsapp_envios
-            (rotina_id, mensagem_id, destinatario_id, destino_nome, destino_numero, mensagem, status, resposta_api, erro, usuario_id)
+            (empresa_id, rotina_id, mensagem_id, destinatario_id, destino_nome, destino_numero, mensagem, status, resposta_api, erro, usuario_id)
         VALUES
-            (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ");
     $stmt->execute([
+        $empresaId,
         $rotinaId,
         $mensagemId,
         $destinatario['id'] ?? null,
@@ -332,8 +382,8 @@ function whatsappRegisterSend(PDO $pdo, ?int $mensagemId, array $destinatario, s
 
 function whatsappRotinaPorCodigo(PDO $pdo, string $codigo): ?array
 {
-    $stmt = $pdo->prepare("SELECT * FROM whatsapp_rotinas WHERE codigo = ?");
-    $stmt->execute([$codigo]);
+    $stmt = $pdo->prepare("SELECT * FROM whatsapp_rotinas WHERE codigo = ? AND empresa_id = ?");
+    $stmt->execute([$codigo, (int)($_SESSION['empresa_id'] ?? 1)]);
     $rotina = $stmt->fetch(PDO::FETCH_ASSOC);
     return $rotina ?: null;
 }
@@ -345,16 +395,20 @@ function whatsappDestinatariosRotina(PDO $pdo, int $rotinaId): array
         FROM whatsapp_rotina_destinatarios rd
         INNER JOIN whatsapp_destinatarios d ON d.id = rd.destinatario_id
         WHERE rd.rotina_id = ?
+          AND d.empresa_id = (
+              SELECT empresa_id FROM whatsapp_rotinas WHERE id = ?
+          )
           AND d.ativo = 'S'
         ORDER BY d.tipo, d.nome
     ");
-    $stmt->execute([$rotinaId]);
+    $stmt->execute([$rotinaId, $rotinaId]);
     return $stmt->fetchAll(PDO::FETCH_ASSOC);
 }
 
 function whatsappEnviarRotina(PDO $pdo, array $rotina, string $mensagem, ?int $mensagemId, ?int $usuarioId): array
 {
-    $config = whatsappConfig($pdo);
+    $empresaId = (int)($rotina['empresa_id'] ?? 1);
+    $config = whatsappConfig($pdo, $empresaId);
     if (!$config || $config['ativo'] !== 'S') {
         throw new Exception('Configuracao do WhatsApp inativa.');
     }
@@ -477,23 +531,25 @@ function whatsappAtualizarProximaAgendamento(PDO $pdo, int $agendamentoId): void
 
 function whatsappMensagemRotina(PDO $pdo, array $rotina): array
 {
+    $empresaId = (int)($rotina['empresa_id'] ?? 1);
+
     if (($rotina['origem_mensagem'] ?? 'TEXTO') === 'SISTEMA') {
         $gerador = $rotina['gerador_sistema'] ?? '';
 
         if ($gerador === 'resumo_diario') {
-            return [whatsappMensagemResumoDiario($pdo, 1), null];
+            return [whatsappMensagemResumoDiario($pdo, $empresaId), null];
         }
 
         if ($gerador === 'acompanhamento_vendas') {
-            return [whatsappMensagemAcompanhamentoVendas($pdo), null];
+            return [whatsappMensagemAcompanhamentoVendas($pdo, null, $empresaId), null];
         }
 
         if ($gerador === 'conciliacao_tesouraria') {
-            return [whatsappMensagemConciliacaoTesouraria($pdo), null];
+            return [whatsappMensagemConciliacaoTesouraria($pdo, $empresaId), null];
         }
 
         if ($gerador === 'clientes_vencidos') {
-            return [whatsappMensagemClientesVencidos($pdo), null];
+            return [whatsappMensagemClientesVencidos($pdo, null, $empresaId), null];
         }
 
         throw new Exception('Gerador de mensagem do sistema nao encontrado.');
@@ -504,8 +560,8 @@ function whatsappMensagemRotina(PDO $pdo, array $rotina): array
         throw new Exception('Esta rotina nao possui mensagem vinculada.');
     }
 
-    $stmt = $pdo->prepare("SELECT * FROM whatsapp_mensagens WHERE id = ? AND ativo = 'S'");
-    $stmt->execute([$mensagemId]);
+    $stmt = $pdo->prepare("SELECT * FROM whatsapp_mensagens WHERE id = ? AND empresa_id = ? AND ativo = 'S'");
+    $stmt->execute([$mensagemId, $empresaId]);
     $mensagemRow = $stmt->fetch(PDO::FETCH_ASSOC);
     if (!$mensagemRow) {
         throw new Exception('Mensagem ativa da rotina nao encontrada.');
@@ -572,9 +628,10 @@ function whatsappMensagemResumoDiario(PDO $pdo, int $empresaId = 1): string
         SELECT SUM(TOTGERAL)
         FROM armazem_est007
         WHERE DTLANC BETWEEN ? AND ?
+          AND EMPRESA = ?
           AND CANCELADO = 'N'
     ");
-    $stmt->execute([$inicio, $fim]);
+    $stmt->execute([$inicio, $fim, $empresaId]);
     $vendas = $stmt->fetchColumn() ?: 0;
 
     $stmt = $pdo->prepare("
@@ -594,15 +651,17 @@ function whatsappMensagemResumoDiario(PDO $pdo, int $empresaId = 1): string
                 SELECT DISTINCT CODCX
                 FROM armazem_zconfig005
                 WHERE CODCX IS NOT NULL
+                  AND EMPRESA = ?
             ) z ON z.CODCX = b.CBCONTADOR
             WHERE b.DTLANC BETWEEN ? AND ?
+              AND b.EMPRESA = ?
               AND COALESCE(b.deletado, 'N') <> 'S'
             GROUP BY
                 DATE(DATE_SUB(b.DTLANC, INTERVAL 7 HOUR)),
                 b.CBCONTADOR
         ) x
     ");
-    $stmt->execute([$inicio, $fim]);
+    $stmt->execute([$empresaId, $inicio, $fim, $empresaId]);
     $sistema = $stmt->fetchColumn() ?: 0;
 
     $stmt = $pdo->prepare("
@@ -631,10 +690,12 @@ function whatsappMensagemResumoDiario(PDO $pdo, int $empresaId = 1): string
         INNER JOIN armazem_cr001 c
             ON c.recebimento_id = r.id
         WHERE r.data_venda BETWEEN ? AND ?
+          AND r.empresa_id = ?
           AND c.DTLANC BETWEEN ? AND ?
+          AND c.EMPRESA = ?
           AND COALESCE(c.excluido_firebird, 'N') = 'N'
     ");
-    $stmt->execute([$inicio, $fim, $inicio, $fim]);
+    $stmt->execute([$inicio, $fim, $empresaId, $inicio, $fim, $empresaId]);
     $totalSistemaRecebiveis = (float)$stmt->fetchColumn();
 
     $stmt = $pdo->prepare("
@@ -643,38 +704,43 @@ function whatsappMensagemResumoDiario(PDO $pdo, int $empresaId = 1): string
         INNER JOIN armazem_conciliacao_recebimentos r
             ON r.id = c.recebimento_id
         WHERE c.DTLANC BETWEEN ? AND ?
+          AND c.EMPRESA = ?
           AND r.data_venda BETWEEN ? AND ?
+          AND r.empresa_id = ?
           AND c.CMCONTADOR <> 9
           AND NOT (c.CMCONTADOR = 1 AND c.STATUS = 'QT')
           AND COALESCE(c.excluido_firebird, 'N') = 'N'
     ");
-    $stmt->execute([$inicio, $fim, $inicio, $fim]);
+    $stmt->execute([$inicio, $fim, $empresaId, $inicio, $fim, $empresaId]);
     $totalCR001Recebiveis = (float)$stmt->fetchColumn();
 
     $stmt = $pdo->prepare("
         SELECT COALESCE(SUM(r.valor_bruto), 0)
         FROM armazem_conciliacao_recebimentos r
         WHERE r.data_venda BETWEEN ? AND ?
+          AND r.empresa_id = ?
           AND NOT EXISTS (
               SELECT 1
               FROM armazem_cr001 c
               WHERE c.recebimento_id = r.id
+                AND c.EMPRESA = ?
                 AND COALESCE(c.excluido_firebird, 'N') = 'N'
           )
     ");
-    $stmt->execute([$inicio, $fim]);
+    $stmt->execute([$inicio, $fim, $empresaId, $empresaId]);
     $totalRecebiveisNaoConciliados = (float)$stmt->fetchColumn();
 
     $stmt = $pdo->prepare("
         SELECT COALESCE(SUM(c.VLRPARCELA), 0)
         FROM armazem_cr001 c
         WHERE c.DTLANC BETWEEN ? AND ?
+          AND c.EMPRESA = ?
           AND c.CMCONTADOR <> 9
           AND c.recebimento_id IS NULL
           AND NOT (c.CMCONTADOR = 1 AND c.STATUS = 'QT')
           AND COALESCE(c.excluido_firebird, 'N') = 'N'
     ");
-    $stmt->execute([$inicio, $fim]);
+    $stmt->execute([$inicio, $fim, $empresaId]);
     $totalCR001NaoConciliados = (float)$stmt->fetchColumn();
 
     $diferencaRecebiveis = ($totalSistemaRecebiveis + $totalRecebiveisNaoConciliados) - ($totalCR001Recebiveis + $totalCR001NaoConciliados);
@@ -687,14 +753,16 @@ function whatsappMensagemResumoDiario(PDO $pdo, int $empresaId = 1): string
         FROM armazem_est007 v
         LEFT JOIN armazem_cr002 c
             ON c.CLICONTADOR = v.CLIENTE
+           AND c.EMPRESA = v.EMPRESA
         WHERE v.DTLANC BETWEEN ? AND ?
+          AND v.EMPRESA = ?
           AND v.CANCELADO = 'N'
           AND v.CMCONTADOR = 9
         GROUP BY v.CLIENTE, nome_cliente
         ORDER BY total DESC
         LIMIT 10
     ");
-    $stmt->execute([$inicio, $fim]);
+    $stmt->execute([$inicio, $fim, $empresaId]);
     $maioresClientes = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
     $stmt = $pdo->prepare("
@@ -705,9 +773,12 @@ function whatsappMensagemResumoDiario(PDO $pdo, int $empresaId = 1): string
         FROM armazem_est008 i
         INNER JOIN armazem_est007 v
             ON v.VENDACONTADOR = i.ITEMVENDACONTADOR
+           AND v.EMPRESA = i.EMPRESA
         LEFT JOIN armazem_est004 p
             ON p.CONTAPRODUTO = i.PRODUTO
+           AND p.EMPRESA = i.EMPRESA
         WHERE v.DTLANC BETWEEN ? AND ?
+          AND v.EMPRESA = ?
           AND v.CANCELADO = 'N'
           AND COALESCE(i.CANCELADO, 'N') = 'N'
           AND COALESCE(i.excluido_firebird, 'N') = 'N'
@@ -715,7 +786,7 @@ function whatsappMensagemResumoDiario(PDO $pdo, int $empresaId = 1): string
         ORDER BY quantidade DESC
         LIMIT 10
     ");
-    $stmt->execute([$inicio, $fim]);
+    $stmt->execute([$inicio, $fim, $empresaId]);
     $produtosQuantidade = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
     $stmt = $pdo->prepare("
@@ -726,9 +797,12 @@ function whatsappMensagemResumoDiario(PDO $pdo, int $empresaId = 1): string
         FROM armazem_est008 i
         INNER JOIN armazem_est007 v
             ON v.VENDACONTADOR = i.ITEMVENDACONTADOR
+           AND v.EMPRESA = i.EMPRESA
         LEFT JOIN armazem_est004 p
             ON p.CONTAPRODUTO = i.PRODUTO
+           AND p.EMPRESA = i.EMPRESA
         WHERE v.DTLANC BETWEEN ? AND ?
+          AND v.EMPRESA = ?
           AND v.CANCELADO = 'N'
           AND COALESCE(i.CANCELADO, 'N') = 'N'
           AND COALESCE(i.excluido_firebird, 'N') = 'N'
@@ -736,7 +810,7 @@ function whatsappMensagemResumoDiario(PDO $pdo, int $empresaId = 1): string
         ORDER BY total DESC
         LIMIT 10
     ");
-    $stmt->execute([$inicio, $fim]);
+    $stmt->execute([$inicio, $fim, $empresaId]);
     $produtosValor = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
     $msg = "*Resumo do Dia*\n\n";
@@ -780,7 +854,7 @@ function whatsappMensagemResumoDiario(PDO $pdo, int $empresaId = 1): string
     return $msg;
 }
 
-function whatsappMensagemAcompanhamentoVendas(PDO $pdo, ?DateTime $base = null): string
+function whatsappMensagemAcompanhamentoVendas(PDO $pdo, ?DateTime $base = null, int $empresaId = 1): string
 {
     date_default_timezone_set('America/Sao_Paulo');
 
@@ -802,16 +876,17 @@ function whatsappMensagemAcompanhamentoVendas(PDO $pdo, ?DateTime $base = null):
         SELECT COALESCE(SUM(TOTGERAL), 0)
         FROM armazem_est007
         WHERE DTLANC BETWEEN ? AND ?
+          AND EMPRESA = ?
           AND CANCELADO = 'N'
     ");
 
-    $stmt->execute([$inicioDiaAnterior, $fimDiaAnterior]);
+    $stmt->execute([$inicioDiaAnterior, $fimDiaAnterior, $empresaId]);
     $vendaDiaAnterior = (float)$stmt->fetchColumn();
 
-    $stmt->execute([$inicioMesAtual, $fimHoje]);
+    $stmt->execute([$inicioMesAtual, $fimHoje, $empresaId]);
     $vendaMesAtual = (float)$stmt->fetchColumn();
 
-    $stmt->execute([$inicioMesAnterior, $fimMesAnterior]);
+    $stmt->execute([$inicioMesAnterior, $fimMesAnterior, $empresaId]);
     $vendaMesAnterior = (float)$stmt->fetchColumn();
 
     $msg = "*Acompanhamento das Vendas*\n\n";
@@ -826,7 +901,7 @@ function whatsappMensagemAcompanhamentoVendas(PDO $pdo, ?DateTime $base = null):
     return $msg;
 }
 
-function whatsappMensagemClientesVencidos(PDO $pdo, ?DateTime $base = null): string
+function whatsappMensagemClientesVencidos(PDO $pdo, ?DateTime $base = null, int $empresaId = 1): string
 {
     date_default_timezone_set('America/Sao_Paulo');
 
@@ -859,7 +934,9 @@ function whatsappMensagemClientesVencidos(PDO $pdo, ?DateTime $base = null): str
         FROM armazem_cr001 cr
         LEFT JOIN armazem_cr002 cli
             ON cli.CLICONTADOR = cr.CLICONTADOR
+           AND cli.EMPRESA = cr.EMPRESA
         WHERE DATE(cr.DTVENC) < ?
+          AND cr.EMPRESA = ?
           AND cr.CMCONTADOR = 9
           AND COALESCE(cr.VLRRESTANTE, 0) > 0
           AND COALESCE(cr.excluido_firebird, 'N') = 'N'
@@ -868,7 +945,7 @@ function whatsappMensagemClientesVencidos(PDO $pdo, ?DateTime $base = null): str
         HAVING total > 0
         ORDER BY acima_60 DESC, total DESC, nome_cliente ASC
     ");
-    $stmt->execute([$hoje, $hoje, $hoje, $hoje]);
+    $stmt->execute([$hoje, $hoje, $hoje, $hoje, $empresaId]);
     $clientes = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
     $stmt = $pdo->prepare("
@@ -879,12 +956,13 @@ function whatsappMensagemClientesVencidos(PDO $pdo, ?DateTime $base = null): str
             SUM(VLRRESTANTE) AS total
         FROM armazem_cr001
         WHERE DATE(DTVENC) < ?
+          AND EMPRESA = ?
           AND CMCONTADOR = 9
           AND COALESCE(VLRRESTANTE, 0) > 0
           AND COALESCE(excluido_firebird, 'N') = 'N'
           AND (STATUS IS NULL OR STATUS <> 'QT')
     ");
-    $stmt->execute([$hoje, $hoje, $hoje, $hoje]);
+    $stmt->execute([$hoje, $hoje, $hoje, $hoje, $empresaId]);
     $totais = $stmt->fetch(PDO::FETCH_ASSOC) ?: [];
 
     $arquivoUrl = null;
@@ -965,36 +1043,41 @@ function whatsappMensagemClientesVencidos(PDO $pdo, ?DateTime $base = null): str
     return trim($msg);
 }
 
-function whatsappMensagemConciliacaoTesouraria(PDO $pdo): string
+function whatsappMensagemConciliacaoTesouraria(PDO $pdo, int $empresaId = 1): string
 {
     date_default_timezone_set('America/Sao_Paulo');
 
     $limiteListagem = 50;
 
-    $stmt = $pdo->query("
+    $stmt = $pdo->prepare("
         SELECT COUNT(*) AS qtd, COALESCE(SUM(valor_operacao), 0) AS total
         FROM tesouraria_movimentacoes
         WHERE conciliado = 'N'
+          AND empresa_id = ?
           AND tipo_operacao <> 'T'
     ");
+    $stmt->execute([$empresaId]);
     $resumoTesouraria = $stmt->fetch(PDO::FETCH_ASSOC);
 
     $stmt = $pdo->prepare("
         SELECT id, data_mov, valor_operacao, observacao
         FROM tesouraria_movimentacoes
         WHERE conciliado = 'N'
+          AND empresa_id = ?
           AND tipo_operacao <> 'T'
         ORDER BY data_mov DESC, id DESC
         LIMIT ?
     ");
-    $stmt->bindValue(1, $limiteListagem, PDO::PARAM_INT);
+    $stmt->bindValue(1, $empresaId, PDO::PARAM_INT);
+    $stmt->bindValue(2, $limiteListagem, PDO::PARAM_INT);
     $stmt->execute();
     $tesouraria = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
-    $stmt = $pdo->query("
+    $stmt = $pdo->prepare("
         SELECT COUNT(*) AS qtd, COALESCE(SUM(f.VALORMOV), 0) AS total
         FROM armazem_bnc001 f
-        WHERE f.CBCONTADOR = 8
+        WHERE f.EMPRESA = ?
+          AND f.CBCONTADOR = 8
           AND f.DTMOV > '2026-04-15'
           AND (
               COALESCE(f.deletado, 'N') <> 'S'
@@ -1005,19 +1088,23 @@ function whatsappMensagemConciliacaoTesouraria(PDO $pdo): string
               SELECT 1
               FROM tesouraria_movimentacoes tx
               WHERE tx.firebird_id = f.MOVCONTADOR
+                AND tx.empresa_id = ?
           )
           AND NOT EXISTS (
               SELECT 1
               FROM tesouraria_firebird_conferidos fc
               WHERE fc.movcontador = f.MOVCONTADOR
+                AND fc.empresa_id = ?
           )
     ");
+    $stmt->execute([$empresaId, $empresaId, $empresaId]);
     $resumoFirebird = $stmt->fetch(PDO::FETCH_ASSOC);
 
     $stmt = $pdo->prepare("
         SELECT f.MOVCONTADOR, f.DTMOV, f.VALORMOV, f.HISTMOV
         FROM armazem_bnc001 f
-        WHERE f.CBCONTADOR = 8
+        WHERE f.EMPRESA = ?
+          AND f.CBCONTADOR = 8
           AND f.DTMOV > '2026-04-15'
           AND (
               COALESCE(f.deletado, 'N') <> 'S'
@@ -1028,16 +1115,21 @@ function whatsappMensagemConciliacaoTesouraria(PDO $pdo): string
               SELECT 1
               FROM tesouraria_movimentacoes tx
               WHERE tx.firebird_id = f.MOVCONTADOR
+                AND tx.empresa_id = ?
           )
           AND NOT EXISTS (
               SELECT 1
               FROM tesouraria_firebird_conferidos fc
               WHERE fc.movcontador = f.MOVCONTADOR
+                AND fc.empresa_id = ?
           )
         ORDER BY f.DTMOV DESC, f.MOVCONTADOR DESC
         LIMIT ?
     ");
-    $stmt->bindValue(1, $limiteListagem, PDO::PARAM_INT);
+    $stmt->bindValue(1, $empresaId, PDO::PARAM_INT);
+    $stmt->bindValue(2, $empresaId, PDO::PARAM_INT);
+    $stmt->bindValue(3, $empresaId, PDO::PARAM_INT);
+    $stmt->bindValue(4, $limiteListagem, PDO::PARAM_INT);
     $stmt->execute();
     $firebird = $stmt->fetchAll(PDO::FETCH_ASSOC);
 

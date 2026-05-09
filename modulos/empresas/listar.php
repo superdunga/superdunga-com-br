@@ -67,7 +67,7 @@ $empresas = $stmt->fetchAll(PDO::FETCH_ASSOC);
                             <th>Nome Fantasia</th>
                             <th>CNPJ</th>
                             <th>Status</th>
-                            <th width="100">Ações</th>
+                            <th width="170">Ações</th>
                         </tr>
                     </thead>
                     <tbody>
@@ -84,6 +84,9 @@ $empresas = $stmt->fetchAll(PDO::FETCH_ASSOC);
                                 <td>
                                     <a href="editar.php?id=<?= $empresa['id'] ?>" class="btn btn-sm btn-outline-primary">
                                         Editar
+                                    </a>
+                                    <a href="modulos.php?empresa_id=<?= $empresa['id'] ?>" class="btn btn-sm btn-outline-secondary">
+                                        Modulos
                                     </a>
                                 </td>
                             </tr>

@@ -1,12 +1,17 @@
 <?php
 require '../../config/auth.php';
+require '../../config/conexao.php';
+require '../../config/modulos.php';
 require '../../layout/header.php';
+
+$empresaId = (int)($_SESSION['empresa_id'] ?? 0);
 
 $opcoes = [
     [
         'titulo' => 'Compras',
         'descricao' => 'Audite compras, itens, custos, precos de venda e margens.',
         'href' => 'listar.php',
+        'modulo' => 'auditoria_compras',
         'icone' => 'CP',
         'botao' => 'btn-info',
     ],
@@ -14,10 +19,13 @@ $opcoes = [
         'titulo' => 'Itens fora do padrao',
         'descricao' => 'Revise itens de compra com margem acima ou abaixo do limite.',
         'href' => 'itens_fora_padrao.php',
+        'modulo' => 'auditoria_itens_fora_padrao',
         'icone' => 'MV',
         'botao' => 'btn-warning',
     ],
 ];
+
+$opcoes = filtrarOpcoesPorModulo($pdo_master, $empresaId, $opcoes);
 ?>
 
 <section class="mb-4">
@@ -53,6 +61,11 @@ $opcoes = [
                 </div>
             </div>
         <?php endforeach; ?>
+        <?php if (empty($opcoes)): ?>
+            <div class="col-12">
+                <div class="alert alert-info mb-0">Nenhum modulo de auditoria liberado para esta empresa.</div>
+            </div>
+        <?php endif; ?>
     </div>
 </section>
 

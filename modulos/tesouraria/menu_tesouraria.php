@@ -1,12 +1,17 @@
 <?php
 require '../../config/auth.php';
+require '../../config/conexao.php';
+require '../../config/modulos.php';
 require '../../layout/header.php';
+
+$empresaId = (int)($_SESSION['empresa_id'] ?? 0);
 
 $opcoes = [
     [
         'titulo' => 'Movimentacao',
         'descricao' => 'Registre entradas, saidas e ajustes da tesouraria.',
         'href' => 'movimentar.php',
+        'modulo' => 'tesouraria_movimentacao',
         'icone' => '$',
         'botao' => 'btn-success',
     ],
@@ -14,6 +19,7 @@ $opcoes = [
         'titulo' => 'Extrato',
         'descricao' => 'Consulte saldos, filtros e historico de movimentacoes.',
         'href' => 'extrato.php',
+        'modulo' => 'tesouraria_extrato',
         'icone' => 'EX',
         'botao' => 'btn-primary',
     ],
@@ -21,6 +27,7 @@ $opcoes = [
         'titulo' => 'Inventario Fisico',
         'descricao' => 'Abra a rotina de contagem e conferencia fisica.',
         'href' => 'inventario.php',
+        'modulo' => 'tesouraria_inventario',
         'icone' => 'IF',
         'botao' => 'btn-info',
     ],
@@ -28,6 +35,7 @@ $opcoes = [
         'titulo' => 'Historico de Inventarios',
         'descricao' => 'Veja inventarios finalizados e resultados anteriores.',
         'href' => 'inventarios.php',
+        'modulo' => 'tesouraria_inventarios',
         'icone' => 'HI',
         'botao' => 'btn-secondary',
     ],
@@ -35,10 +43,13 @@ $opcoes = [
         'titulo' => 'Conciliar Tesouraria',
         'descricao' => 'Compare lancamentos e marque conciliacoes.',
         'href' => 'conciliar.php',
+        'modulo' => 'tesouraria_conciliar',
         'icone' => 'CT',
         'botao' => 'btn-warning',
     ],
 ];
+
+$opcoes = filtrarOpcoesPorModulo($pdo_master, $empresaId, $opcoes);
 ?>
 
 <section class="mb-4">
@@ -74,6 +85,11 @@ $opcoes = [
                 </div>
             </div>
         <?php endforeach; ?>
+        <?php if (empty($opcoes)): ?>
+            <div class="col-12">
+                <div class="alert alert-info mb-0">Nenhum modulo de tesouraria liberado para esta empresa.</div>
+            </div>
+        <?php endif; ?>
     </div>
 </section>
 

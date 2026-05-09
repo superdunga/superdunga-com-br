@@ -1,12 +1,17 @@
 <?php
 require '../../config/auth.php';
+require '../../config/conexao.php';
+require '../../config/modulos.php';
 require '../../layout/header.php';
+
+$empresaId = (int)($_SESSION['empresa_id'] ?? 0);
 
 $opcoes = [
     [
         'titulo' => 'Fechamento de Caixa',
         'descricao' => 'Lance e confira fechamentos diarios de caixa.',
         'href' => 'fechamento_caixa.php',
+        'modulo' => 'fechamento_caixa',
         'icone' => 'FC',
         'botao' => 'btn-primary',
     ],
@@ -14,6 +19,7 @@ $opcoes = [
         'titulo' => 'Conciliacao de Dinheiro',
         'descricao' => 'Concilie valores em dinheiro e acompanhe divergencias.',
         'href' => 'conciliacao_dinheiro.php',
+        'modulo' => 'fechamento_dinheiro',
         'icone' => '$',
         'botao' => 'btn-success',
     ],
@@ -21,6 +27,7 @@ $opcoes = [
         'titulo' => 'Importar Recebimentos',
         'descricao' => 'Importe arquivos e concilie vendas a prazo.',
         'href' => 'importar_recebimentos.php',
+        'modulo' => 'fechamento_importar_recebimentos',
         'icone' => 'IR',
         'botao' => 'btn-warning',
     ],
@@ -28,10 +35,13 @@ $opcoes = [
         'titulo' => 'Resumo Vendas a Prazo',
         'descricao' => 'Visualize o resumo consolidado das vendas a prazo.',
         'href' => 'resumo_prazo.php',
+        'modulo' => 'fechamento_resumo_prazo',
         'icone' => 'RP',
         'botao' => 'btn-info',
     ],
 ];
+
+$opcoes = filtrarOpcoesPorModulo($pdo_master, $empresaId, $opcoes);
 ?>
 
 <section class="mb-4">
@@ -67,6 +77,11 @@ $opcoes = [
                 </div>
             </div>
         <?php endforeach; ?>
+        <?php if (empty($opcoes)): ?>
+            <div class="col-12">
+                <div class="alert alert-info mb-0">Nenhum modulo de fechamento liberado para esta empresa.</div>
+            </div>
+        <?php endif; ?>
     </div>
 </section>
 

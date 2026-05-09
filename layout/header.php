@@ -16,6 +16,34 @@ $usuariosUrl = ($appBaseUrl ?: '') . '/modulos/usuarios/listar.php';
 $empresasUrl = ($appBaseUrl ?: '') . '/modulos/empresas/listar.php';
 $usuarioNome = $_SESSION['usuario_nome'] ?? 'Usuario';
 $nivelUsuario = $_SESSION['nivel'] ?? '';
+$empresaIdSessao = (int)($_SESSION['empresa_id'] ?? 0);
+$empresaNome = 'Empresa nao definida';
+
+if (!empty($_SESSION['empresa_nome'])) {
+    $empresaNome = (string)$_SESSION['empresa_nome'];
+} elseif ($empresaIdSessao > 0) {
+    try {
+        if (!isset($pdo_master)) {
+            $conexaoPath = __DIR__ . '/../config/conexao.php';
+            if (file_exists($conexaoPath)) {
+                require $conexaoPath;
+            }
+        }
+
+        if (isset($pdo_master) && $pdo_master instanceof PDO) {
+            $stmtEmpresaTopbar = $pdo_master->prepare("SELECT nome_fantasia FROM empresas WHERE id = ? LIMIT 1");
+            $stmtEmpresaTopbar->execute([$empresaIdSessao]);
+            $empresaNomeBanco = $stmtEmpresaTopbar->fetchColumn();
+            if ($empresaNomeBanco) {
+                $empresaNome = $empresaNomeBanco;
+                $_SESSION['empresa_nome'] = $empresaNomeBanco;
+            }
+        }
+    } catch (Throwable $e) {
+        $empresaNome = 'Empresa ' . $empresaIdSessao;
+    }
+}
+
 $homeUrlJson = htmlspecialchars(json_encode($homeUrl), ENT_QUOTES, 'UTF-8');
 ?>
 <!DOCTYPE html>
@@ -80,9 +108,20 @@ $homeUrlJson = htmlspecialchars(json_encode($homeUrl), ENT_QUOTES, 'UTF-8');
             background: rgba(255, 255, 255, .12);
             border: 1px solid rgba(255, 255, 255, .2);
             color: #fff;
-            border-radius: 999px;
-            padding: .35rem .75rem;
+            border-radius: .5rem;
+            padding: .4rem .75rem;
             font-size: .875rem;
+            line-height: 1.15;
+        }
+
+        .user-chip .user-chip-label {
+            color: rgba(255, 255, 255, .7);
+            font-size: .72rem;
+        }
+
+        .user-chip .user-chip-value {
+            color: #fff;
+            font-weight: 700;
         }
 
         .card {
@@ -420,10 +459,15 @@ $homeUrlJson = htmlspecialchars(json_encode($homeUrl), ENT_QUOTES, 'UTF-8');
 
             <div class="d-flex flex-column flex-lg-row align-items-lg-center gap-2">
                 <span class="user-chip">
-                    <?= htmlspecialchars($usuarioNome) ?>
-                    <?php if ($nivelUsuario !== ''): ?>
-                        <span class="opacity-75">/ <?= htmlspecialchars($nivelUsuario) ?></span>
-                    <?php endif; ?>
+                    <span class="d-block user-chip-label">Usuario</span>
+                    <span class="d-block user-chip-value">
+                        <?= htmlspecialchars($usuarioNome) ?>
+                        <?php if ($nivelUsuario !== ''): ?>
+                            <span class="fw-normal opacity-75">/ <?= htmlspecialchars($nivelUsuario) ?></span>
+                        <?php endif; ?>
+                    </span>
+                    <span class="d-block user-chip-label mt-1">Empresa</span>
+                    <span class="d-block user-chip-value"><?= htmlspecialchars($empresaNome) ?></span>
                 </span>
                 <a href="<?= htmlspecialchars($logoutUrl) ?>" class="btn btn-warning btn-sm fw-semibold">Sair</a>
             </div>

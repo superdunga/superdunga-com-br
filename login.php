@@ -53,6 +53,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 } else {
                     $_SESSION['empresa_id'] = $usuario['empresa_id'];
                 }
+                unset($_SESSION['empresa_nome']);
+
+                foreach ($empresas as $empresa) {
+                    if ((int)$empresa['id'] === (int)$_SESSION['empresa_id']) {
+                        $_SESSION['empresa_nome'] = $empresa['nome_fantasia'];
+                        break;
+                    }
+                }
 
                 // Atualiza ultimo login
                 $pdo_master->prepare("

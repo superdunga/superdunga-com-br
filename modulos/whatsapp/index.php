@@ -5,6 +5,7 @@ require __DIR__ . '/whatsapp_lib.php';
 
 exigirNivel('MASTER');
 whatsappEnsureTables($pdo_master);
+$empresaId = (int)($_SESSION['empresa_id'] ?? 1);
 
 if (empty($_SESSION['csrf_whatsapp'])) {
     $_SESSION['csrf_whatsapp'] = bin2hex(random_bytes(32));
@@ -58,20 +59,32 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
         if ($acao === 'salvar_config') {
             $stmt = $pdo_master->prepare("
-                INSERT INTO whatsapp_config (id, nome, token, api_base_url, ativo)
-                VALUES (1, ?, ?, ?, ?)
+                INSERT INTO whatsapp_config (id, empresa_id, nome, token, api_base_url, ativo)
+                VALUES (?, ?, ?, ?, ?, ?)
                 ON DUPLICATE KEY UPDATE
+                    empresa_id = VALUES(empresa_id),
                     nome = VALUES(nome),
                     token = VALUES(token),
                     api_base_url = VALUES(api_base_url),
                     ativo = VALUES(ativo)
             ");
             $stmt->execute([
+                $empresaId,
+                $empresaId,
                 postValue('nome', 'Principal'),
                 postValue('token'),
                 postValue('api_base_url', 'https://api-whatsapp.wascript.com.br/api/enviar-texto'),
                 postValue('ativo', 'S') === 'S' ? 'S' : 'N',
             ]);
+
+            $stmtToken = $pdo_master->prepare("SELECT agendamento_token FROM whatsapp_config WHERE empresa_id = ? LIMIT 1");
+            $stmtToken->execute([$empresaId]);
+            if (trim((string)$stmtToken->fetchColumn()) === '') {
+                $tokenAgenda = function_exists('random_bytes') ? bin2hex(random_bytes(24)) : md5(uniqid('', true));
+                $stmtToken = $pdo_master->prepare("UPDATE whatsapp_config SET agendamento_token = ? WHERE empresa_id = ?");
+                $stmtToken->execute([$tokenAgenda, $empresaId]);
+            }
+
             $alerta = 'Configuracao salva.';
         }
 
@@ -89,12 +102,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
 
             if ($id > 0) {
-                $stmt = $pdo_master->prepare("UPDATE whatsapp_destinatarios SET nome = ?, tipo = ?, numero = ?, ativo = ? WHERE id = ?");
+                $stmt = $pdo_master->prepare("UPDATE whatsapp_destinatarios SET nome = ?, tipo = ?, numero = ?, ativo = ? WHERE id = ? AND empresa_id = ?");
                 $dados[] = $id;
+                $dados[] = $empresaId;
                 $stmt->execute($dados);
                 $alerta = 'Destinatario atualizado.';
             } else {
-                $stmt = $pdo_master->prepare("INSERT INTO whatsapp_destinatarios (nome, tipo, numero, ativo) VALUES (?, ?, ?, ?)");
+                $stmt = $pdo_master->prepare("INSERT INTO whatsapp_destinatarios (empresa_id, nome, tipo, numero, ativo) VALUES (?, ?, ?, ?, ?)");
+                array_unshift($dados, $empresaId);
                 $stmt->execute($dados);
                 $alerta = 'Destinatario cadastrado.';
             }
@@ -113,12 +128,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
 
             if ($id > 0) {
-                $stmt = $pdo_master->prepare("UPDATE whatsapp_mensagens SET categoria = ?, titulo = ?, descricao = ?, conteudo = ?, ativo = ? WHERE id = ?");
-                $stmt->execute([$categoria, $titulo, $descricao, $conteudo, $ativo, $id]);
+                $stmt = $pdo_master->prepare("UPDATE whatsapp_mensagens SET categoria = ?, titulo = ?, descricao = ?, conteudo = ?, ativo = ? WHERE id = ? AND empresa_id = ?");
+                $stmt->execute([$categoria, $titulo, $descricao, $conteudo, $ativo, $id, $empresaId]);
                 $alerta = 'Mensagem atualizada.';
             } else {
-                $stmt = $pdo_master->prepare("INSERT INTO whatsapp_mensagens (categoria, titulo, descricao, conteudo, ativo) VALUES (?, ?, ?, ?, ?)");
-                $stmt->execute([$categoria, $titulo, $descricao, $conteudo, $ativo]);
+                $stmt = $pdo_master->prepare("INSERT INTO whatsapp_mensagens (empresa_id, categoria, titulo, descricao, conteudo, ativo) VALUES (?, ?, ?, ?, ?, ?)");
+                $stmt->execute([$empresaId, $categoria, $titulo, $descricao, $conteudo, $ativo]);
                 $alerta = 'Mensagem cadastrada.';
             }
         }
@@ -131,21 +146,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 throw new Exception('Selecione uma mensagem e pelo menos um destinatario.');
             }
 
-            $config = whatsappConfig($pdo_master);
+            $config = whatsappConfig($pdo_master, $empresaId);
             if (!$config || $config['ativo'] !== 'S') {
                 throw new Exception('A configuracao do WhatsApp esta inativa.');
             }
 
-            $stmt = $pdo_master->prepare("SELECT * FROM whatsapp_mensagens WHERE id = ? AND ativo = 'S'");
-            $stmt->execute([$mensagemId]);
+            $stmt = $pdo_master->prepare("SELECT * FROM whatsapp_mensagens WHERE id = ? AND empresa_id = ? AND ativo = 'S'");
+            $stmt->execute([$mensagemId, $empresaId]);
             $mensagem = $stmt->fetch(PDO::FETCH_ASSOC);
             if (!$mensagem) {
                 throw new Exception('Mensagem ativa nao encontrada.');
             }
 
             $placeholders = implode(',', array_fill(0, count($destinatariosIds), '?'));
-            $stmt = $pdo_master->prepare("SELECT * FROM whatsapp_destinatarios WHERE ativo = 'S' AND id IN ($placeholders)");
-            $stmt->execute($destinatariosIds);
+            $stmt = $pdo_master->prepare("SELECT * FROM whatsapp_destinatarios WHERE empresa_id = ? AND ativo = 'S' AND id IN ($placeholders)");
+            $stmt->execute(array_merge([$empresaId], $destinatariosIds));
             $destinatarios = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
             $ok = 0;
@@ -202,27 +217,27 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     UPDATE whatsapp_rotinas
                     SET codigo = ?, nome = ?, descricao = ?, mensagem_id = ?, origem_mensagem = ?, gerador_sistema = ?, ativo = ?, evitar_duplicidade_diaria = ?,
                         periodicidade = ?, horario = ?, dias_semana = ?, dia_mes = ?
-                    WHERE id = ?
+                    WHERE id = ? AND empresa_id = ?
                 ");
-                $stmt->execute([$codigo, $nome, $descricao, $mensagemId, $origemMensagem, $geradorSistema, $ativo, $duplicidade, $periodicidade, $horario, $diasSemanaSql, $diaMes, $id]);
+                $stmt->execute([$codigo, $nome, $descricao, $mensagemId, $origemMensagem, $geradorSistema, $ativo, $duplicidade, $periodicidade, $horario, $diasSemanaSql, $diaMes, $id, $empresaId]);
                 $rotinaId = $id;
                 $alerta = 'Rotina atualizada.';
             } else {
                 $stmt = $pdo_master->prepare("
                     INSERT INTO whatsapp_rotinas
-                        (codigo, nome, descricao, mensagem_id, origem_mensagem, gerador_sistema, ativo, evitar_duplicidade_diaria, periodicidade, horario, dias_semana, dia_mes)
+                        (empresa_id, codigo, nome, descricao, mensagem_id, origem_mensagem, gerador_sistema, ativo, evitar_duplicidade_diaria, periodicidade, horario, dias_semana, dia_mes)
                     VALUES
-                        (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ");
-                $stmt->execute([$codigo, $nome, $descricao, $mensagemId, $origemMensagem, $geradorSistema, $ativo, $duplicidade, $periodicidade, $horario, $diasSemanaSql, $diaMes]);
+                $stmt->execute([$empresaId, $codigo, $nome, $descricao, $mensagemId, $origemMensagem, $geradorSistema, $ativo, $duplicidade, $periodicidade, $horario, $diasSemanaSql, $diaMes]);
                 $rotinaId = (int)$pdo_master->lastInsertId();
                 $alerta = 'Rotina cadastrada.';
             }
 
             whatsappAtualizarProximaExecucao($pdo_master, $rotinaId);
 
-            $stmt = $pdo_master->prepare("DELETE FROM whatsapp_rotina_destinatarios WHERE rotina_id = ?");
-            $stmt->execute([$rotinaId]);
+            $stmt = $pdo_master->prepare("DELETE rd FROM whatsapp_rotina_destinatarios rd INNER JOIN whatsapp_rotinas r ON r.id = rd.rotina_id WHERE rd.rotina_id = ? AND r.empresa_id = ?");
+            $stmt->execute([$rotinaId, $empresaId]);
 
             if (!empty($destinatariosIds)) {
                 $stmt = $pdo_master->prepare("INSERT IGNORE INTO whatsapp_rotina_destinatarios (rotina_id, destinatario_id) VALUES (?, ?)");
@@ -236,8 +251,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
         if ($acao === 'enviar_rotina') {
             $rotinaId = (int)($_POST['rotina_id'] ?? 0);
-            $stmt = $pdo_master->prepare("SELECT * FROM whatsapp_rotinas WHERE id = ?");
-            $stmt->execute([$rotinaId]);
+            $stmt = $pdo_master->prepare("SELECT * FROM whatsapp_rotinas WHERE id = ? AND empresa_id = ?");
+            $stmt->execute([$rotinaId, $empresaId]);
             $rotina = $stmt->fetch(PDO::FETCH_ASSOC);
 
             if (!$rotina) {
@@ -268,10 +283,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $stmt = $pdo_master->prepare("
                 INSERT INTO whatsapp_rotina_agendamentos
                     (rotina_id, periodicidade, horario, dias_semana, dia_mes, ativo, proxima_execucao)
-                VALUES
-                    (?, ?, ?, ?, ?, 'S', NULL)
+                SELECT id, ?, ?, ?, ?, 'S', NULL
+                FROM whatsapp_rotinas
+                WHERE id = ?
+                  AND empresa_id = ?
             ");
-            $stmt->execute([$rotinaId, $periodicidade, $horario, $diasSemanaSql, $diaMes]);
+            $stmt->execute([$periodicidade, $horario, $diasSemanaSql, $diaMes, $rotinaId, $empresaId]);
             whatsappAtualizarProximaAgendamento($pdo_master, (int)$pdo_master->lastInsertId());
             $alerta = 'Agendamento cadastrado.';
         }
@@ -281,8 +298,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             if ($agendamentoId <= 0) {
                 throw new Exception('Agendamento nao informado.');
             }
-            $stmt = $pdo_master->prepare("DELETE FROM whatsapp_rotina_agendamentos WHERE id = ?");
-            $stmt->execute([$agendamentoId]);
+            $stmt = $pdo_master->prepare("
+                DELETE a
+                FROM whatsapp_rotina_agendamentos a
+                INNER JOIN whatsapp_rotinas r ON r.id = a.rotina_id
+                WHERE a.id = ? AND r.empresa_id = ?
+            ");
+            $stmt->execute([$agendamentoId, $empresaId]);
             $alerta = 'Agendamento removido.';
         }
     } catch (Exception $e) {
@@ -290,32 +312,58 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 }
 
-$config = whatsappConfig($pdo_master);
+$config = whatsappConfig($pdo_master, $empresaId);
 $geradoresSistema = whatsappGeradoresSistema();
-$destinatarios = $pdo_master->query("SELECT * FROM whatsapp_destinatarios ORDER BY ativo DESC, tipo, nome")->fetchAll(PDO::FETCH_ASSOC);
-$mensagens = $pdo_master->query("SELECT * FROM whatsapp_mensagens ORDER BY ativo DESC, categoria, titulo")->fetchAll(PDO::FETCH_ASSOC);
-$rotinas = $pdo_master->query("
+$stmt = $pdo_master->prepare("SELECT * FROM whatsapp_destinatarios WHERE empresa_id = ? ORDER BY ativo DESC, tipo, nome");
+$stmt->execute([$empresaId]);
+$destinatarios = $stmt->fetchAll(PDO::FETCH_ASSOC);
+$stmt = $pdo_master->prepare("SELECT * FROM whatsapp_mensagens WHERE empresa_id = ? ORDER BY ativo DESC, categoria, titulo");
+$stmt->execute([$empresaId]);
+$mensagens = $stmt->fetchAll(PDO::FETCH_ASSOC);
+$stmt = $pdo_master->prepare("
     SELECT r.*, m.titulo AS mensagem_titulo, m.categoria AS mensagem_categoria, m.descricao AS mensagem_descricao
     FROM whatsapp_rotinas r
     LEFT JOIN whatsapp_mensagens m ON m.id = r.mensagem_id
+       AND m.empresa_id = r.empresa_id
+    WHERE r.empresa_id = ?
     ORDER BY r.ativo DESC, r.nome
-")->fetchAll(PDO::FETCH_ASSOC);
+");
+$stmt->execute([$empresaId]);
+$rotinas = $stmt->fetchAll(PDO::FETCH_ASSOC);
 $rotinaDestinatarios = [];
-foreach ($pdo_master->query("SELECT rotina_id, destinatario_id FROM whatsapp_rotina_destinatarios") as $rd) {
+$stmt = $pdo_master->prepare("
+    SELECT rd.rotina_id, rd.destinatario_id
+    FROM whatsapp_rotina_destinatarios rd
+    INNER JOIN whatsapp_rotinas r ON r.id = rd.rotina_id
+    WHERE r.empresa_id = ?
+");
+$stmt->execute([$empresaId]);
+foreach ($stmt as $rd) {
     $rotinaDestinatarios[(int)$rd['rotina_id']][] = (int)$rd['destinatario_id'];
 }
 $agendamentosRotina = [];
-foreach ($pdo_master->query("SELECT * FROM whatsapp_rotina_agendamentos ORDER BY rotina_id, ativo DESC, proxima_execucao IS NULL, proxima_execucao, horario") as $ag) {
+$stmt = $pdo_master->prepare("
+    SELECT a.*
+    FROM whatsapp_rotina_agendamentos a
+    INNER JOIN whatsapp_rotinas r ON r.id = a.rotina_id
+    WHERE r.empresa_id = ?
+    ORDER BY a.rotina_id, a.ativo DESC, a.proxima_execucao IS NULL, a.proxima_execucao, a.horario
+");
+$stmt->execute([$empresaId]);
+foreach ($stmt as $ag) {
     $agendamentosRotina[(int)$ag['rotina_id']][] = $ag;
 }
-$historico = $pdo_master->query("
+$stmt = $pdo_master->prepare("
     SELECT e.*, m.titulo, r.nome AS rotina_nome
     FROM whatsapp_envios e
-    LEFT JOIN whatsapp_mensagens m ON m.id = e.mensagem_id
-    LEFT JOIN whatsapp_rotinas r ON r.id = e.rotina_id
+    LEFT JOIN whatsapp_mensagens m ON m.id = e.mensagem_id AND m.empresa_id = e.empresa_id
+    LEFT JOIN whatsapp_rotinas r ON r.id = e.rotina_id AND r.empresa_id = e.empresa_id
+    WHERE e.empresa_id = ?
     ORDER BY e.enviado_em DESC, e.id DESC
     LIMIT 50
-")->fetchAll(PDO::FETCH_ASSOC);
+");
+$stmt->execute([$empresaId]);
+$historico = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
 $cronUrl = '';
 if (!empty($config['agendamento_token'])) {

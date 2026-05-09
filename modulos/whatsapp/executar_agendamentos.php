@@ -8,11 +8,18 @@ date_default_timezone_set('America/Sao_Paulo');
 try {
     whatsappEnsureTables($pdo_master);
 
-    $config = whatsappConfig($pdo_master);
-    $tokenConfigurado = trim((string)($config['agendamento_token'] ?? ''));
     $tokenRecebido = trim((string)($_GET['token'] ?? ''));
 
-    if ($tokenConfigurado === '' || !hash_equals($tokenConfigurado, $tokenRecebido)) {
+    $stmtToken = $pdo_master->prepare("
+        SELECT COUNT(*)
+        FROM whatsapp_config
+        WHERE agendamento_token = ?
+          AND agendamento_token IS NOT NULL
+          AND agendamento_token <> ''
+    ");
+    $stmtToken->execute([$tokenRecebido]);
+
+    if ($tokenRecebido === '' || (int)$stmtToken->fetchColumn() === 0) {
         http_response_code(403);
         echo json_encode([
             'status' => 'erro',

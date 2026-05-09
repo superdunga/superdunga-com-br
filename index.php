@@ -1,8 +1,11 @@
 <?php
 require 'config/auth.php';
+require 'config/conexao.php';
+require 'config/modulos.php';
 
 $usuarioNome = $_SESSION['usuario_nome'] ?? 'Usuario';
 $nivelUsuario = $_SESSION['nivel'] ?? '';
+$empresaId = (int)($_SESSION['empresa_id'] ?? 0);
 
 $atalhos = [
     [
@@ -12,7 +15,7 @@ $atalhos = [
         'classe' => 'border-success',
         'botao' => 'btn-success',
         'icone' => '$',
-        'visivel' => true,
+        'visivel' => empresaTemModuloDoGrupo($pdo_master, $empresaId, 'Tesouraria'),
     ],
     [
         'titulo' => 'Fechamento de Caixas',
@@ -21,7 +24,7 @@ $atalhos = [
         'classe' => 'border-warning',
         'botao' => 'btn-warning',
         'icone' => 'FC',
-        'visivel' => true,
+        'visivel' => empresaTemModuloDoGrupo($pdo_master, $empresaId, 'Fechamento'),
     ],
     [
         'titulo' => 'Auditoria das Compras',
@@ -30,7 +33,7 @@ $atalhos = [
         'classe' => 'border-info',
         'botao' => 'btn-info',
         'icone' => 'A',
-        'visivel' => true,
+        'visivel' => empresaTemModuloDoGrupo($pdo_master, $empresaId, 'Auditoria'),
     ],
     [
         'titulo' => 'Sincronizar Dados',
@@ -39,7 +42,7 @@ $atalhos = [
         'classe' => 'border-dark',
         'botao' => 'btn-dark',
         'icone' => 'Sync',
-        'visivel' => true,
+        'visivel' => moduloEmpresaPermitido($pdo_master, $empresaId, 'sincronizacao'),
     ],
     [
         'titulo' => 'Mensagens WhatsApp',
@@ -48,7 +51,7 @@ $atalhos = [
         'classe' => 'border-success',
         'botao' => 'btn-success',
         'icone' => 'WA',
-        'visivel' => $nivelUsuario === 'MASTER',
+        'visivel' => $nivelUsuario === 'MASTER' && moduloEmpresaPermitido($pdo_master, $empresaId, 'whatsapp'),
     ],
     [
         'titulo' => 'Gerenciar Usuarios',
@@ -57,7 +60,7 @@ $atalhos = [
         'classe' => 'border-primary',
         'botao' => 'btn-primary',
         'icone' => 'U',
-        'visivel' => $nivelUsuario === 'MASTER' || $nivelUsuario === 'ADMIN',
+        'visivel' => ($nivelUsuario === 'MASTER' || $nivelUsuario === 'ADMIN') && moduloEmpresaPermitido($pdo_master, $empresaId, 'usuarios'),
     ],
     [
         'titulo' => 'Gerenciar Empresas',
@@ -66,7 +69,7 @@ $atalhos = [
         'classe' => 'border-secondary',
         'botao' => 'btn-secondary',
         'icone' => 'E',
-        'visivel' => $nivelUsuario === 'MASTER',
+        'visivel' => $nivelUsuario === 'MASTER' && moduloEmpresaPermitido($pdo_master, $empresaId, 'empresas'),
     ],
 ];
 
