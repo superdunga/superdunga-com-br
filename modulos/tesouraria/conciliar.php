@@ -5,6 +5,7 @@ require '../../config/conexao.php';
 exigirNivel('OPERADOR');
 
 $empresa_id = (int)$_SESSION['empresa_id'];
+$cbcontador_tesouraria = ($empresa_id === 4) ? 5 : 8;
 $linhas_afetadas = 0;
 $erro_conciliacao = '';
 $erro_manual = $_GET['erro_manual'] ?? '';
@@ -76,7 +77,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['acao'] ?? '') === 'concili
               AND f.EMPRESA = ?
               AND t.conciliado = 'N'
               AND t.tipo_operacao <> 'T'
-              AND f.CBCONTADOR = 8
+              AND f.CBCONTADOR = ?
               AND COALESCE(f.deletado, 'N') <> 'S'
               AND CAST(f.VALORMOV AS CHAR) REGEXP '^-?[0-9]+(\\\\.[0-9]+)?$'
               AND NOT EXISTS (
@@ -87,7 +88,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['acao'] ?? '') === 'concili
               )
             LIMIT 1
         ");
-        $stmt->execute([$tesourariaId, $firebirdId, $empresa_id, $empresa_id]);
+        $stmt->execute([$tesourariaId, $firebirdId, $empresa_id, $empresa_id, $cbcontador_tesouraria]);
         $match = $stmt->fetch(PDO::FETCH_ASSOC);
 
         if (!$match) {
@@ -187,7 +188,7 @@ try {
           AND t.empresa_id = ?
           AND t.tipo_operacao <> 'T'
           AND f.EMPRESA = ?
-          AND f.CBCONTADOR = 8
+          AND f.CBCONTADOR = ?
           AND COALESCE(f.deletado, 'N') <> 'S'
           AND CAST(f.VALORMOV AS CHAR) REGEXP '^-?[0-9]+(\\\\.[0-9]+)?$'
           AND NOT EXISTS (
@@ -207,7 +208,7 @@ try {
     ";
 
     $stmt = $pdo_master->prepare($sql);
-    $stmt->execute([$empresa_id, $empresa_id]);
+    $stmt->execute([$empresa_id, $empresa_id, $cbcontador_tesouraria]);
     $linhas_afetadas = $stmt->rowCount();
 
 } catch (Exception $e) {
@@ -227,7 +228,7 @@ $stmtPendentes = $pdo_master->prepare("
             WHERE ABS(CAST(t.valor_operacao AS DECIMAL(15,2))) = CAST(f.VALORMOV AS DECIMAL(15,2))
               AND DATE(f.DTMOV) = DATE(t.data_mov)
               AND f.EMPRESA = ?
-              AND f.CBCONTADOR = 8
+              AND f.CBCONTADOR = ?
               AND COALESCE(f.deletado, 'N') <> 'S'
               AND CAST(f.VALORMOV AS CHAR) REGEXP '^-?[0-9]+(\\\\.[0-9]+)?$'
               AND NOT EXISTS (
@@ -243,7 +244,7 @@ $stmtPendentes = $pdo_master->prepare("
     AND t.tipo_operacao <> 'T'
     ORDER BY t.data_mov DESC
 ");
-$stmtPendentes->execute([$empresa_id, $empresa_id]);
+$stmtPendentes->execute([$empresa_id, $cbcontador_tesouraria, $empresa_id]);
 $pendentes = $stmtPendentes->fetchAll(PDO::FETCH_ASSOC);
 
 $candidatosPorTesouraria = [];
@@ -262,7 +263,7 @@ if (!empty($pendentes)) {
         WHERE ABS(CAST(? AS DECIMAL(15,2))) = CAST(f.VALORMOV AS DECIMAL(15,2))
           AND DATE(f.DTMOV) = DATE(?)
           AND f.EMPRESA = ?
-          AND f.CBCONTADOR = 8
+          AND f.CBCONTADOR = ?
           AND COALESCE(f.deletado, 'N') <> 'S'
           AND CAST(f.VALORMOV AS CHAR) REGEXP '^-?[0-9]+(\\\\.[0-9]+)?$'
           AND NOT EXISTS (
@@ -276,7 +277,7 @@ if (!empty($pendentes)) {
 
     foreach ($pendentes as $p) {
         if ((int)$p['qtd_matches'] > 1) {
-            $stmtCandidatos->execute([$p['valor_operacao'], $p['data_mov'], $empresa_id, $empresa_id]);
+            $stmtCandidatos->execute([$p['valor_operacao'], $p['data_mov'], $empresa_id, $cbcontador_tesouraria, $empresa_id]);
             $candidatosPorTesouraria[(int)$p['id']] = $stmtCandidatos->fetchAll(PDO::FETCH_ASSOC);
         }
     }
@@ -309,7 +310,7 @@ $stmtFirebirdNao = $pdo_master->prepare("
         f.deletado
     FROM armazem_bnc001 f
     WHERE f.EMPRESA = ?
-      AND f.CBCONTADOR = 8
+      AND f.CBCONTADOR = ?
       AND f.DTMOV > '2026-04-15'
       AND (
           COALESCE(f.deletado, 'N') <> 'S'
@@ -330,7 +331,7 @@ $stmtFirebirdNao = $pdo_master->prepare("
       )
     ORDER BY f.DTMOV DESC
 ");
-$stmtFirebirdNao->execute([$empresa_id, $empresa_id, $empresa_id]);
+$stmtFirebirdNao->execute([$empresa_id, $cbcontador_tesouraria, $empresa_id, $empresa_id]);
 $firebird_nao = $stmtFirebirdNao->fetchAll(PDO::FETCH_ASSOC);
 
 require '../../layout/header.php';
