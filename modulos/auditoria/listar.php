@@ -3,17 +3,19 @@ require '../../config/auth.php';
 require '../../config/conexao.php';
 require '../../layout/header.php';
 
+$empresa_id = (int)$_SESSION['empresa_id'];
 $dataIni = $_GET['data_ini'] ?? date('Y-m-01');
 $dataFim = $_GET['data_fim'] ?? date('Y-m-d');
 $fornecedor = trim($_GET['fornecedor'] ?? '');
 $documento = trim($_GET['documento'] ?? '');
 
 $where = [
+    "c.EMPRESA = ?",
     "COALESCE(c.excluido_firebird, 'N') <> 'S'",
     "COALESCE(c.CANCELADO, 'N') <> 'S'",
     "DATE(c.DTEMISSAO) BETWEEN ? AND ?"
 ];
-$params = [$dataIni, $dataFim];
+$params = [$empresa_id, $dataIni, $dataFim];
 
 if ($fornecedor !== '') {
     $where[] = "(f.NOME LIKE ? OR f.APELIDO LIKE ? OR c.FORNECEDOR = ?)";
@@ -40,6 +42,7 @@ $stmt = $pdo_master->prepare("
     FROM armazem_est005 c
     LEFT JOIN armazem_cp003 f
         ON f.FCONTADOR = c.FORNECEDOR
+       AND f.EMPRESA = c.EMPRESA
     WHERE $whereSql
     ORDER BY c.DTEMISSAO DESC, c.COMPRACONTADOR DESC
     LIMIT 200
@@ -68,12 +71,14 @@ if (!empty($comprasIds)) {
         FROM armazem_est006 i
         LEFT JOIN armazem_est004 p
             ON p.CONTAPRODUTO = i.PRODUTO
+           AND p.EMPRESA = i.EMPRESA
         WHERE i.ITEMCOMPRACONTADOR IN ($placeholders)
+          AND i.EMPRESA = ?
           AND COALESCE(i.excluido_firebird, 'N') <> 'S'
           AND COALESCE(i.CANCELADO, 'N') <> 'S'
         ORDER BY i.ITEMCOMPRACONTADOR, i.COMPRACONTA
     ");
-    $stmtItens->execute($comprasIds);
+    $stmtItens->execute(array_merge($comprasIds, [$empresa_id]));
 
     while ($item = $stmtItens->fetch(PDO::FETCH_ASSOC)) {
         $itensPorCompra[(int)$item['ITEMCOMPRACONTADOR']][] = $item;

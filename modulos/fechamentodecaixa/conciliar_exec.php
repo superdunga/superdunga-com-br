@@ -11,6 +11,7 @@ require '../../config/conexao.php';
 $rec_id = $_GET['rec'] ?? null;
 $cr_id  = $_GET['cr'] ?? null;
 $data   = $_GET['data'] ?? null;
+$empresa_id = (int)$_SESSION['empresa_id'];
 
 /* =========================
    VALIDAÇÕES
@@ -30,8 +31,9 @@ $stmt = $pdo_master->prepare("
     SELECT CMCONTADOR
     FROM armazem_conciliacao_recebimentos
     WHERE id = ?
+      AND empresa_id = ?
 ");
-$stmt->execute([$rec_id]);
+$stmt->execute([$rec_id, $empresa_id]);
 $rec = $stmt->fetch(PDO::FETCH_ASSOC);
 
 if (!$rec) {
@@ -45,9 +47,10 @@ $stmt = $pdo_master->prepare("
     SELECT recebimento_id
     FROM armazem_cr001
     WHERE CRCONTADOR = ?
+      AND EMPRESA = ?
       AND COALESCE(excluido_firebird, 'N') = 'N'
 ");
-$stmt->execute([$cr_id]);
+$stmt->execute([$cr_id, $empresa_id]);
 $cr = $stmt->fetch(PDO::FETCH_ASSOC);
 
 if (!empty($cr['recebimento_id'])) {
@@ -63,13 +66,15 @@ $stmt = $pdo_master->prepare("
         CMCONTADOR = ?,
         recebimento_id = ?
     WHERE CRCONTADOR = ?
+    AND EMPRESA = ?
     AND recebimento_id IS NULL
     AND COALESCE(excluido_firebird, 'N') = 'N'
 ");
 $stmt->execute([
     $rec['CMCONTADOR'],
     $rec_id,
-    $cr_id
+    $cr_id,
+    $empresa_id
 ]);
 
 /* =========================

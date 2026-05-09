@@ -3,6 +3,8 @@ require '../../config/auth.php';
 require '../../config/conexao.php';
 require '../../layout/header.php';
 
+$empresa_id = (int)$_SESSION['empresa_id'];
+
 /* =========================
    FILTRO MÊS
 ========================= */
@@ -36,9 +38,11 @@ INNER JOIN (
     SELECT DISTINCT CODCX
     FROM armazem_zconfig005
     WHERE CODCX IS NOT NULL
+      AND EMPRESA = ?
 ) z ON z.CODCX = b.CBCONTADOR
 
 WHERE b.DTLANC BETWEEN ? AND ?
+  AND b.EMPRESA = ?
   AND COALESCE(b.deletado, 'N') <> 'S'
 
 GROUP BY 
@@ -51,7 +55,7 @@ ORDER BY
 ";
 
 $stmt = $pdo_master->prepare($sql);
-$stmt->execute([$inicio, $fim]);
+$stmt->execute([$empresa_id, $inicio, $fim, $empresa_id]);
 
 $resultados = $stmt->fetchAll(PDO::FETCH_ASSOC);
 ?>

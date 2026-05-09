@@ -5,6 +5,7 @@ require '../../layout/header.php';
 
 $data  = $_GET['data'] ?? '';
 $caixa = $_GET['caixa'] ?? '';
+$empresa_id = (int)$_SESSION['empresa_id'];
 
 if (!$data || !$caixa) {
     echo "<div class='alert alert-danger'>Parâmetros inválidos</div>";
@@ -38,13 +39,14 @@ $stmt = $pdo_master->prepare("
     FROM armazem_bnc001 b
 
     WHERE b.CBCONTADOR = ?
+      AND b.EMPRESA = ?
       AND b.DTLANC BETWEEN ? AND ?
       AND COALESCE(b.deletado, 'N') <> 'S'
 
     ORDER BY b.DTLANC
 ");
 
-$stmt->execute([$caixa, $data_inicio, $data_fim]);
+$stmt->execute([$caixa, $empresa_id, $data_inicio, $data_fim]);
 
 $lancamentos = $stmt->fetchAll(PDO::FETCH_ASSOC);
 

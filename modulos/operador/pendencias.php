@@ -22,14 +22,29 @@ function garantirTabelaPendenciasOperador(PDO $pdo): void
     $pdo->exec("
         CREATE TABLE IF NOT EXISTS tesouraria_firebird_conferidos (
             id INT AUTO_INCREMENT PRIMARY KEY,
+            empresa_id INT NOT NULL DEFAULT 1,
             movcontador INT NOT NULL,
             usuario_id INT NOT NULL,
             usuario_nome VARCHAR(150) NULL,
             conferido_em DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-            UNIQUE KEY uniq_firebird_conferido (movcontador),
+            UNIQUE KEY uniq_firebird_conferido (empresa_id, movcontador),
             INDEX idx_firebird_conferido_em (conferido_em)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
     ");
+
+    $colunaEmpresa = $pdo->query("
+        SELECT COUNT(*)
+        FROM INFORMATION_SCHEMA.COLUMNS
+        WHERE TABLE_SCHEMA = DATABASE()
+          AND TABLE_NAME = 'tesouraria_firebird_conferidos'
+          AND COLUMN_NAME = 'empresa_id'
+    ")->fetchColumn();
+
+    if ((int)$colunaEmpresa === 0) {
+        $pdo->exec("ALTER TABLE tesouraria_firebird_conferidos ADD COLUMN empresa_id INT NOT NULL DEFAULT 1 AFTER id");
+        $pdo->exec("ALTER TABLE tesouraria_firebird_conferidos DROP INDEX uniq_firebird_conferido");
+        $pdo->exec("ALTER TABLE tesouraria_firebird_conferidos ADD UNIQUE KEY uniq_firebird_conferido (empresa_id, movcontador)");
+    }
 }
 
 function moedaOperador($valor): string
@@ -37,19 +52,23 @@ function moedaOperador($valor): string
     return 'R$ ' . number_format((float)$valor, 2, ',', '.');
 }
 
-function contarTesourariaPendencias(PDO $pdo): array
+function contarTesourariaPendencias(PDO $pdo, int $empresaId): array
 {
-    $pendentes = (int)$pdo->query("
+    $stmtPendentes = $pdo->prepare("
         SELECT COUNT(*)
         FROM tesouraria_movimentacoes t
         WHERE t.conciliado = 'N'
+          AND t.empresa_id = ?
           AND t.tipo_operacao <> 'T'
-    ")->fetchColumn();
+    ");
+    $stmtPendentes->execute([$empresaId]);
+    $pendentes = (int)$stmtPendentes->fetchColumn();
 
-    $firebird = (int)$pdo->query("
+    $stmtFirebird = $pdo->prepare("
         SELECT COUNT(*)
         FROM armazem_bnc001 f
-        WHERE f.CBCONTADOR = 8
+        WHERE f.EMPRESA = ?
+          AND f.CBCONTADOR = 8
           AND f.DTMOV > '2026-04-15'
           AND (
               COALESCE(f.deletado, 'N') <> 'S'
@@ -60,13 +79,17 @@ function contarTesourariaPendencias(PDO $pdo): array
               SELECT 1
               FROM tesouraria_movimentacoes tx
               WHERE tx.firebird_id = f.MOVCONTADOR
+                AND tx.empresa_id = ?
           )
           AND NOT EXISTS (
               SELECT 1
               FROM tesouraria_firebird_conferidos fc
               WHERE fc.movcontador = f.MOVCONTADOR
+                AND fc.empresa_id = ?
           )
-    ")->fetchColumn();
+    ");
+    $stmtFirebird->execute([$empresaId, $empresaId, $empresaId]);
+    $firebird = (int)$stmtFirebird->fetchColumn();
 
     return [
         'quantidade' => $pendentes + $firebird,
@@ -77,7 +100,7 @@ function contarTesourariaPendencias(PDO $pdo): array
     ];
 }
 
-function contarDinheiroDivergente(PDO $pdo, string $mes): array
+function contarDinheiroDivergente(PDO $pdo, string $mes, int $empresaId): array
 {
     $inicio = $mes . '-01 07:00:00';
     $fim = date('Y-m-d H:i:s');
@@ -100,15 +123,17 @@ function contarDinheiroDivergente(PDO $pdo, string $mes): array
                 SELECT DISTINCT CODCX
                 FROM armazem_zconfig005
                 WHERE CODCX IS NOT NULL
+                  AND EMPRESA = ?
             ) z ON z.CODCX = b.CBCONTADOR
             WHERE b.DTLANC BETWEEN ? AND ?
+              AND b.EMPRESA = ?
               AND COALESCE(b.deletado, 'N') <> 'S'
             GROUP BY DATE(DATE_SUB(b.DTLANC, INTERVAL 7 HOUR)), b.CBCONTADOR
         ) x
         WHERE x.data_operacional <> CURDATE()
           AND ABS(x.saldo_final) >= 0.01
     ");
-    $stmt->execute([$inicio, $fim]);
+    $stmt->execute([$empresaId, $inicio, $fim, $empresaId]);
     $row = $stmt->fetch(PDO::FETCH_ASSOC) ?: ['qtd' => 0, 'total' => 0];
 
     return [
@@ -120,15 +145,16 @@ function contarDinheiroDivergente(PDO $pdo, string $mes): array
     ];
 }
 
-function contarPrazoPendente(PDO $pdo, string $mes): array
+function contarPrazoPendente(PDO $pdo, string $mes, int $empresaId): array
 {
     $stmtDatas = $pdo->prepare("
         SELECT DISTINCT DATE(data_venda) AS data_base
         FROM armazem_conciliacao_recebimentos
         WHERE DATE(data_venda) LIKE ?
+          AND empresa_id = ?
         ORDER BY data_base DESC
     ");
-    $stmtDatas->execute([$mes . '%']);
+    $stmtDatas->execute([$mes . '%', $empresaId]);
     $datas = $stmtDatas->fetchAll(PDO::FETCH_COLUMN);
 
     $diasPendentes = 0;
@@ -139,10 +165,12 @@ function contarPrazoPendente(PDO $pdo, string $mes): array
         SELECT COUNT(*)
         FROM armazem_conciliacao_recebimentos r
         WHERE r.data_venda BETWEEN ? AND ?
+          AND r.empresa_id = ?
           AND NOT EXISTS (
               SELECT 1
               FROM armazem_cr001 c
               WHERE c.recebimento_id = r.id
+                AND c.EMPRESA = ?
                 AND COALESCE(c.excluido_firebird, 'N') = 'N'
           )
     ");
@@ -151,6 +179,7 @@ function contarPrazoPendente(PDO $pdo, string $mes): array
         SELECT COUNT(*)
         FROM armazem_cr001 c
         WHERE c.DTLANC BETWEEN ? AND ?
+          AND c.EMPRESA = ?
           AND c.CMCONTADOR <> 9
           AND c.recebimento_id IS NULL
           AND NOT (c.CMCONTADOR = 1 AND c.STATUS = 'QT')
@@ -161,10 +190,10 @@ function contarPrazoPendente(PDO $pdo, string $mes): array
         $inicio = date('Y-m-d 07:00:00', strtotime($data));
         $fim = date('Y-m-d 03:00:00', strtotime($data . ' +1 day'));
 
-        $stmtPendRec->execute([$inicio, $fim]);
+        $stmtPendRec->execute([$inicio, $fim, $empresaId, $empresaId]);
         $pendentesSistema = (int)$stmtPendRec->fetchColumn();
 
-        $stmtPendCr->execute([$inicio, $fim]);
+        $stmtPendCr->execute([$inicio, $fim, $empresaId]);
         $pendentesCR001 = (int)$stmtPendCr->fetchColumn();
 
         if ($pendentesSistema > 0 || $pendentesCR001 > 0) {
@@ -184,7 +213,7 @@ function contarPrazoPendente(PDO $pdo, string $mes): array
     ];
 }
 
-function contarItensForaPadrao(PDO $pdo, string $dataIni, string $dataFim): array
+function contarItensForaPadrao(PDO $pdo, string $dataIni, string $dataFim, int $empresaId): array
 {
     $dataIniSql = date('Y-m-d 00:00:00', strtotime($dataIni));
     $dataFimSql = date('Y-m-d 23:59:59', strtotime($dataFim));
@@ -194,13 +223,16 @@ function contarItensForaPadrao(PDO $pdo, string $dataIni, string $dataFim): arra
         FROM armazem_est006 i
         INNER JOIN armazem_est005 c
             ON c.COMPRACONTADOR = i.ITEMCOMPRACONTADOR
+           AND c.EMPRESA = i.EMPRESA
         INNER JOIN armazem_est004 p
             ON p.CONTAPRODUTO = i.PRODUTO
+           AND p.EMPRESA = i.EMPRESA
         LEFT JOIN auditoria_compras_itens_verificados v
             ON v.itemcomprador = i.ITEMCOMPRACONTADOR
            AND v.compraconta = i.COMPRACONTA
            AND v.produto = i.PRODUTO
-        WHERE COALESCE(c.excluido_firebird, 'N') <> 'S'
+        WHERE i.EMPRESA = ?
+          AND COALESCE(c.excluido_firebird, 'N') <> 'S'
           AND COALESCE(c.CANCELADO, 'N') <> 'S'
           AND COALESCE(i.excluido_firebird, 'N') <> 'S'
           AND COALESCE(i.CANCELADO, 'N') <> 'S'
@@ -214,7 +246,7 @@ function contarItensForaPadrao(PDO $pdo, string $dataIni, string $dataFim): arra
           AND v.id IS NULL
           AND c.DTEMISSAO BETWEEN ? AND ?
     ");
-    $stmt->execute([$dataIniSql, $dataFimSql]);
+    $stmt->execute([$empresaId, $dataIniSql, $dataFimSql]);
     $quantidade = (int)$stmt->fetchColumn();
 
     return [
@@ -225,16 +257,17 @@ function contarItensForaPadrao(PDO $pdo, string $dataIni, string $dataFim): arra
     ];
 }
 
-function contarClientesSemValidacaoCM(PDO $pdo): array
+function contarClientesSemValidacaoCM(PDO $pdo, int $empresaId): array
 {
     $stmt = $pdo->prepare("
         SELECT COUNT(*), COALESCE(SUM(c.VLRPARCELA), 0)
         FROM armazem_cr001 c
         WHERE c.CMCONTADOR = 9
+          AND c.EMPRESA = ?
           AND (c.validado IS NULL OR c.validado = 'N')
           AND COALESCE(c.excluido_firebird, 'N') = 'N'
     ");
-    $stmt->execute();
+    $stmt->execute([$empresaId]);
     [$quantidade, $total] = $stmt->fetch(PDO::FETCH_NUM);
     $quantidade = (int)$quantidade;
 
@@ -305,27 +338,27 @@ $tarefas = [
         'titulo' => 'Itens nao conciliados na tesouraria',
         'descricao' => 'Pendentes de conciliacao e lancamentos Firebird nao conciliados.',
         'link' => '../tesouraria/conciliar.php',
-    ], contarTesourariaPendencias($pdo_master)),
+    ], contarTesourariaPendencias($pdo_master, $empresaId)),
     'dinheiro' => array_merge([
         'titulo' => 'Conciliacao de dinheiro',
         'descricao' => 'Caixas do mes corrente com saldo divergente.',
         'link' => '../fechamentodecaixa/conciliacao_dinheiro_divergentes.php?mes=' . urlencode($mes),
-    ], contarDinheiroDivergente($pdo_master, $mes)),
+    ], contarDinheiroDivergente($pdo_master, $mes, $empresaId)),
     'vendas_prazo' => array_merge([
         'titulo' => 'Resumo de vendas a prazo',
         'descricao' => 'Dias do mes corrente com status pendente.',
         'link' => '../fechamentodecaixa/resumo_prazo.php?mes=' . urlencode($mes),
-    ], contarPrazoPendente($pdo_master, $mes)),
+    ], contarPrazoPendente($pdo_master, $mes, $empresaId)),
     'itens_fora_padrao' => array_merge([
         'titulo' => 'Itens fora do padrao',
         'descricao' => 'Compras do mes corrente com margem abaixo de 20% ou acima de 100%.',
         'link' => '../auditoria/itens_fora_padrao.php?data_ini=' . urlencode($dataIniMes) . '&data_fim=' . urlencode($dataFimMes),
-    ], contarItensForaPadrao($pdo_master, $dataIniMes, $dataFimMes)),
+    ], contarItensForaPadrao($pdo_master, $dataIniMes, $dataFimMes, $empresaId)),
     'validacao_cm' => array_merge([
         'titulo' => 'Clientes sem validacao CM',
         'descricao' => 'Todos os recebimentos CM 9 ainda sem check de validacao.',
         'link' => '../fechamentodecaixa/validar_cm.php?todos=1',
-    ], contarClientesSemValidacaoCM($pdo_master)),
+    ], contarClientesSemValidacaoCM($pdo_master, $empresaId)),
 ];
 
 $bloqueiosPendentes = 0;

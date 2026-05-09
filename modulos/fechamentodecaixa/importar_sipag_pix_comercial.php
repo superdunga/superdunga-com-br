@@ -6,6 +6,8 @@ require '../../layout/header.php';
 ini_set('display_errors', 1);
 error_reporting(E_ALL);
 
+$empresa_id = (int)$_SESSION['empresa_id'];
+
 // =========================
 // FUNÇÃO
 // =========================
@@ -93,8 +95,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['arquivo'])) {
                 $identificador = $transacao;
 
                 // EVITAR DUPLICIDADE
-                $check = $pdo_master->prepare("SELECT id FROM armazem_conciliacao_recebimentos WHERE identificador = ?");
-                $check->execute([$identificador]);
+                $check = $pdo_master->prepare("SELECT id FROM armazem_conciliacao_recebimentos WHERE empresa_id = ? AND identificador = ?");
+                $check->execute([$empresa_id, $identificador]);
 
                 if ($check->fetch()) continue;
 
@@ -104,6 +106,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['arquivo'])) {
                 // INSERT
                 $stmt = $pdo_master->prepare("
                     INSERT INTO armazem_conciliacao_recebimentos (
+                        empresa_id,
                         origem,
                         data_venda,
                         valor_bruto,
@@ -121,6 +124,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['arquivo'])) {
                         nsu_transacao,
                         numero_estabelecimento
                     ) VALUES (
+                        ?,
                         'SIPAG_PIX_COMERCIAL',
                         ?, ?, ?, ?, ?,
                         ?, ?,
@@ -132,6 +136,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['arquivo'])) {
                 ");
 
                 $stmt->execute([
+                    $empresa_id,
                     $data_formatada,
                     $valor_bruto,
                     $valor_desconto,

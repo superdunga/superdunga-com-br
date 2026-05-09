@@ -8,6 +8,7 @@ require '../../layout/header.php';
 ========================= */
 $rec_id = $_GET['rec'] ?? null;
 $data   = $_GET['data'] ?? date('Y-m-d');
+$empresa_id = (int)$_SESSION['empresa_id'];
 
 if (!$rec_id) {
     die("Recebível não informado.");
@@ -26,8 +27,9 @@ $stmt = $pdo_master->prepare("
     SELECT *
     FROM armazem_conciliacao_recebimentos
     WHERE id = ?
+      AND empresa_id = ?
 ");
-$stmt->execute([$rec_id]);
+$stmt->execute([$rec_id, $empresa_id]);
 $rec = $stmt->fetch(PDO::FETCH_ASSOC);
 
 if (!$rec) {
@@ -47,6 +49,7 @@ $stmtCr = $pdo_master->prepare("
         c.CMCONTADOR
     FROM armazem_cr001 c
     WHERE c.recebimento_id IS NULL
+      AND c.EMPRESA = ?
       AND c.CMCONTADOR <> 9
       AND (c.validado IS NULL OR c.validado <> 'S')
       AND COALESCE(c.excluido_firebird, 'N') = 'N'
@@ -61,6 +64,7 @@ $stmtCr = $pdo_master->prepare("
 ");
 
 $stmtCr->execute([
+    $empresa_id,
     $inicio,
     $fim,
     $rec['valor_bruto']
@@ -88,6 +92,7 @@ if (empty($crs)) {
             ABS(TIMESTAMPDIFF(MINUTE, ?, c.DTLANC)) AS distancia_minutos
         FROM armazem_cr001 c
         WHERE c.recebimento_id IS NULL
+          AND c.EMPRESA = ?
           AND c.CMCONTADOR <> 9
           AND (c.validado IS NULL OR c.validado <> 'S')
           AND COALESCE(c.excluido_firebird, 'N') = 'N'
@@ -102,6 +107,7 @@ if (empty($crs)) {
     $stmtCr->execute([
         $rec['valor_bruto'],
         $rec['data_venda'],
+        $empresa_id,
         $rec['data_venda'],
         $rec['data_venda']
     ]);
@@ -121,6 +127,7 @@ if ($modoFallback && empty($crs)) {
             ABS(TIMESTAMPDIFF(MINUTE, ?, c.DTLANC)) AS distancia_minutos
         FROM armazem_cr001 c
         WHERE c.recebimento_id IS NULL
+          AND c.EMPRESA = ?
           AND c.CMCONTADOR <> 9
           AND (c.validado IS NULL OR c.validado <> 'S')
           AND COALESCE(c.excluido_firebird, 'N') = 'N'
@@ -131,6 +138,7 @@ if ($modoFallback && empty($crs)) {
 
     $stmtCr->execute([
         $rec['data_venda'],
+        $empresa_id,
         $rec['valor_bruto']
     ]);
 

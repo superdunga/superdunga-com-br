@@ -3,7 +3,7 @@ require '../../config/auth.php';
 require '../../layout/header.php';
 require '../../config/conexao.php';
 
-$empresa_id = $_SESSION['empresa_id'];
+$empresa_id = (int)$_SESSION['empresa_id'];
 
 /* =========================
    INVENTÁRIO DO SISTEMA (CÉDULAS)
@@ -15,18 +15,24 @@ $sqlSistema = "
         t.descricao,
         COALESCE(SUM(
             CASE 
-                WHEN d.tipo = 'entrada' THEN d.quantidade
-                WHEN d.tipo = 'saida' THEN -d.quantidade
+                WHEN m.id IS NOT NULL AND d.tipo = 'entrada' THEN d.quantidade
+                WHEN m.id IS NOT NULL AND d.tipo = 'saida' THEN -d.quantidade
+                ELSE 0
             END
         ), 0) AS quantidade
     FROM tesouraria_tipos_dinheiro t
     LEFT JOIN tesouraria_movimentacoes_detalhes d 
         ON d.tipo_dinheiro_id = t.id
+    LEFT JOIN tesouraria_movimentacoes m
+        ON m.id = d.movimentacao_id
+       AND m.empresa_id = ?
     GROUP BY t.id, t.valor, t.descricao
     ORDER BY t.valor DESC
 ";
 
-$dadosSistema = $pdo_master->query($sqlSistema)->fetchAll(PDO::FETCH_ASSOC);
+$stmtSistema = $pdo_master->prepare($sqlSistema);
+$stmtSistema->execute([$empresa_id]);
+$dadosSistema = $stmtSistema->fetchAll(PDO::FETCH_ASSOC);
 
 $totalSistema = 0;
 foreach ($dadosSistema as $d) {

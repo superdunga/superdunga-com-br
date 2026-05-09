@@ -8,6 +8,7 @@ require '../../layout/header.php';
 ========================= */
 $data = $_GET['data'] ?? date('Y-m-d');
 $todos = ($_GET['todos'] ?? '') === '1';
+$empresa_id = (int)$_SESSION['empresa_id'];
 
 $inicio = date('Y-m-d 07:00:00', strtotime($data));
 $fim    = date('Y-m-d 03:00:00', strtotime($data . ' +1 day'));
@@ -37,12 +38,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     data_validacao = NOW(),
                     usuario_validacao = ?
                 WHERE CRCONTADOR IN ($in)
+                  AND EMPRESA = ?
                   AND COALESCE(excluido_firebird, 'N') = 'N'
             ";
 
             $stmt = $pdo_master->prepare($sql);
 
-            $params = array_merge([$usuario], $lote);
+            $params = array_merge([$usuario], $lote, [$empresa_id]);
 
             $stmt->execute($params);
         }
@@ -66,14 +68,16 @@ $stmt = $pdo_master->prepare("
     FROM armazem_cr001 c
     LEFT JOIN armazem_cr002 cli
         ON cli.CLICONTADOR = c.CLICONTADOR
+       AND cli.EMPRESA = c.EMPRESA
     WHERE c.CMCONTADOR = 9
+      AND c.EMPRESA = ?
       $whereData
       AND (c.validado IS NULL OR c.validado = 'N')
       AND COALESCE(c.excluido_firebird, 'N') = 'N'
     ORDER BY c.DTLANC DESC, c.VLRPARCELA ASC
 ");
 
-$stmt->execute($todos ? [] : [$inicio, $fim]);
+$stmt->execute($todos ? [$empresa_id] : [$empresa_id, $inicio, $fim]);
 $registros = $stmt->fetchAll(PDO::FETCH_ASSOC);
 ?>
 

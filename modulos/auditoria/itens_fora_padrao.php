@@ -2,6 +2,8 @@
 require '../../config/auth.php';
 require '../../config/conexao.php';
 
+$empresa_id = (int)$_SESSION['empresa_id'];
+
 function garantirTabelaVerificados(PDO $pdo): void
 {
     $pdo->exec("
@@ -73,6 +75,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['acao'] ?? '') === 'verific
 }
 
 $where = [
+    "c.EMPRESA = ?",
+    "i.EMPRESA = ?",
+    "p.EMPRESA = ?",
     "COALESCE(c.excluido_firebird, 'N') <> 'S'",
     "COALESCE(c.CANCELADO, 'N') <> 'S'",
     "COALESCE(i.excluido_firebird, 'N') <> 'S'",
@@ -84,7 +89,7 @@ $where = [
     "v.id IS NULL",
     "c.DTEMISSAO BETWEEN ? AND ?"
 ];
-$params = [$margemMinima, $margemMaxima, $dataIniSql, $dataFimSql];
+$params = [$empresa_id, $empresa_id, $empresa_id, $margemMinima, $margemMaxima, $dataIniSql, $dataFimSql];
 
 if ($fornecedor !== '') {
     $where[] = "(f.NOME LIKE ? OR f.APELIDO LIKE ? OR c.FORNECEDOR = ?)";
@@ -119,10 +124,13 @@ $stmt = $pdo_master->prepare("
     FROM armazem_est006 i
     INNER JOIN armazem_est005 c
         ON c.COMPRACONTADOR = i.ITEMCOMPRACONTADOR
+       AND c.EMPRESA = i.EMPRESA
     LEFT JOIN armazem_cp003 f
         ON f.FCONTADOR = c.FORNECEDOR
+       AND f.EMPRESA = c.EMPRESA
     INNER JOIN armazem_est004 p
         ON p.CONTAPRODUTO = i.PRODUTO
+       AND p.EMPRESA = i.EMPRESA
     LEFT JOIN auditoria_compras_itens_verificados v
         ON v.itemcomprador = i.ITEMCOMPRACONTADOR
        AND v.compraconta = i.COMPRACONTA

@@ -7,6 +7,7 @@ if (session_status() === PHP_SESSION_NONE) {
     session_start();
 }
 
+$empresa_id = (int)$_SESSION['empresa_id'];
 $data = $_GET['data'] ?? ($_SESSION['data_conciliacao'] ?? date('Y-m-d'));
 $_SESSION['data_conciliacao'] = $data;
 
@@ -30,6 +31,8 @@ $stmtOk = $pdo_master->prepare("
     INNER JOIN armazem_cr001 c
         ON c.recebimento_id = r.id
     WHERE r.data_venda BETWEEN ? AND ?
+      AND r.empresa_id = $empresa_id
+      AND c.EMPRESA = $empresa_id
       AND COALESCE(c.excluido_firebird, 'N') = 'N'
     ORDER BY r.data_venda ASC, r.id ASC, c.CRCONTADOR ASC
 ");
@@ -56,10 +59,12 @@ $stmtSeguro = $pdo_master->prepare("
             ) AS qtd_rec
         FROM armazem_conciliacao_recebimentos r
         WHERE r.data_venda BETWEEN ? AND ?
+          AND r.empresa_id = $empresa_id
           AND NOT EXISTS (
               SELECT 1
               FROM armazem_cr001 cx
               WHERE cx.recebimento_id = r.id
+                AND cx.EMPRESA = $empresa_id
                 AND COALESCE(cx.excluido_firebird, 'N') = 'N'
           )
     ),
@@ -79,6 +84,7 @@ $stmtSeguro = $pdo_master->prepare("
             ) AS qtd_cr
         FROM armazem_cr001 c
         WHERE c.DTLANC BETWEEN ? AND ?
+          AND c.EMPRESA = $empresa_id
           AND c.recebimento_id IS NULL
           AND (c.validado IS NULL OR c.validado <> 'S')
           AND COALESCE(c.excluido_firebird, 'N') = 'N'
@@ -122,7 +128,9 @@ $stmtAprox = $pdo_master->prepare("
        AND ABS(TIMESTAMPDIFF(MINUTE, r.data_venda, c.DTLANC)) <= 5
        AND DATE_FORMAT(r.data_venda, '%Y-%m-%d %H:%i') <> DATE_FORMAT(c.DTLANC, '%Y-%m-%d %H:%i')
     WHERE r.data_venda BETWEEN ? AND ?
+      AND r.empresa_id = $empresa_id
       AND c.DTLANC BETWEEN ? AND ?
+      AND c.EMPRESA = $empresa_id
       AND c.recebimento_id IS NULL
       AND (c.validado IS NULL OR c.validado <> 'S')
       AND COALESCE(c.excluido_firebird, 'N') = 'N'
@@ -130,6 +138,7 @@ $stmtAprox = $pdo_master->prepare("
           SELECT 1
           FROM armazem_cr001 cx
           WHERE cx.recebimento_id = r.id
+            AND cx.EMPRESA = $empresa_id
             AND COALESCE(cx.excluido_firebird, 'N') = 'N'
       )
     ORDER BY r.valor_bruto ASC, r.data_venda ASC, c.DTLANC ASC
@@ -153,10 +162,12 @@ $stmtDup = $pdo_master->prepare("
             ) AS qtd_rec
         FROM armazem_conciliacao_recebimentos r
         WHERE r.data_venda BETWEEN ? AND ?
+          AND r.empresa_id = $empresa_id
           AND NOT EXISTS (
               SELECT 1
               FROM armazem_cr001 cx
               WHERE cx.recebimento_id = r.id
+                AND cx.EMPRESA = $empresa_id
                 AND COALESCE(cx.excluido_firebird, 'N') = 'N'
           )
     ),
@@ -172,6 +183,7 @@ $stmtDup = $pdo_master->prepare("
             ) AS qtd_cr
         FROM armazem_cr001 c
         WHERE c.DTLANC BETWEEN ? AND ?
+          AND c.EMPRESA = $empresa_id
           AND c.recebimento_id IS NULL
           AND (c.validado IS NULL OR c.validado <> 'S')
           AND COALESCE(c.excluido_firebird, 'N') = 'N'
@@ -206,10 +218,12 @@ $stmtReceb = $pdo_master->prepare("
         r.CMCONTADOR
     FROM armazem_conciliacao_recebimentos r
     WHERE r.data_venda BETWEEN ? AND ?
+      AND r.empresa_id = $empresa_id
       AND NOT EXISTS (
           SELECT 1
           FROM armazem_cr001 cx
           WHERE cx.recebimento_id = r.id
+            AND cx.EMPRESA = $empresa_id
             AND COALESCE(cx.excluido_firebird, 'N') = 'N'
       )
       AND NOT EXISTS (
@@ -218,6 +232,7 @@ $stmtReceb = $pdo_master->prepare("
           WHERE ABS(r.valor_bruto) = ABS(c.VLRPARCELA)
             AND ABS(TIMESTAMPDIFF(MINUTE, r.data_venda, c.DTLANC)) <= 5
             AND c.DTLANC BETWEEN ? AND ?
+            AND c.EMPRESA = $empresa_id
             AND c.recebimento_id IS NULL
             AND (c.validado IS NULL OR c.validado <> 'S')
             AND COALESCE(c.excluido_firebird, 'N') = 'N'
@@ -238,6 +253,7 @@ $stmtCr = $pdo_master->prepare("
         c.CMCONTADOR
     FROM armazem_cr001 c
     WHERE c.DTLANC BETWEEN ? AND ?
+      AND c.EMPRESA = $empresa_id
       AND c.recebimento_id IS NULL
       AND (c.validado IS NULL OR c.validado <> 'S')
       AND COALESCE(c.excluido_firebird, 'N') = 'N'
@@ -245,12 +261,14 @@ $stmtCr = $pdo_master->prepare("
           SELECT 1
           FROM armazem_conciliacao_recebimentos r
           WHERE ABS(r.valor_bruto) = ABS(c.VLRPARCELA)
+            AND r.empresa_id = $empresa_id
             AND ABS(TIMESTAMPDIFF(MINUTE, r.data_venda, c.DTLANC)) <= 5
             AND r.data_venda BETWEEN ? AND ?
             AND NOT EXISTS (
                 SELECT 1
                 FROM armazem_cr001 cx
                 WHERE cx.recebimento_id = r.id
+                  AND cx.EMPRESA = $empresa_id
                   AND COALESCE(cx.excluido_firebird, 'N') = 'N'
             )
       )

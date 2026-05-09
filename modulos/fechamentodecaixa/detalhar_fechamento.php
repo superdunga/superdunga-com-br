@@ -5,6 +5,7 @@ require '../../layout/header.php';
 
 $data = $_GET['data'] ?? '';
 $usuario = $_GET['user'] ?? '';
+$empresa_id = (int)$_SESSION['empresa_id'];
 
 if (!$data || !$usuario) {
     echo "<div class='alert alert-danger'>Parâmetros inválidos</div>";
@@ -54,12 +55,14 @@ $stmt = $pdo_master->prepare("
     FROM armazem_est007 e
     LEFT JOIN armazem_cr002 c
         ON c.CLICONTADOR = e.CLIENTE
+       AND c.EMPRESA = e.EMPRESA
     WHERE e.DTLANC BETWEEN ? AND ?
       AND e.USERLANC = ?
+      AND e.EMPRESA = ?
       AND e.CANCELADO = 'N'
     ORDER BY e.DTLANC, e.VENDACONTADOR
 ");
-$stmt->execute([$data_inicio, $data_fim, $usuario]);
+$stmt->execute([$data_inicio, $data_fim, $usuario, $empresa_id]);
 $vendas = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
 $itensPorVenda = [];
@@ -83,10 +86,12 @@ if (!empty($vendasIds)) {
         FROM armazem_est008 i
         LEFT JOIN armazem_est004 p
             ON p.CONTAPRODUTO = i.PRODUTO
+           AND p.EMPRESA = i.EMPRESA
         WHERE i.ITEMVENDACONTADOR IN ($placeholders)
+          AND i.EMPRESA = ?
         ORDER BY i.ITEMVENDACONTADOR, i.VENDACONTA
     ");
-    $stmtItens->execute($vendasIds);
+    $stmtItens->execute(array_merge($vendasIds, [$empresa_id]));
 
     while ($item = $stmtItens->fetch(PDO::FETCH_ASSOC)) {
         $itensPorVenda[(int)$item['ITEMVENDACONTADOR']][] = $item;
@@ -193,13 +198,15 @@ $stmt = $pdo_master->prepare("
         FROM armazem_est007
         WHERE DTLANC BETWEEN ? AND ?
           AND USERLANC = ?
+          AND EMPRESA = ?
           AND CANCELADO = 'N'
     ) e ON e.VENDACONTADOR = b.NUMDOCORIGEM
     WHERE b.DTLANC BETWEEN ? AND ?
+      AND b.EMPRESA = ?
       AND b.TIPODOCORIGEM = 'VENDA'
     ORDER BY b.NUMDOCORIGEM
 ");
-$stmt->execute([$data_inicio, $data_fim, $usuario, $data_inicio, $data_fim]);
+$stmt->execute([$data_inicio, $data_fim, $usuario, $empresa_id, $data_inicio, $data_fim, $empresa_id]);
 
 $total_vista = 0;
 
@@ -246,10 +253,12 @@ $stmt = $pdo_master->prepare("
         FROM armazem_est007
         WHERE DTLANC BETWEEN ? AND ?
           AND USERLANC = ?
+          AND EMPRESA = ?
           AND CANCELADO = 'N'
     ) e ON e.VENDACONTADOR = c.NUMDOCORIGEM
+    WHERE c.EMPRESA = ?
 ");
-$stmt->execute([$data_inicio, $data_fim, $usuario]);
+$stmt->execute([$data_inicio, $data_fim, $usuario, $empresa_id, $empresa_id]);
 
 $total_prazo = 0;
 

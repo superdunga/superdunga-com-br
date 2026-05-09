@@ -4,7 +4,7 @@ require '../../config/conexao.php';
 
 exigirNivel('OPERADOR');
 
-$empresa_id = $_SESSION['empresa_id'];
+$empresa_id = (int)$_SESSION['empresa_id'];
 $linhas_afetadas = 0;
 $erro_conciliacao = '';
 $erro_manual = $_GET['erro_manual'] ?? '';
@@ -16,14 +16,29 @@ function garantirTabelaFirebirdConferidos(PDO $pdo): void
     $pdo->exec("
         CREATE TABLE IF NOT EXISTS tesouraria_firebird_conferidos (
             id INT AUTO_INCREMENT PRIMARY KEY,
+            empresa_id INT NOT NULL DEFAULT 1,
             movcontador INT NOT NULL,
             usuario_id INT NOT NULL,
             usuario_nome VARCHAR(150) NULL,
             conferido_em DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-            UNIQUE KEY uniq_firebird_conferido (movcontador),
+            UNIQUE KEY uniq_firebird_conferido (empresa_id, movcontador),
             INDEX idx_firebird_conferido_em (conferido_em)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
     ");
+
+    $colunaEmpresa = $pdo->query("
+        SELECT COUNT(*)
+        FROM INFORMATION_SCHEMA.COLUMNS
+        WHERE TABLE_SCHEMA = DATABASE()
+          AND TABLE_NAME = 'tesouraria_firebird_conferidos'
+          AND COLUMN_NAME = 'empresa_id'
+    ")->fetchColumn();
+
+    if ((int)$colunaEmpresa === 0) {
+        $pdo->exec("ALTER TABLE tesouraria_firebird_conferidos ADD COLUMN empresa_id INT NOT NULL DEFAULT 1 AFTER id");
+        $pdo->exec("ALTER TABLE tesouraria_firebird_conferidos DROP INDEX uniq_firebird_conferido");
+        $pdo->exec("ALTER TABLE tesouraria_firebird_conferidos ADD UNIQUE KEY uniq_firebird_conferido (empresa_id, movcontador)");
+    }
 }
 
 garantirTabelaFirebirdConferidos($pdo_master);
@@ -57,6 +72,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['acao'] ?? '') === 'concili
                AND DATE(t.data_mov) = DATE(f.DTMOV)
             WHERE t.id = ?
               AND f.MOVCONTADOR = ?
+              AND t.empresa_id = ?
+              AND f.EMPRESA = ?
               AND t.conciliado = 'N'
               AND t.tipo_operacao <> 'T'
               AND f.CBCONTADOR = 8
@@ -66,10 +83,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['acao'] ?? '') === 'concili
                   SELECT 1
                   FROM tesouraria_movimentacoes tx
                   WHERE tx.firebird_id = f.MOVCONTADOR
+                    AND tx.empresa_id = t.empresa_id
               )
             LIMIT 1
         ");
-        $stmt->execute([$tesourariaId, $firebirdId]);
+        $stmt->execute([$tesourariaId, $firebirdId, $empresa_id, $empresa_id]);
         $match = $stmt->fetch(PDO::FETCH_ASSOC);
 
         if (!$match) {
@@ -79,9 +97,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['acao'] ?? '') === 'concili
         $stmt = $pdo_master->prepare("
             UPDATE tesouraria_movimentacoes
             SET firebird_id = ?, firebird_tabela = 'armazem_bnc001', conciliado = 'S'
-            WHERE id = ? AND conciliado = 'N'
+            WHERE id = ? AND empresa_id = ? AND conciliado = 'N'
         ");
-        $stmt->execute([$firebirdId, $tesourariaId]);
+        $stmt->execute([$firebirdId, $tesourariaId, $empresa_id]);
 
         if ($stmt->rowCount() !== 1) {
             throw new RuntimeException('nao_atualizado');
@@ -119,9 +137,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['acao'] ?? '') === 'marcar_
             SELECT COALESCE(deletado, 'N')
             FROM armazem_bnc001
             WHERE MOVCONTADOR = ?
+              AND EMPRESA = ?
             LIMIT 1
         ");
-        $stmtCheckDeletado->execute([$firebirdId]);
+        $stmtCheckDeletado->execute([$firebirdId, $empresa_id]);
         $deletado = $stmtCheckDeletado->fetchColumn();
 
         if ($deletado !== 'S') {
@@ -131,15 +150,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['acao'] ?? '') === 'marcar_
 
         $stmt = $pdo_master->prepare("
             INSERT INTO tesouraria_firebird_conferidos
-                (movcontador, usuario_id, usuario_nome)
+                (empresa_id, movcontador, usuario_id, usuario_nome)
             VALUES
-                (?, ?, ?)
+                (?, ?, ?, ?)
             ON DUPLICATE KEY UPDATE
                 usuario_id = VALUES(usuario_id),
                 usuario_nome = VALUES(usuario_nome),
                 conferido_em = NOW()
         ");
         $stmt->execute([
+            $empresa_id,
             $firebirdId,
             (int)$_SESSION['usuario_id'],
             $_SESSION['usuario_nome'] ?? null
@@ -164,7 +184,9 @@ try {
             ON ABS(CAST(t.valor_operacao AS DECIMAL(15,2))) = CAST(f.VALORMOV AS DECIMAL(15,2))
            AND DATE(t.data_mov) = DATE(f.DTMOV)
         WHERE t.conciliado = 'N'
+          AND t.empresa_id = ?
           AND t.tipo_operacao <> 'T'
+          AND f.EMPRESA = ?
           AND f.CBCONTADOR = 8
           AND COALESCE(f.deletado, 'N') <> 'S'
           AND CAST(f.VALORMOV AS CHAR) REGEXP '^-?[0-9]+(\\\\.[0-9]+)?$'
@@ -172,6 +194,7 @@ try {
               SELECT 1
               FROM tesouraria_movimentacoes tx
               WHERE tx.firebird_id = f.MOVCONTADOR
+                AND tx.empresa_id = t.empresa_id
           )
         GROUP BY t.id
         HAVING COUNT(f.MOVCONTADOR) = 1
@@ -184,7 +207,7 @@ try {
     ";
 
     $stmt = $pdo_master->prepare($sql);
-    $stmt->execute();
+    $stmt->execute([$empresa_id, $empresa_id]);
     $linhas_afetadas = $stmt->rowCount();
 
 } catch (Exception $e) {
@@ -192,7 +215,7 @@ try {
 }
 
 // PENDENTES
-$pendentes = $pdo_master->query("
+$stmtPendentes = $pdo_master->prepare("
     SELECT
         t.id,
         t.data_mov,
@@ -203,6 +226,7 @@ $pendentes = $pdo_master->query("
             FROM armazem_bnc001 f
             WHERE ABS(CAST(t.valor_operacao AS DECIMAL(15,2))) = CAST(f.VALORMOV AS DECIMAL(15,2))
               AND DATE(f.DTMOV) = DATE(t.data_mov)
+              AND f.EMPRESA = ?
               AND f.CBCONTADOR = 8
               AND COALESCE(f.deletado, 'N') <> 'S'
               AND CAST(f.VALORMOV AS CHAR) REGEXP '^-?[0-9]+(\\\\.[0-9]+)?$'
@@ -210,13 +234,17 @@ $pendentes = $pdo_master->query("
                   SELECT 1
                   FROM tesouraria_movimentacoes tx
                   WHERE tx.firebird_id = f.MOVCONTADOR
+                    AND tx.empresa_id = t.empresa_id
               )
         ) AS qtd_matches
     FROM tesouraria_movimentacoes t
     WHERE t.conciliado = 'N'
+    AND t.empresa_id = ?
     AND t.tipo_operacao <> 'T'
     ORDER BY t.data_mov DESC
-")->fetchAll(PDO::FETCH_ASSOC);
+");
+$stmtPendentes->execute([$empresa_id, $empresa_id]);
+$pendentes = $stmtPendentes->fetchAll(PDO::FETCH_ASSOC);
 
 $candidatosPorTesouraria = [];
 
@@ -233,6 +261,7 @@ if (!empty($pendentes)) {
         FROM armazem_bnc001 f
         WHERE ABS(CAST(? AS DECIMAL(15,2))) = CAST(f.VALORMOV AS DECIMAL(15,2))
           AND DATE(f.DTMOV) = DATE(?)
+          AND f.EMPRESA = ?
           AND f.CBCONTADOR = 8
           AND COALESCE(f.deletado, 'N') <> 'S'
           AND CAST(f.VALORMOV AS CHAR) REGEXP '^-?[0-9]+(\\\\.[0-9]+)?$'
@@ -240,20 +269,21 @@ if (!empty($pendentes)) {
               SELECT 1
               FROM tesouraria_movimentacoes tx
               WHERE tx.firebird_id = f.MOVCONTADOR
+                AND tx.empresa_id = ?
           )
         ORDER BY f.DTLANC ASC, f.MOVCONTADOR ASC
     ");
 
     foreach ($pendentes as $p) {
         if ((int)$p['qtd_matches'] > 1) {
-            $stmtCandidatos->execute([$p['valor_operacao'], $p['data_mov']]);
+            $stmtCandidatos->execute([$p['valor_operacao'], $p['data_mov'], $empresa_id, $empresa_id]);
             $candidatosPorTesouraria[(int)$p['id']] = $stmtCandidatos->fetchAll(PDO::FETCH_ASSOC);
         }
     }
 }
 
 // CONCILIADOS
-$conciliados = $pdo_master->query("
+$stmtConciliados = $pdo_master->prepare("
     SELECT
         id,
         data_mov,
@@ -262,12 +292,15 @@ $conciliados = $pdo_master->query("
         observacao
     FROM tesouraria_movimentacoes
     WHERE conciliado = 'S'
+    AND empresa_id = ?
     AND tipo_operacao <> 'T'
     ORDER BY data_mov DESC
-")->fetchAll(PDO::FETCH_ASSOC);
+");
+$stmtConciliados->execute([$empresa_id]);
+$conciliados = $stmtConciliados->fetchAll(PDO::FETCH_ASSOC);
 
 // FIREBIRD NAO CONCILIADOS
-$firebird_nao = $pdo_master->query("
+$stmtFirebirdNao = $pdo_master->prepare("
     SELECT
         f.MOVCONTADOR,
         f.DTMOV,
@@ -275,7 +308,8 @@ $firebird_nao = $pdo_master->query("
         f.VALORMOV,
         f.deletado
     FROM armazem_bnc001 f
-    WHERE f.CBCONTADOR = 8
+    WHERE f.EMPRESA = ?
+      AND f.CBCONTADOR = 8
       AND f.DTMOV > '2026-04-15'
       AND (
           COALESCE(f.deletado, 'N') <> 'S'
@@ -286,14 +320,18 @@ $firebird_nao = $pdo_master->query("
           SELECT 1
           FROM tesouraria_movimentacoes tx
           WHERE tx.firebird_id = f.MOVCONTADOR
+            AND tx.empresa_id = ?
       )
       AND NOT EXISTS (
           SELECT 1
           FROM tesouraria_firebird_conferidos fc
           WHERE fc.movcontador = f.MOVCONTADOR
+            AND fc.empresa_id = ?
       )
     ORDER BY f.DTMOV DESC
-")->fetchAll(PDO::FETCH_ASSOC);
+");
+$stmtFirebirdNao->execute([$empresa_id, $empresa_id, $empresa_id]);
+$firebird_nao = $stmtFirebirdNao->fetchAll(PDO::FETCH_ASSOC);
 
 require '../../layout/header.php';
 ?>

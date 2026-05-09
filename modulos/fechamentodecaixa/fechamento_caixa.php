@@ -3,7 +3,7 @@ require '../../config/auth.php';
 require '../../config/conexao.php';
 require '../../layout/header.php';
 
-$empresa_id = $_SESSION['empresa_id'];
+$empresa_id = (int)$_SESSION['empresa_id'];
 
 $mes = isset($_GET['mes']) && $_GET['mes'] != '' ? $_GET['mes'] : date('Y-m');
 
@@ -17,6 +17,7 @@ SELECT
 FROM armazem_est007
 WHERE DTLANC >= '$inicio'
   AND DTLANC <= '$fim'
+  AND EMPRESA = $empresa_id
   AND CANCELADO = 'N'
 GROUP BY DATE(DTLANC), USERLANC
 ORDER BY data DESC
@@ -91,11 +92,12 @@ $total_diferenca_geral = 0;
                 FROM armazem_est007
                 WHERE DTLANC BETWEEN ? AND ?
                   AND USERLANC = ?
+                  AND EMPRESA = ?
                   AND CANCELADO = 'N'
                 GROUP BY NUMDOC
             ) x
         ");
-        $stmt->execute([$data_inicio, $data_fim, $usuario]);
+        $stmt->execute([$data_inicio, $data_fim, $usuario, $empresa_id]);
         $total_venda = (float)$stmt->fetchColumn();
 
         /* VISTA */
@@ -113,12 +115,14 @@ $total_diferenca_geral = 0;
                 FROM armazem_est007
                 WHERE DTLANC BETWEEN ? AND ?
                   AND USERLANC = ?
+                  AND EMPRESA = ?
                   AND CANCELADO = 'N'
             ) e ON e.VENDACONTADOR = b.NUMDOCORIGEM
             WHERE b.DTLANC BETWEEN ? AND ?
+              AND b.EMPRESA = ?
               AND b.TIPODOCORIGEM = 'VENDA'
         ");
-        $stmt->execute([$data_inicio, $data_fim, $usuario, $data_inicio, $data_fim]);
+        $stmt->execute([$data_inicio, $data_fim, $usuario, $empresa_id, $data_inicio, $data_fim, $empresa_id]);
         $total_vista = (float)$stmt->fetchColumn();
 
         /* PRAZO */
@@ -130,10 +134,12 @@ $total_diferenca_geral = 0;
                 FROM armazem_est007
                 WHERE DTLANC BETWEEN ? AND ?
                   AND USERLANC = ?
+                  AND EMPRESA = ?
                   AND CANCELADO = 'N'
             ) e ON e.VENDACONTADOR = c.NUMDOCORIGEM
+            WHERE c.EMPRESA = ?
         ");
-        $stmt->execute([$data_inicio, $data_fim, $usuario]);
+        $stmt->execute([$data_inicio, $data_fim, $usuario, $empresa_id, $empresa_id]);
         $total_prazo = (float)$stmt->fetchColumn();
 
         /* FINAL */

@@ -4,6 +4,7 @@ require '../../config/conexao.php';
 require '../../layout/header.php';
 
 $data = $_GET['data'] ?? date('Y-m-d');
+$empresa_id = (int)$_SESSION['empresa_id'];
 
 $inicio = date('Y-m-d 07:00:00', strtotime($data));
 $fim    = date('Y-m-d 03:00:00', strtotime($data . ' +1 day'));
@@ -12,38 +13,42 @@ $stmtPendSistema = $pdo_master->prepare("
     SELECT r.*
     FROM armazem_conciliacao_recebimentos r
     WHERE r.data_venda BETWEEN ? AND ?
+      AND r.empresa_id = ?
       AND NOT EXISTS (
           SELECT 1
           FROM armazem_cr001 c
           WHERE c.recebimento_id = r.id
+            AND c.EMPRESA = ?
             AND COALESCE(c.excluido_firebird, 'N') = 'N'
       )
     ORDER BY r.data_venda ASC, r.id ASC
 ");
-$stmtPendSistema->execute([$inicio, $fim]);
+$stmtPendSistema->execute([$inicio, $fim, $empresa_id, $empresa_id]);
 $pendentesSistema = $stmtPendSistema->fetchAll(PDO::FETCH_ASSOC);
 
 $stmtPendCR = $pdo_master->prepare("
     SELECT c.*
     FROM armazem_cr001 c
     WHERE c.DTLANC BETWEEN ? AND ?
+      AND c.EMPRESA = ?
       AND c.CMCONTADOR <> 9
       AND c.recebimento_id IS NULL
       AND NOT (c.CMCONTADOR = 1 AND c.STATUS = 'QT')
       AND COALESCE(c.excluido_firebird, 'N') = 'N'
     ORDER BY c.DTLANC ASC, c.CRCONTADOR ASC
 ");
-$stmtPendCR->execute([$inicio, $fim]);
+$stmtPendCR->execute([$inicio, $fim, $empresa_id]);
 $pendentesCR001 = $stmtPendCR->fetchAll(PDO::FETCH_ASSOC);
 
 $stmtExcluidosCR = $pdo_master->prepare("
     SELECT c.*
     FROM armazem_cr001 c
     WHERE c.DTLANC BETWEEN ? AND ?
+      AND c.EMPRESA = ?
       AND COALESCE(c.excluido_firebird, 'N') = 'S'
     ORDER BY c.DTLANC ASC, c.CRCONTADOR ASC
 ");
-$stmtExcluidosCR->execute([$inicio, $fim]);
+$stmtExcluidosCR->execute([$inicio, $fim, $empresa_id]);
 $excluidosCR001 = $stmtExcluidosCR->fetchAll(PDO::FETCH_ASSOC);
 
 $totalPendenteSistema = array_sum(array_column($pendentesSistema, 'valor_bruto'));

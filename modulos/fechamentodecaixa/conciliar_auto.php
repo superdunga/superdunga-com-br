@@ -9,6 +9,7 @@ $modo = $_GET['modo'] ?? 'seguro';
 $data = $_GET['data'] ?? date('Y-m-d');
 $lote = (int)($_GET['lote'] ?? 50);
 $totalAnterior = (int)($_GET['total'] ?? 0);
+$empresa_id = (int)$_SESSION['empresa_id'];
 
 if (!in_array($modo, ['seguro', 'movimento', 'aproximado'], true)) {
     $modo = 'seguro';
@@ -47,8 +48,10 @@ $sqlSeguro = "
             SELECT 1
             FROM armazem_cr001 cx
             WHERE cx.recebimento_id = r.id
+              AND cx.EMPRESA = $empresa_id
               AND COALESCE(cx.excluido_firebird, 'N') = 'N'
         )
+          AND r.empresa_id = $empresa_id
     ),
     cr AS (
         SELECT
@@ -65,6 +68,7 @@ $sqlSeguro = "
             ) AS qtd_cr
         FROM armazem_cr001 c
         WHERE c.recebimento_id IS NULL
+          AND c.EMPRESA = $empresa_id
           AND (c.validado IS NULL OR c.validado <> 'S')
           AND COALESCE(c.excluido_firebird, 'N') = 'N'
     )
@@ -110,8 +114,10 @@ $sqlMovimento = "
             SELECT 1
             FROM armazem_cr001 cx
             WHERE cx.recebimento_id = r.id
+              AND cx.EMPRESA = $empresa_id
               AND COALESCE(cx.excluido_firebird, 'N') = 'N'
         )
+          AND r.empresa_id = $empresa_id
     ),
     cr AS (
         SELECT
@@ -128,6 +134,7 @@ $sqlMovimento = "
             ) AS qtd_cr
         FROM armazem_cr001 c
         WHERE c.recebimento_id IS NULL
+          AND c.EMPRESA = $empresa_id
           AND c.CMCONTADOR <> 9
           AND (c.validado IS NULL OR c.validado <> 'S')
           AND COALESCE(c.excluido_firebird, 'N') = 'N'
@@ -165,7 +172,9 @@ $sqlAproximado = "
      AND ABS(TIMESTAMPDIFF(MINUTE, r.data_venda, c.DTLANC)) <= 5
      AND DATE_FORMAT(r.data_venda, '%Y-%m-%d %H:%i') <> DATE_FORMAT(c.DTLANC, '%Y-%m-%d %H:%i')
     WHERE r.data_venda BETWEEN ? AND ?
+      AND r.empresa_id = $empresa_id
       AND c.DTLANC BETWEEN ? AND ?
+      AND c.EMPRESA = $empresa_id
       AND c.recebimento_id IS NULL
       AND (c.validado IS NULL OR c.validado <> 'S')
       AND COALESCE(c.excluido_firebird, 'N') = 'N'
@@ -173,6 +182,7 @@ $sqlAproximado = "
           SELECT 1
           FROM armazem_cr001 cx
           WHERE cx.recebimento_id = r.id
+            AND cx.EMPRESA = $empresa_id
             AND COALESCE(cx.excluido_firebird, 'N') = 'N'
       )
 ";
@@ -188,16 +198,17 @@ if ($modo === 'aproximado') {
 /* =========================================================
    FUNCAO DE UPDATE SEGURA
 ========================================================= */
-function conciliar($pdo, $rec_id, $cm, $crcontador) {
+function conciliar($pdo, $rec_id, $cm, $crcontador, $empresa_id) {
 
     // Evita reutilizar o mesmo CR001.
     $check = $pdo->prepare("
         SELECT recebimento_id
         FROM armazem_cr001
         WHERE CRCONTADOR = ?
+          AND EMPRESA = ?
           AND COALESCE(excluido_firebird, 'N') = 'N'
     ");
-    $check->execute([$crcontador]);
+    $check->execute([$crcontador, $empresa_id]);
     $existe = $check->fetch(PDO::FETCH_ASSOC);
 
     if (!empty($existe['recebimento_id'])) {
@@ -209,10 +220,11 @@ function conciliar($pdo, $rec_id, $cm, $crcontador) {
         SELECT 1
         FROM armazem_cr001
         WHERE recebimento_id = ?
+          AND EMPRESA = ?
           AND COALESCE(excluido_firebird, 'N') = 'N'
         LIMIT 1
     ");
-    $checkRec->execute([$rec_id]);
+    $checkRec->execute([$rec_id, $empresa_id]);
 
     if ($checkRec->fetchColumn()) {
         return false;
@@ -222,11 +234,12 @@ function conciliar($pdo, $rec_id, $cm, $crcontador) {
         UPDATE armazem_cr001
         SET recebimento_id = ?, CMCONTADOR = ?
         WHERE CRCONTADOR = ?
+        AND EMPRESA = ?
         AND recebimento_id IS NULL
         AND COALESCE(excluido_firebird, 'N') = 'N'
     ");
 
-    return $update->execute([$rec_id, $cm, $crcontador]);
+    return $update->execute([$rec_id, $cm, $crcontador, $empresa_id]);
 }
 
 /* =========================================================
@@ -236,19 +249,19 @@ $total = 0;
 $encontrados = count($seguros) + count($movimento) + count($aprox);
 
 foreach ($seguros as $m) {
-    if (conciliar($pdo_master, $m['rec_id'], $m['CMCONTADOR'], $m['CRCONTADOR'])) {
+    if (conciliar($pdo_master, $m['rec_id'], $m['CMCONTADOR'], $m['CRCONTADOR'], $empresa_id)) {
         $total++;
     }
 }
 
 foreach ($movimento as $m) {
-    if (conciliar($pdo_master, $m['rec_id'], $m['CMCONTADOR'], $m['CRCONTADOR'])) {
+    if (conciliar($pdo_master, $m['rec_id'], $m['CMCONTADOR'], $m['CRCONTADOR'], $empresa_id)) {
         $total++;
     }
 }
 
 foreach ($aprox as $m) {
-    if (conciliar($pdo_master, $m['rec_id'], $m['CMCONTADOR'], $m['CRCONTADOR'])) {
+    if (conciliar($pdo_master, $m['rec_id'], $m['CMCONTADOR'], $m['CRCONTADOR'], $empresa_id)) {
         $total++;
     }
 }

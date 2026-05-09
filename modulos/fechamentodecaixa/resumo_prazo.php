@@ -3,6 +3,8 @@ require '../../config/auth.php';
 require '../../config/conexao.php';
 require '../../layout/header.php';
 
+$empresa_id = (int)$_SESSION['empresa_id'];
+
 /* =========================
    FILTRO MÊS
 ========================= */
@@ -15,9 +17,10 @@ $stmtDatas = $pdo_master->prepare("
     SELECT DISTINCT DATE(data_venda) AS data_base
     FROM armazem_conciliacao_recebimentos
     WHERE DATE(data_venda) LIKE ?
+      AND empresa_id = ?
     ORDER BY data_base DESC
 ");
-$stmtDatas->execute([$mes . '%']);
+$stmtDatas->execute([$mes . '%', $empresa_id]);
 $datas = $stmtDatas->fetchAll(PDO::FETCH_COLUMN);
 ?>
 
@@ -73,7 +76,9 @@ $datas = $stmtDatas->fetchAll(PDO::FETCH_COLUMN);
                     INNER JOIN armazem_cr001 c
                         ON c.recebimento_id = r.id
                     WHERE r.data_venda BETWEEN ? AND ?
+                      AND r.empresa_id = $empresa_id
                       AND c.DTLANC BETWEEN ? AND ?
+                      AND c.EMPRESA = $empresa_id
                       AND COALESCE(c.excluido_firebird, 'N') = 'N'
                 ");
                 $stmt1->execute([$inicio, $fim, $inicio, $fim]);
@@ -85,7 +90,9 @@ $datas = $stmtDatas->fetchAll(PDO::FETCH_COLUMN);
                     INNER JOIN armazem_conciliacao_recebimentos r
                         ON r.id = c.recebimento_id
                     WHERE c.DTLANC BETWEEN ? AND ?
+                      AND c.EMPRESA = $empresa_id
                       AND r.data_venda BETWEEN ? AND ?
+                      AND r.empresa_id = $empresa_id
                       AND c.CMCONTADOR <> 9
                       AND NOT (c.CMCONTADOR = 1 AND c.STATUS = 'QT')
                       AND COALESCE(c.excluido_firebird, 'N') = 'N'
@@ -97,10 +104,12 @@ $datas = $stmtDatas->fetchAll(PDO::FETCH_COLUMN);
                     SELECT COUNT(*), COALESCE(SUM(r.valor_bruto), 0)
                     FROM armazem_conciliacao_recebimentos r
                     WHERE r.data_venda BETWEEN ? AND ?
+                      AND r.empresa_id = $empresa_id
                       AND NOT EXISTS (
                           SELECT 1
                           FROM armazem_cr001 c
                           WHERE c.recebimento_id = r.id
+                            AND c.EMPRESA = $empresa_id
                             AND COALESCE(c.excluido_firebird, 'N') = 'N'
                       )
                 ");
@@ -113,6 +122,7 @@ $datas = $stmtDatas->fetchAll(PDO::FETCH_COLUMN);
                     SELECT COUNT(*), COALESCE(SUM(c.VLRPARCELA), 0)
                     FROM armazem_cr001 c
                     WHERE c.DTLANC BETWEEN ? AND ?
+                      AND c.EMPRESA = $empresa_id
                       AND c.CMCONTADOR <> 9
                       AND c.recebimento_id IS NULL
                       AND NOT (c.CMCONTADOR = 1 AND c.STATUS = 'QT')
