@@ -7,6 +7,7 @@ require '../../config/conexao.php';
 header('Content-Type: application/json');
 
 $token = $_GET['token'] ?? '';
+$empresaSync = isset($_GET['empresa']) ? (int)$_GET['empresa'] : null;
 
 if ($token !== '123456') {
     echo json_encode(['erro' => 'Acesso negado']);
@@ -89,6 +90,9 @@ try {
         $stmt->execute([$id]);
     }
 
+    $filtroEmpresa = ($empresaSync !== null && $empresaSync > 0) ? " AND m.EMPRESA = ?" : "";
+    $paramsEmpresa = ($empresaSync !== null && $empresaSync > 0) ? [$empresaSync] : [];
+
     $stmtAtivos = $pdo_master->prepare("
         UPDATE armazem_bnc001 m
         INNER JOIN armazem_bnc001_ids_temp t
@@ -97,8 +101,9 @@ try {
             m.data_delecao_firebird = NULL,
             m.motivo_sync = NULL,
             m.ultima_presenca_firebird = NOW()
+        WHERE 1=1 $filtroEmpresa
     ");
-    $stmtAtivos->execute();
+    $stmtAtivos->execute($paramsEmpresa);
     $reativados = $stmtAtivos->rowCount();
 
     $stmtDeletados = $pdo_master->prepare("
@@ -110,8 +115,9 @@ try {
             m.motivo_sync = 'Nao encontrado na foto BNC001 do Firebird'
         WHERE t.MOVCONTADOR IS NULL
           AND COALESCE(m.deletado, 'N') <> 'S'
+          $filtroEmpresa
     ");
-    $stmtDeletados->execute();
+    $stmtDeletados->execute($paramsEmpresa);
     $marcadosDeletados = $stmtDeletados->rowCount();
 
     $pdo_master->commit();

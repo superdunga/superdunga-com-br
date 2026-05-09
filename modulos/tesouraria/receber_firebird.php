@@ -224,8 +224,56 @@ function garantirChaveEst006(PDO $pdo): void
     if ((int)$stmt->fetchColumn() === 0) {
         $pdo->exec("
             ALTER TABLE armazem_est006
-            ADD UNIQUE KEY uniq_est006_item_compra (ITEMCOMPRACONTADOR, COMPRACONTA)
+            ADD UNIQUE KEY uniq_est006_item_compra (EMPRESA, ITEMCOMPRACONTADOR, COMPRACONTA)
         ");
+    }
+}
+
+function garantirIndiceUnicoPorEmpresa(PDO $pdo, string $nomeTabela, string $nomeIndiceAntigo, string $nomeIndiceNovo, array $colunasChave): void
+{
+    $stmt = $pdo->prepare("
+        SELECT COUNT(*)
+        FROM information_schema.STATISTICS
+        WHERE TABLE_SCHEMA = DATABASE()
+          AND TABLE_NAME = ?
+          AND INDEX_NAME = ?
+          AND NON_UNIQUE = 0
+    ");
+
+    $stmt->execute([$nomeTabela, $nomeIndiceAntigo]);
+    if ((int)$stmt->fetchColumn() > 0) {
+        $pdo->exec("ALTER TABLE `$nomeTabela` DROP INDEX `$nomeIndiceAntigo`");
+    }
+
+    $stmt->execute([$nomeTabela, $nomeIndiceNovo]);
+    if ((int)$stmt->fetchColumn() === 0) {
+        $colunasIndice = array_map(function ($coluna) {
+            return "`$coluna`";
+        }, array_merge(['EMPRESA'], $colunasChave));
+
+        $pdo->exec("ALTER TABLE `$nomeTabela` ADD UNIQUE KEY `$nomeIndiceNovo` (" . implode(', ', $colunasIndice) . ")");
+    }
+}
+
+function garantirChavesMultiEmpresaFirebird(PDO $pdo, ?string $tabela = null): void
+{
+    $configs = [
+        'cp001' => ['armazem_cp001', 'uniq_cp001_cpcontador', 'uniq_cp001_empresa_cpcontador', ['CPCONTADOR']],
+        'cp003' => ['armazem_cp003', 'uniq_cp003_fcontador', 'uniq_cp003_empresa_fcontador', ['FCONTADOR']],
+        'cp004' => ['armazem_cp004', 'uniq_cp004_qtcpcontador', 'uniq_cp004_empresa_qtcpcontador', ['QTCPCONTADOR']],
+        'est004' => ['armazem_est004', 'uniq_est004_codproduto', 'uniq_est004_empresa_codproduto', ['CODPRODUTO']],
+        'est005' => ['armazem_est005', 'uniq_est005_compracontador', 'uniq_est005_empresa_compracontador', ['COMPRACONTADOR']],
+        'est006' => ['armazem_est006', 'uniq_est006_item_compra', 'uniq_est006_empresa_item_compra', ['ITEMCOMPRACONTADOR', 'COMPRACONTA']],
+        'est007' => ['armazem_est007', 'VENDACONTADOR', 'uniq_est007_empresa_vendacontador', ['VENDACONTADOR']],
+    ];
+
+    if ($tabela !== null && isset($configs[$tabela])) {
+        garantirIndiceUnicoPorEmpresa($pdo, ...$configs[$tabela]);
+        return;
+    }
+
+    foreach ($configs as $config) {
+        garantirIndiceUnicoPorEmpresa($pdo, ...$config);
     }
 }
 
@@ -240,6 +288,7 @@ function processarAtivosFirebird(PDO $pdo, array $dados, array $config): void
     $finalizar = ($_GET['finalizar'] ?? '') === '1';
     $filtroSql = '';
     $filtroParams = [];
+    $empresaSync = isset($_GET['empresa']) ? (int)$_GET['empresa'] : null;
 
     if (!empty($config['coluna_data'])) {
         $inicio = $_GET['inicio'] ?? ($dados['inicio'] ?? null);
@@ -255,6 +304,11 @@ function processarAtivosFirebird(PDO $pdo, array $dados, array $config): void
         $colunaData = $config['coluna_data'];
         $filtroSql = " AND m.`$colunaData` BETWEEN ? AND ?";
         $filtroParams = [$inicio, $fim];
+    }
+
+    if ($empresaSync !== null && $empresaSync > 0) {
+        $filtroSql .= " AND m.`EMPRESA` = ?";
+        $filtroParams[] = $empresaSync;
     }
 
     if (!is_array($registros)) {
@@ -560,7 +614,7 @@ $configAtivosFirebird = [
     'bnc005_ativos' => ['tabela_mysql' => 'armazem_bnc005', 'coluna_chave' => 'ESCONTADOR', 'nome_firebird' => 'BNC005'],
     'cp001_ativos' => ['tabela_mysql' => 'armazem_cp001', 'coluna_chave' => 'CPCONTADOR', 'nome_firebird' => 'CP001'],
     'cp003_ativos' => ['tabela_mysql' => 'armazem_cp003', 'coluna_chave' => 'FCONTADOR', 'nome_firebird' => 'CP003'],
-    'cp004_ativos' => ['tabela_mysql' => 'armazem_cp004', 'coluna_chave' => 'CPCONTADOR', 'nome_firebird' => 'CP004'],
+    'cp004_ativos' => ['tabela_mysql' => 'armazem_cp004', 'coluna_chave' => 'QTCPCONTADOR', 'nome_firebird' => 'CP004'],
     'est004_ativos' => ['tabela_mysql' => 'armazem_est004', 'coluna_chave' => 'CODPRODUTO', 'nome_firebird' => 'EST004'],
     'est005_ativos' => ['tabela_mysql' => 'armazem_est005', 'coluna_chave' => 'COMPRACONTADOR', 'nome_firebird' => 'EST005'],
     'est006_ativos' => ['tabela_mysql' => 'armazem_est006', 'colunas_chave' => ['ITEMCOMPRACONTADOR', 'COMPRACONTA'], 'nome_firebird' => 'EST006'],
@@ -577,7 +631,7 @@ if (isset($configAtivosFirebird[$tabela])) {
 $configTabelasGenericas = [
     'cp001' => ['tabela_mysql' => 'armazem_cp001', 'chaves' => ['CPCONTADOR']],
     'cp003' => ['tabela_mysql' => 'armazem_cp003', 'chaves' => ['FCONTADOR']],
-    'cp004' => ['tabela_mysql' => 'armazem_cp004', 'chaves' => ['CPCONTADOR']],
+    'cp004' => ['tabela_mysql' => 'armazem_cp004', 'chaves' => ['QTCPCONTADOR']],
     'est005' => ['tabela_mysql' => 'armazem_est005', 'chaves' => ['COMPRACONTADOR']],
     'est006' => ['tabela_mysql' => 'armazem_est006', 'chaves' => ['ITEMCOMPRACONTADOR', 'COMPRACONTA']],
 ];
@@ -586,6 +640,8 @@ if (isset($configTabelasGenericas[$tabela])) {
     if ($tabela === 'est006') {
         garantirChaveEst006($pdo_master);
     }
+
+    garantirChavesMultiEmpresaFirebird($pdo_master, $tabela);
 
     processarTabelaFirebirdGenerica(
         $pdo_master,
@@ -795,6 +851,7 @@ elseif ($tabela === 'cr001_ativos') {
     $inicio = $_GET['inicio'] ?? ($dados['inicio'] ?? null);
     $fim = $_GET['fim'] ?? ($dados['fim'] ?? null);
     $registros = $dados['registros'] ?? $dados['ativos'] ?? $dados;
+    $empresaSync = isset($_GET['empresa']) ? (int)$_GET['empresa'] : null;
 
     if (!$inicio || !$fim || !is_array($registros)) {
         echo json_encode([
@@ -833,6 +890,12 @@ elseif ($tabela === 'cr001_ativos') {
         }
     }
 
+    $filtroEmpresa = ($empresaSync !== null && $empresaSync > 0) ? " AND c.EMPRESA = ?" : "";
+    $paramsPeriodo = [$inicio, $fim];
+    $paramsPeriodoEmpresa = ($empresaSync !== null && $empresaSync > 0)
+        ? array_merge($paramsPeriodo, [$empresaSync])
+        : $paramsPeriodo;
+
     $stmtReativar = $pdo_master->prepare("
         UPDATE armazem_cr001 c
         INNER JOIN tmp_cr001_ativos_sync t
@@ -842,8 +905,9 @@ elseif ($tabela === 'cr001_ativos') {
             c.motivo_sync = NULL,
             c.ultima_presenca_firebird = NOW()
         WHERE c.DTLANC BETWEEN ? AND ?
+          $filtroEmpresa
     ");
-    $stmtReativar->execute([$inicio, $fim]);
+    $stmtReativar->execute($paramsPeriodoEmpresa);
     $reativados = $stmtReativar->rowCount();
 
     $stmtExcluir = $pdo_master->prepare("
@@ -856,8 +920,9 @@ elseif ($tabela === 'cr001_ativos') {
         WHERE c.DTLANC BETWEEN ? AND ?
           AND t.CRCONTADOR IS NULL
           AND COALESCE(c.excluido_firebird, 'N') <> 'S'
+          $filtroEmpresa
     ");
-    $stmtExcluir->execute([$inicio, $fim]);
+    $stmtExcluir->execute($paramsPeriodoEmpresa);
     $marcadosExcluidos = $stmtExcluir->rowCount();
 
     $pdo_master->commit();
@@ -979,6 +1044,8 @@ elseif ($tabela === 'zconfig005') {
    EST004 - PRODUTOS
 ===================================================== */
 elseif ($tabela === 'est004') {
+    garantirChavesMultiEmpresaFirebird($pdo_master, 'est004');
+
 
     $sql = "
         INSERT INTO armazem_est004 (
@@ -1100,6 +1167,8 @@ elseif ($tabela === 'est004') {
    EST007
 ===================================================== */
 elseif ($tabela === 'est007') {
+    garantirChavesMultiEmpresaFirebird($pdo_master, 'est007');
+
 
     $sql = "
         INSERT INTO armazem_est007 (

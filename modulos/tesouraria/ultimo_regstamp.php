@@ -10,6 +10,7 @@ header('Content-Type: application/json');
    PARÂMETRO
 ========================= */
 $tabela = $_GET['tabela'] ?? '';
+$empresa = isset($_GET['empresa']) ? (int)$_GET['empresa'] : null;
 
 /* =========================
    SEGURANÇA
@@ -50,8 +51,28 @@ $nome_tabela = "armazem_" . $tabela;
 ========================= */
 try {
 
-    $sql = "SELECT MAX(REGSTAMP) AS ultima_regstamp FROM $nome_tabela";
-    $stmt = $pdo_master->query($sql);
+    $params = [];
+    $where = '';
+
+    if ($empresa !== null && $empresa > 0) {
+        $stmtColunaEmpresa = $pdo_master->prepare("
+            SELECT COUNT(*)
+            FROM information_schema.COLUMNS
+            WHERE TABLE_SCHEMA = DATABASE()
+              AND TABLE_NAME = ?
+              AND COLUMN_NAME = 'EMPRESA'
+        ");
+        $stmtColunaEmpresa->execute([$nome_tabela]);
+
+        if ((int)$stmtColunaEmpresa->fetchColumn() > 0) {
+            $where = " WHERE EMPRESA = ?";
+            $params[] = $empresa;
+        }
+    }
+
+    $sql = "SELECT MAX(REGSTAMP) AS ultima_regstamp FROM $nome_tabela$where";
+    $stmt = $pdo_master->prepare($sql);
+    $stmt->execute($params);
 
     $row = $stmt->fetch(PDO::FETCH_ASSOC);
 
