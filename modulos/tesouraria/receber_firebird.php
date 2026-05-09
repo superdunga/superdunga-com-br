@@ -112,10 +112,28 @@ function normalizarColunasChave($colunasChave): array
     return is_array($colunasChave) ? array_values($colunasChave) : [$colunasChave];
 }
 
+function normalizarValorChaveAtivo($valor): string
+{
+    if (is_int($valor)) {
+        return (string)$valor;
+    }
+
+    if (is_float($valor) && floor($valor) == $valor) {
+        return (string)(int)$valor;
+    }
+
+    $texto = trim((string)$valor);
+    if (preg_match('/^-?\d+\.0+$/', $texto)) {
+        return (string)(int)$texto;
+    }
+
+    return $texto;
+}
+
 function montarChaveAtivo($item, array $colunasChave): ?string
 {
     if (!is_array($item) && count($colunasChave) === 1) {
-        return ($item !== null && $item !== '') ? (string)$item : null;
+        return ($item !== null && $item !== '') ? normalizarValorChaveAtivo($item) : null;
     }
 
     if (!is_array($item)) {
@@ -127,7 +145,7 @@ function montarChaveAtivo($item, array $colunasChave): ?string
         if (!array_key_exists($coluna, $item) || $item[$coluna] === null || $item[$coluna] === '') {
             return null;
         }
-        $partes[] = (string)$item[$coluna];
+        $partes[] = normalizarValorChaveAtivo($item[$coluna]);
     }
 
     return implode("\x1F", $partes);
