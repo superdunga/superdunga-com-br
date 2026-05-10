@@ -1,12 +1,21 @@
 <?php
 require '../../config/auth.php';
 require '../../config/conexao.php';
+require_once '../../config/importacao_recebimentos.php';
 require '../../layout/header.php';
 
 ini_set('display_errors', 1);
 error_reporting(E_ALL);
 
 $empresa_id = (int)$_SESSION['empresa_id'];
+$fallback = regrasImportacaoFallbackArmazem()[0];
+$regraImportacao = buscarRegraImportacao($pdo_master, $empresa_id, 'sipag_pos', $fallback);
+
+if (!$regraImportacao) {
+    echo "<div class='alert alert-warning'>Nenhuma regra de importacao SIPAG POS cadastrada para esta empresa.</div>";
+    require '../../layout/footer.php';
+    exit;
+}
 
 // =========================
 // FUNÇÃO
@@ -43,7 +52,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['arquivo'])) {
                 $linha++;
 
                 if ($linha == 2) {
-                    if (!isset($dados[1]) || trim($dados[1]) !== 'CB-111737460001') {
+                    if (!isset($dados[1]) || trim($dados[1]) !== (string)$regraImportacao['estabelecimento']) {
                         fclose($handle);
                         echo "<div class='alert alert-danger'>
                                 Arquivo inválido – estabelecimento não corresponde ao Sipag Comercial.
@@ -76,9 +85,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['arquivo'])) {
                 if (stripos($status, 'Processada') === false) continue;
 
                 if (stripos($forma_pagamento, 'bito') !== false) {
-                    $CMCONTADOR = 3;
+                    $CMCONTADOR = (int)$regraImportacao['cm_debito'];
                 } else {
-                    $CMCONTADOR = 2;
+                    $CMCONTADOR = (int)$regraImportacao['cm_credito'];
                 }
 
                 $valor_bruto    = tratarValor($valor_bruto);
@@ -121,7 +130,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['arquivo'])) {
                         numero_estabelecimento
                     ) VALUES (
                         ?,
-                        'SIPAG_POS_COMERCIAL',
+                        ?,
                         ?, ?, ?, ?, ?,
                         ?, ?, 'SIPAG',
                         ?, ?, ?,
@@ -132,6 +141,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['arquivo'])) {
 
                 $stmt->execute([
                     $empresa_id,
+                    $regraImportacao['origem'],
                     $data_venda,
                     $data_prev,
                     $valor_bruto,
@@ -167,7 +177,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['arquivo'])) {
 <div class="card shadow-sm">
 
     <div class="card-header d-flex justify-content-between align-items-center">
-        <h5>Importar SIPAG POS Comercial</h5>
+        <h5>Importar <?= htmlspecialchars($regraImportacao['nome']) ?></h5>
 
         <a href="importar_recebimentos.php" class="btn btn-secondary btn-sm">
             ← Voltar
@@ -177,6 +187,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['arquivo'])) {
     <div class="card-body">
 
         <form method="POST" enctype="multipart/form-data">
+            <?php if ((int)($regraImportacao['id'] ?? 0) > 0): ?>
+                <input type="hidden" name="regra_id" value="<?= (int)$regraImportacao['id'] ?>">
+            <?php endif; ?>
             <div class="mb-3">
                 <label class="form-label">Selecione o arquivo CSV</label>
                 <input type="file" name="arquivo" class="form-control" required>

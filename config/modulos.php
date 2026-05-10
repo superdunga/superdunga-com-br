@@ -18,7 +18,7 @@ function sistemaModulosPadrao(): array
 
         ['codigo' => 'fechamento_caixa', 'grupo' => 'Fechamento', 'nome' => 'Fechamento de Caixa', 'url' => 'modulos/fechamentodecaixa/fechamento_caixa.php', 'ordem' => 110],
         ['codigo' => 'fechamento_dinheiro', 'grupo' => 'Fechamento', 'nome' => 'Conciliacao de Dinheiro', 'url' => 'modulos/fechamentodecaixa/conciliacao_dinheiro.php', 'ordem' => 120],
-        ['codigo' => 'fechamento_importar_recebimentos', 'grupo' => 'Fechamento', 'nome' => 'Importar Recebimentos', 'url' => 'modulos/fechamentodecaixa/importar_recebimentos.php', 'ordem' => 130],
+        ['codigo' => 'fechamento_importar_recebimentos', 'grupo' => 'Fechamento', 'nome' => 'Recebimentos', 'url' => 'modulos/fechamentodecaixa/menu_recebimentos.php', 'ordem' => 130],
         ['codigo' => 'fechamento_resumo_prazo', 'grupo' => 'Fechamento', 'nome' => 'Resumo Vendas a Prazo', 'url' => 'modulos/fechamentodecaixa/resumo_prazo.php', 'ordem' => 140],
 
         ['codigo' => 'auditoria_compras', 'grupo' => 'Auditoria', 'nome' => 'Compras', 'url' => 'modulos/auditoria/listar.php', 'ordem' => 210],

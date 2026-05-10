@@ -8,36 +8,28 @@ $empresaId = (int)($_SESSION['empresa_id'] ?? 0);
 
 $opcoes = [
     [
-        'titulo' => 'Fechamento de Caixa',
-        'descricao' => 'Lance e confira fechamentos diarios de caixa.',
-        'href' => 'fechamento_caixa.php',
-        'modulo' => 'fechamento_caixa',
-        'icone' => 'FC',
-        'botao' => 'btn-primary',
-    ],
-    [
-        'titulo' => 'Conciliacao de Dinheiro',
-        'descricao' => 'Concilie valores em dinheiro e acompanhe divergencias.',
-        'href' => 'conciliacao_dinheiro.php',
-        'modulo' => 'fechamento_dinheiro',
-        'icone' => '$',
-        'botao' => 'btn-success',
-    ],
-    [
-        'titulo' => 'Recebimentos',
-        'descricao' => 'Importe arquivos, concilie recebiveis e valide clientes.',
-        'href' => 'menu_recebimentos.php',
+        'titulo' => 'Importar Arquivos',
+        'descricao' => 'Upload e validacao dos arquivos de operadoras e extratos.',
+        'href' => 'importar_recebimentos.php',
         'modulo' => 'fechamento_importar_recebimentos',
-        'icone' => 'RC',
+        'icone' => 'UP',
         'botao' => 'btn-warning',
     ],
     [
-        'titulo' => 'Resumo Vendas a Prazo',
-        'descricao' => 'Visualize o resumo consolidado das vendas a prazo.',
-        'href' => 'resumo_prazo.php',
-        'modulo' => 'fechamento_resumo_prazo',
-        'icone' => 'RP',
-        'botao' => 'btn-info',
+        'titulo' => 'Conciliar Recebimentos',
+        'descricao' => 'Concilie recebiveis importados com os lancamentos do CR001.',
+        'href' => 'conciliar_recebimentos.php',
+        'modulo' => 'fechamento_importar_recebimentos',
+        'icone' => 'CR',
+        'botao' => 'btn-dark',
+    ],
+    [
+        'titulo' => 'Validar Clientes',
+        'descricao' => 'Confira clientes e CM antes de finalizar a rotina de recebimentos.',
+        'href' => 'validar_cm.php',
+        'modulo' => 'fechamento_importar_recebimentos',
+        'icone' => 'VC',
+        'botao' => 'btn-primary',
     ],
 ];
 
@@ -48,12 +40,12 @@ $opcoes = filtrarOpcoesPorModulo($pdo_master, $empresaId, $opcoes);
     <div class="p-4 p-lg-5 bg-white border rounded-2 shadow-sm">
         <div class="row align-items-center g-3">
             <div class="col-lg-8">
-                <span class="badge text-bg-warning mb-3">Modulo</span>
-                <h1 class="h3 fw-bold mb-2">Fechamento e Conciliacao de Caixa</h1>
-                <p class="text-muted mb-0">Central de fechamento, importacao e conferencia das rotinas de caixa.</p>
+                <span class="badge text-bg-warning mb-3">Recebimentos</span>
+                <h1 class="h3 fw-bold mb-2">Recebimentos</h1>
+                <p class="text-muted mb-0">Central de importacao, conciliacao e validacao dos recebiveis.</p>
             </div>
             <div class="col-lg-4 text-lg-end">
-                <a href="../../index.php" class="btn btn-outline-secondary">Voltar ao painel</a>
+                <a href="menu_fechamento.php" class="btn btn-outline-secondary">Voltar ao fechamento</a>
             </div>
         </div>
     </div>
@@ -62,7 +54,7 @@ $opcoes = filtrarOpcoesPorModulo($pdo_master, $empresaId, $opcoes);
 <section>
     <div class="row g-3">
         <?php foreach ($opcoes as $opcao): ?>
-            <div class="col-md-6 col-xl-3">
+            <div class="col-md-6 col-xl-4">
                 <div class="card module-card h-100 shadow-sm">
                     <div class="card-body d-flex flex-column">
                         <div class="d-flex align-items-start gap-3 mb-3">
@@ -79,7 +71,7 @@ $opcoes = filtrarOpcoesPorModulo($pdo_master, $empresaId, $opcoes);
         <?php endforeach; ?>
         <?php if (empty($opcoes)): ?>
             <div class="col-12">
-                <div class="alert alert-info mb-0">Nenhum modulo de fechamento liberado para esta empresa.</div>
+                <div class="alert alert-info mb-0">Nenhuma rotina de recebimentos liberada para este usuario.</div>
             </div>
         <?php endif; ?>
     </div>

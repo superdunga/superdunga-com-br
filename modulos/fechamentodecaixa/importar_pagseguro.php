@@ -1,12 +1,21 @@
 <?php
 require '../../config/auth.php';
 require '../../config/conexao.php';
+require_once '../../config/importacao_recebimentos.php';
 require '../../layout/header.php';
 
 ini_set('display_errors', 1);
 error_reporting(E_ALL);
 
 $empresa_id = (int)$_SESSION['empresa_id'];
+$fallback = regrasImportacaoFallbackArmazem()[4];
+$regraImportacao = buscarRegraImportacao($pdo_master, $empresa_id, 'pagseguro_pix', $fallback);
+
+if (!$regraImportacao) {
+    echo "<div class='alert alert-warning'>Nenhuma regra de importacao PagSeguro PIX cadastrada para esta empresa.</div>";
+    require '../../layout/footer.php';
+    exit;
+}
 
 // =========================
 // FUNÇÃO
@@ -103,7 +112,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['arquivo'])) {
 
                 $stmt->execute([
                     $empresa_id,
-                    'PAGSEGURO_PIX',     // origem
+                    $regraImportacao['origem'], // origem
                     $data_formatada,     // data_venda
                     $valor_float,        // valor_bruto
                     0,                   // valor_desconto
@@ -115,7 +124,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['arquivo'])) {
                     1,                   // total_parcelas
                     'LIQUIDADA',         // status
                     $nomeArquivo,        // arquivo_origem
-                    7,                   // CMCONTADOR
+                    (int)$regraImportacao['cm_pix'], // CMCONTADOR
                     'P',                 // tipo_operacao
                     $codigo,             // nsu_transacao
                     ''                   // numero_estabelecimento
@@ -136,12 +145,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['arquivo'])) {
 
 <div class="card shadow-sm">
     <div class="card-header d-flex justify-content-between align-items-center">
-        <h5>Importar PAGSEGURO PIX</h5>
+        <h5>Importar <?= htmlspecialchars($regraImportacao['nome']) ?></h5>
         <a href="importar_recebimentos.php" class="btn btn-secondary btn-sm">← Voltar</a>
     </div>
 
     <div class="card-body">
         <form method="POST" enctype="multipart/form-data">
+            <?php if ((int)($regraImportacao['id'] ?? 0) > 0): ?>
+                <input type="hidden" name="regra_id" value="<?= (int)$regraImportacao['id'] ?>">
+            <?php endif; ?>
             <div class="mb-3">
                 <label class="form-label">Selecione o arquivo CSV</label>
                 <input type="file" name="arquivo" class="form-control" required>
