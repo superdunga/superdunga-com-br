@@ -20,6 +20,7 @@ $modoLeveAuto = !empty($_GET['auto'])
 
 $conciliados = [];
 $matchSeguro = [];
+$matchMovimento = [];
 $matchAproximado = [];
 $matchDuplicado = [];
 $recebimentos = [];
@@ -122,6 +123,82 @@ if (!$modoLeveAuto) {
 ");
     $stmtSeguro->execute([$inicio, $fim, $inicio, $fim]);
     $matchSeguro = $stmtSeguro->fetchAll(PDO::FETCH_ASSOC);
+}
+
+/* =========================================================
+   MATCH POR DATA DO MOVIMENTO - VALOR + CM + DTEMISSAO
+========================================================= */
+if (!$modoLeveAuto) {
+    $stmtMovimento = $pdo_master->prepare("
+    WITH rec AS (
+        SELECT
+            r.id,
+            r.data_venda,
+            r.valor_bruto,
+            r.CMCONTADOR,
+            DATE(r.data_venda) AS data_ref,
+            ROW_NUMBER() OVER (
+                PARTITION BY DATE(r.data_venda), r.valor_bruto, r.CMCONTADOR
+                ORDER BY r.id
+            ) AS rn,
+            COUNT(*) OVER (
+                PARTITION BY DATE(r.data_venda), r.valor_bruto, r.CMCONTADOR
+            ) AS qtd_rec
+        FROM armazem_conciliacao_recebimentos r
+        WHERE r.data_venda BETWEEN ? AND ?
+          AND r.empresa_id = $empresa_id
+          AND NOT EXISTS (
+              SELECT 1
+              FROM armazem_cr001 cx
+              WHERE cx.recebimento_id = r.id
+                AND cx.EMPRESA = $empresa_id
+                AND COALESCE(cx.excluido_firebird, 'N') = 'N'
+          )
+    ),
+    cr AS (
+        SELECT
+            c.CRCONTADOR,
+            c.DTLANC,
+            c.DTEMISSAO,
+            c.VLRPARCELA,
+            c.CMCONTADOR,
+            DATE(c.DTEMISSAO) AS data_ref,
+            ROW_NUMBER() OVER (
+                PARTITION BY DATE(c.DTEMISSAO), c.VLRPARCELA, c.CMCONTADOR
+                ORDER BY c.DTLANC ASC, c.CRCONTADOR ASC
+            ) AS rn,
+            COUNT(*) OVER (
+                PARTITION BY DATE(c.DTEMISSAO), c.VLRPARCELA, c.CMCONTADOR
+            ) AS qtd_cr
+        FROM armazem_cr001 c
+        WHERE c.EMPRESA = $empresa_id
+          AND c.recebimento_id IS NULL
+          AND c.CMCONTADOR <> 9
+          AND (c.validado IS NULL OR c.validado <> 'S')
+          AND COALESCE(c.excluido_firebird, 'N') = 'N'
+          AND NOT (c.CMCONTADOR = 1 AND c.STATUS = 'QT')
+    )
+    SELECT
+        r.id AS rec_id,
+        r.data_venda,
+        r.valor_bruto,
+        r.CMCONTADOR AS CM_REC,
+        c.CRCONTADOR,
+        c.DTLANC,
+        c.DTEMISSAO,
+        c.VLRPARCELA,
+        c.CMCONTADOR AS CM_CR
+    FROM rec r
+    INNER JOIN cr c
+        ON ABS(r.valor_bruto) = ABS(c.VLRPARCELA)
+       AND r.CMCONTADOR = c.CMCONTADOR
+       AND r.data_ref = c.data_ref
+       AND r.rn = c.rn
+    WHERE r.qtd_rec = c.qtd_cr
+    ORDER BY r.data_venda ASC, r.id ASC, c.CRCONTADOR ASC
+");
+    $stmtMovimento->execute([$inicio, $fim]);
+    $matchMovimento = $stmtMovimento->fetchAll(PDO::FETCH_ASSOC);
 }
 
 /* =========================================================
@@ -311,7 +388,7 @@ if (!$modoLeveAuto) {
                 if ($modoParam === 'aproximado') {
                     $modoAuto = 'aproximada';
                 } elseif ($modoParam === 'movimento') {
-                    $modoAuto = 'por movimento';
+                    $modoAuto = 'por data do movimento';
                 } else {
                     $modoAuto = 'segura';
                 }
@@ -323,6 +400,12 @@ if (!$modoLeveAuto) {
             <div class="alert alert-success mt-2 mb-0">
                 Conciliacao <?= $modoAuto ?> executada: <?= $qtdAuto ?> registro(s) atualizado(s) neste lote.
                 Total nesta execucao: <?= $totalAuto ?>.
+
+                <?php if ($modoParam === 'seguro' || $modoParam === 'movimento'): ?>
+                    <div class="small mt-1">
+                        Este modo processa todos os pendentes da empresa em lotes de <?= $loteAuto ?>, sem limitar pela data filtrada na tela.
+                    </div>
+                <?php endif; ?>
 
                 <?php if ($continuarAuto): ?>
                     <a
@@ -347,19 +430,22 @@ if (!$modoLeveAuto) {
 
             <div class="col-md-2">
                 <a href="conciliar_auto.php?modo=seguro&data=<?= urlencode($data) ?>&lote=50" class="btn btn-success w-100">
-                    Conciliar seguros
+                    Seguros
+                    <span class="d-block small fw-normal">valor + minuto igual</span>
                 </a>
             </div>
 
             <div class="col-md-2">
                 <a href="conciliar_auto.php?modo=movimento&data=<?= urlencode($data) ?>&lote=50" class="btn btn-info w-100">
-                    Conciliar por movimento
+                    Data do movimento
+                    <span class="d-block small fw-normal">valor + CM + DTEMISSAO</span>
                 </a>
             </div>
 
             <div class="col-md-2">
                 <a href="conciliar_auto.php?modo=aproximado&data=<?= urlencode($data) ?>" class="btn btn-warning w-100">
-                    Conciliar aproximados
+                    Aproximados
+                    <span class="d-block small fw-normal">data filtrada +/- 5 min</span>
                 </a>
             </div>
 
@@ -378,6 +464,13 @@ if (!$modoLeveAuto) {
         Ao finalizar o ultimo lote, a conciliacao completa do dia sera exibida novamente.
     </div>
 <?php else: ?>
+
+<div class="alert alert-light border">
+    <strong>Regras dos botoes:</strong>
+    <span class="d-block">Seguros: mesmo valor e mesmo minuto entre recebivel e CR001. Processa todos os pendentes da empresa.</span>
+    <span class="d-block">Data do movimento: mesmo valor, mesmo CM e data do recebivel igual a DTEMISSAO do CR001. Processa todos os pendentes da empresa.</span>
+    <span class="d-block">Aproximados: mesmo valor com ate 5 minutos de diferenca. Este respeita a data filtrada na tela.</span>
+</div>
 
 <!-- CONCILIADOS -->
 <div class="card shadow-sm mb-3">
@@ -426,7 +519,7 @@ if (!$modoLeveAuto) {
 
 <!-- MATCH SEGURO -->
 <div class="card shadow-sm mb-3">
-    <div class="card-header bg-info text-white">🟢 MATCH SEGURO (AUTO) - Valor + Minuto Igual</div>
+    <div class="card-header bg-success text-white">MATCH SEGURO - Valor + Minuto Igual</div>
     <div class="card-body p-2" style="max-height:300px; overflow:auto;">
         <table class="table table-sm table-bordered text-center mb-0">
             <thead>
@@ -469,9 +562,56 @@ if (!$modoLeveAuto) {
     </div>
 </div>
 
+<!-- MATCH POR DATA DO MOVIMENTO -->
+<div class="card shadow-sm mb-3">
+    <div class="card-header bg-info text-white">MATCH POR DATA DO MOVIMENTO - Valor + CM + DTEMISSAO</div>
+    <div class="card-body p-2" style="max-height:300px; overflow:auto;">
+        <table class="table table-sm table-bordered text-center mb-0">
+            <thead>
+                <tr class="table-light">
+                    <th colspan="4">Recebivel</th>
+                    <th colspan="5">CR001</th>
+                </tr>
+                <tr>
+                    <th>ID</th>
+                    <th>Data</th>
+                    <th>Valor</th>
+                    <th>CM</th>
+                    <th>ID</th>
+                    <th>Data Lanc.</th>
+                    <th>Data Mov.</th>
+                    <th>Valor</th>
+                    <th>CM</th>
+                </tr>
+            </thead>
+            <tbody>
+                <?php if (empty($matchMovimento)): ?>
+                    <tr>
+                        <td colspan="9" class="text-center text-muted">Nenhum match por data do movimento nesta data.</td>
+                    </tr>
+                <?php else: ?>
+                    <?php foreach ($matchMovimento as $m): ?>
+                        <tr>
+                            <td><?= $m['rec_id'] ?></td>
+                            <td><?= !empty($m['data_venda']) ? date('d/m/Y H:i', strtotime($m['data_venda'])) : '-' ?></td>
+                            <td>R$ <?= number_format((float)$m['valor_bruto'], 2, ',', '.') ?></td>
+                            <td><?= $m['CM_REC'] ?></td>
+                            <td><?= $m['CRCONTADOR'] ?></td>
+                            <td><?= !empty($m['DTLANC']) ? date('d/m/Y H:i', strtotime($m['DTLANC'])) : '-' ?></td>
+                            <td><?= !empty($m['DTEMISSAO']) ? date('d/m/Y', strtotime($m['DTEMISSAO'])) : '-' ?></td>
+                            <td>R$ <?= number_format((float)$m['VLRPARCELA'], 2, ',', '.') ?></td>
+                            <td><?= $m['CM_CR'] ?></td>
+                        </tr>
+                    <?php endforeach; ?>
+                <?php endif; ?>
+            </tbody>
+        </table>
+    </div>
+</div>
+
 <!-- MATCH APROXIMADO -->
 <div class="card shadow-sm mb-3">
-    <div class="card-header text-white" style="background-color:#6f42c1;">MATCH APROXIMADO (+/- 5 MINUTOS)</div>
+    <div class="card-header bg-warning">MATCH APROXIMADO (+/- 5 MINUTOS)</div>
     <div class="card-body p-2" style="max-height:300px; overflow:auto;">
         <table class="table table-sm table-bordered text-center mb-0">
             <thead>
