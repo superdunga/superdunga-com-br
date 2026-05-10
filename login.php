@@ -14,14 +14,14 @@ $empresas = $pdo_master
 
 $empresa_id = (int)($_POST['empresa_id'] ?? 0);
 $login = trim($_POST['login'] ?? '');
+$mostrarSelecaoEmpresa = ($_POST['precisa_empresa'] ?? '') === '1';
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     $senha = $_POST['senha'] ?? '';
 
-    if ($empresa_id > 0 && $login !== '' && $senha !== '') {
+    if ($login !== '' && $senha !== '') {
 
-        // Alteracao: remove filtro por empresa
         $stmt = $pdo_master->prepare("
             SELECT * FROM usuarios
             WHERE login = ?
@@ -34,10 +34,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
         if ($usuario && password_verify($senha, $usuario['senha'])) {
 
-            // Valida empresa para usuarios nao MASTER
-            if ($usuario['nivel'] !== 'MASTER' && $usuario['empresa_id'] != $empresa_id) {
+            if ($usuario['nivel'] === 'MASTER' && $empresa_id <= 0) {
 
-                $erro = "Usuario nao pertence a esta empresa.";
+                $mostrarSelecaoEmpresa = true;
+                $erro = "Selecione a empresa para acessar como MASTER.";
 
             } else {
 
@@ -47,7 +47,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $_SESSION['nivel']        = $usuario['nivel'];
                 unset($_SESSION['operador_pendencias_liberado_data']);
 
-                // MASTER usa empresa selecionada
                 if ($usuario['nivel'] === 'MASTER') {
                     $_SESSION['empresa_id'] = $empresa_id;
                 } else {
@@ -78,11 +77,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
 
         } else {
-            $erro = "Empresa, login ou senha invalidos.";
+            $erro = "Login ou senha invalidos.";
         }
 
     } else {
-        $erro = "Preencha empresa, login e senha.";
+        $erro = "Preencha login e senha.";
     }
 }
 ?>
@@ -237,7 +236,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     <div class="mb-4">
                         <span class="badge text-bg-warning mb-3">Acesso restrito</span>
                         <h2 class="h4 fw-bold mb-1">Entrar no sistema</h2>
-                        <p class="text-muted mb-0">Informe empresa, login e senha.</p>
+                        <p class="text-muted mb-0">Informe login e senha para continuar.</p>
                     </div>
 
                     <?php if (!empty($erro)): ?>
@@ -245,17 +244,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     <?php endif; ?>
 
                     <form method="POST" class="needs-validation" novalidate>
-                        <div class="mb-3">
-                            <label for="empresa_id" class="form-label">Empresa</label>
-                            <select id="empresa_id" name="empresa_id" class="form-select" required>
-                                <option value="">Selecione a empresa</option>
-                                <?php foreach ($empresas as $e): ?>
-                                    <option value="<?= $e['id'] ?>" <?= $empresa_id === (int)$e['id'] ? 'selected' : '' ?>>
-                                        <?= htmlspecialchars($e['nome_fantasia']) ?>
-                                    </option>
-                                <?php endforeach; ?>
-                            </select>
-                        </div>
+                        <?php if ($mostrarSelecaoEmpresa): ?>
+                            <input type="hidden" name="precisa_empresa" value="1">
+                            <div class="mb-3">
+                                <label for="empresa_id" class="form-label">Empresa</label>
+                                <select id="empresa_id" name="empresa_id" class="form-select" required>
+                                    <option value="">Selecione a empresa</option>
+                                    <?php foreach ($empresas as $e): ?>
+                                        <option value="<?= $e['id'] ?>" <?= $empresa_id === (int)$e['id'] ? 'selected' : '' ?>>
+                                            <?= htmlspecialchars($e['nome_fantasia']) ?>
+                                        </option>
+                                    <?php endforeach; ?>
+                                </select>
+                                <div class="form-text">Necessario apenas para acesso MASTER.</div>
+                            </div>
+                        <?php endif; ?>
 
                         <div class="mb-3">
                             <label for="login" class="form-label">Login</label>

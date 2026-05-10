@@ -1,5 +1,11 @@
 <?php
 
+if (defined('SISTEMA_MODULOS_CONFIG_CARREGADO')) {
+    return;
+}
+
+define('SISTEMA_MODULOS_CONFIG_CARREGADO', true);
+
 function sistemaModulosPadrao(): array
 {
     return [
@@ -20,6 +26,8 @@ function sistemaModulosPadrao(): array
 
         ['codigo' => 'whatsapp', 'grupo' => 'Administracao', 'nome' => 'Mensagens WhatsApp', 'url' => 'modulos/whatsapp/index.php', 'ordem' => 310],
         ['codigo' => 'usuarios', 'grupo' => 'Administracao', 'nome' => 'Gerenciar Usuarios', 'url' => 'modulos/usuarios/listar.php', 'ordem' => 320],
+        ['codigo' => 'usuarios_permissoes', 'grupo' => 'Administracao', 'nome' => 'Permissoes por Perfil', 'url' => 'modulos/usuarios/permissoes.php', 'ordem' => 325],
+        ['codigo' => 'usuarios_permissoes_usuario', 'grupo' => 'Administracao', 'nome' => 'Permissoes por Usuario', 'url' => 'modulos/usuarios/permissoes_usuario.php', 'ordem' => 326],
         ['codigo' => 'empresas', 'grupo' => 'Administracao', 'nome' => 'Gerenciar Empresas', 'url' => 'modulos/empresas/listar.php', 'ordem' => 330],
         ['codigo' => 'empresas_modulos', 'grupo' => 'Administracao', 'nome' => 'Modulos da Empresa', 'url' => 'modulos/empresas/modulos.php', 'ordem' => 340],
     ];
@@ -59,6 +67,38 @@ function garantirTabelasModulos(PDO $pdo): void
             UNIQUE KEY uniq_empresa_modulo (empresa_id, modulo_id),
             INDEX idx_empresa_modulos_empresa (empresa_id),
             CONSTRAINT fk_empresa_modulos_modulo
+                FOREIGN KEY (modulo_id) REFERENCES sistema_modulos(id)
+                ON DELETE CASCADE
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    ");
+
+    $pdo->exec("
+        CREATE TABLE IF NOT EXISTS perfil_modulos (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            perfil VARCHAR(30) NOT NULL,
+            modulo_id INT NOT NULL,
+            ativo CHAR(1) NOT NULL DEFAULT 'S',
+            atualizado_por INT NULL,
+            atualizado_em DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            UNIQUE KEY uniq_perfil_modulo (perfil, modulo_id),
+            INDEX idx_perfil_modulos_perfil (perfil),
+            CONSTRAINT fk_perfil_modulos_modulo
+                FOREIGN KEY (modulo_id) REFERENCES sistema_modulos(id)
+                ON DELETE CASCADE
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    ");
+
+    $pdo->exec("
+        CREATE TABLE IF NOT EXISTS usuario_modulos (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            usuario_id INT NOT NULL,
+            modulo_id INT NOT NULL,
+            ativo CHAR(1) NOT NULL DEFAULT 'S',
+            atualizado_por INT NULL,
+            atualizado_em DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            UNIQUE KEY uniq_usuario_modulo (usuario_id, modulo_id),
+            INDEX idx_usuario_modulos_usuario (usuario_id),
+            CONSTRAINT fk_usuario_modulos_modulo
                 FOREIGN KEY (modulo_id) REFERENCES sistema_modulos(id)
                 ON DELETE CASCADE
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
@@ -106,7 +146,7 @@ function moduloEmpresaPermitido(PDO $pdo, int $empresaId, string $codigo): bool
 {
     garantirTabelasModulos($pdo);
 
-    if (($_SESSION['nivel'] ?? '') === 'MASTER' && in_array($codigo, ['empresas', 'empresas_modulos'], true)) {
+    if (($_SESSION['nivel'] ?? '') === 'MASTER' && in_array($codigo, ['usuarios', 'usuarios_permissoes', 'usuarios_permissoes_usuario', 'empresas', 'empresas_modulos'], true)) {
         return true;
     }
 
@@ -129,6 +169,132 @@ function moduloEmpresaPermitido(PDO $pdo, int $empresaId, string $codigo): bool
     }
 
     return ($cachePermissoes[$empresaId][$codigo] ?? 'N') === 'S';
+}
+
+function perfisSistema(): array
+{
+    return ['MASTER', 'ADMIN', 'OPERADOR'];
+}
+
+function perfilTemConfiguracaoModulos(PDO $pdo, string $perfil): bool
+{
+    garantirTabelasModulos($pdo);
+
+    $perfil = strtoupper(trim($perfil));
+    if ($perfil === '' || $perfil === 'MASTER') {
+        return true;
+    }
+
+    static $cache = [];
+    if (array_key_exists($perfil, $cache)) {
+        return $cache[$perfil];
+    }
+
+    $stmt = $pdo->prepare("SELECT COUNT(*) FROM perfil_modulos WHERE perfil = ?");
+    $stmt->execute([$perfil]);
+    $cache[$perfil] = (int)$stmt->fetchColumn() > 0;
+
+    return $cache[$perfil];
+}
+
+function moduloPerfilPermitido(PDO $pdo, string $perfil, string $codigo): bool
+{
+    garantirTabelasModulos($pdo);
+
+    $perfil = strtoupper(trim($perfil));
+
+    if ($perfil === 'MASTER') {
+        return true;
+    }
+
+    if ($perfil === '') {
+        return false;
+    }
+
+    if (!perfilTemConfiguracaoModulos($pdo, $perfil)) {
+        return true;
+    }
+
+    static $cachePermissoes = [];
+    if (!isset($cachePermissoes[$perfil])) {
+        $stmtPermissoes = $pdo->prepare("
+            SELECT sm.codigo, pm.ativo
+            FROM sistema_modulos sm
+            INNER JOIN perfil_modulos pm
+                ON pm.modulo_id = sm.id
+            WHERE sm.ativo = 'S'
+              AND pm.perfil = ?
+        ");
+        $stmtPermissoes->execute([$perfil]);
+        $cachePermissoes[$perfil] = $stmtPermissoes->fetchAll(PDO::FETCH_KEY_PAIR);
+    }
+
+    return ($cachePermissoes[$perfil][$codigo] ?? 'N') === 'S';
+}
+
+function usuarioTemConfiguracaoModulos(PDO $pdo, int $usuarioId): bool
+{
+    garantirTabelasModulos($pdo);
+
+    if ($usuarioId <= 0) {
+        return false;
+    }
+
+    static $cache = [];
+    if (array_key_exists($usuarioId, $cache)) {
+        return $cache[$usuarioId];
+    }
+
+    $stmt = $pdo->prepare("SELECT COUNT(*) FROM usuario_modulos WHERE usuario_id = ?");
+    $stmt->execute([$usuarioId]);
+    $cache[$usuarioId] = (int)$stmt->fetchColumn() > 0;
+
+    return $cache[$usuarioId];
+}
+
+function moduloUsuarioPermitido(PDO $pdo, int $usuarioId, string $codigo): ?bool
+{
+    garantirTabelasModulos($pdo);
+
+    if ($usuarioId <= 0 || !usuarioTemConfiguracaoModulos($pdo, $usuarioId)) {
+        return null;
+    }
+
+    static $cachePermissoes = [];
+    if (!isset($cachePermissoes[$usuarioId])) {
+        $stmtPermissoes = $pdo->prepare("
+            SELECT sm.codigo, um.ativo
+            FROM sistema_modulos sm
+            INNER JOIN usuario_modulos um
+                ON um.modulo_id = sm.id
+            WHERE sm.ativo = 'S'
+              AND um.usuario_id = ?
+        ");
+        $stmtPermissoes->execute([$usuarioId]);
+        $cachePermissoes[$usuarioId] = $stmtPermissoes->fetchAll(PDO::FETCH_KEY_PAIR);
+    }
+
+    return ($cachePermissoes[$usuarioId][$codigo] ?? 'N') === 'S';
+}
+
+function moduloPermitido(PDO $pdo, int $empresaId, string $codigo, ?string $perfil = null): bool
+{
+    $perfil = $perfil ?? ($_SESSION['nivel'] ?? '');
+
+    if (!moduloEmpresaPermitido($pdo, $empresaId, $codigo)) {
+        return false;
+    }
+
+    if ($perfil === 'MASTER') {
+        return true;
+    }
+
+    $permissaoUsuario = moduloUsuarioPermitido($pdo, (int)($_SESSION['usuario_id'] ?? 0), $codigo);
+    if ($permissaoUsuario !== null) {
+        return $permissaoUsuario;
+    }
+
+    return moduloPerfilPermitido($pdo, $perfil, $codigo);
 }
 
 function empresaTemModuloDoGrupo(PDO $pdo, int $empresaId, string $grupo): bool
@@ -162,10 +328,33 @@ function empresaTemModuloDoGrupo(PDO $pdo, int $empresaId, string $grupo): bool
     return $cacheGrupos[$cacheKey];
 }
 
+function grupoPermitido(PDO $pdo, int $empresaId, string $grupo, ?string $perfil = null): bool
+{
+    garantirTabelasModulos($pdo);
+
+    $perfil = $perfil ?? ($_SESSION['nivel'] ?? '');
+
+    if ($perfil === 'MASTER') {
+        return empresaTemModuloDoGrupo($pdo, $empresaId, $grupo);
+    }
+
+    $modulosGrupo = array_filter(sistemaModulosPadrao(), function (array $modulo) use ($grupo): bool {
+        return ($modulo['grupo'] ?? '') === $grupo;
+    });
+
+    foreach ($modulosGrupo as $modulo) {
+        if (moduloPermitido($pdo, $empresaId, $modulo['codigo'], $perfil)) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
 function filtrarOpcoesPorModulo(PDO $pdo, int $empresaId, array $opcoes): array
 {
     return array_values(array_filter($opcoes, function (array $opcao) use ($pdo, $empresaId): bool {
         $codigo = $opcao['modulo'] ?? '';
-        return $codigo === '' || moduloEmpresaPermitido($pdo, $empresaId, $codigo);
+        return $codigo === '' || moduloPermitido($pdo, $empresaId, $codigo);
     }));
 }

@@ -1,7 +1,7 @@
 <?php
 require '../../config/auth.php';
 require '../../config/conexao.php';
-require '../../config/modulos.php';
+require_once '../../config/modulos.php';
 require '../../layout/header.php';
 
 $empresaId = (int)($_SESSION['empresa_id'] ?? 0);

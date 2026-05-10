@@ -1,6 +1,7 @@
 <?php
 require __DIR__ . '/../../config/conexao.php';
 require __DIR__ . '/../../config/auth.php';
+require_once __DIR__ . '/../../config/modulos.php';
 
 /* Somente ADMIN ou MASTER podem acessar */
 exigirNivel('ADMIN');
@@ -42,6 +43,15 @@ $usuarios = $stmt->fetchAll(PDO::FETCH_ASSOC);
             <a href="../../index.php" class="btn btn-secondary btn-sm">
                 ← Voltar ao Painel
             </a>
+
+            <?php if ($_SESSION['nivel'] === 'MASTER'): ?>
+                <a href="permissoes.php" class="btn btn-outline-primary btn-sm">
+                    Permissoes por Perfil
+                </a>
+                <a href="permissoes_usuario.php" class="btn btn-outline-primary btn-sm">
+                    Permissoes por Usuario
+                </a>
+            <?php endif; ?>
 
             <a href="cadastrar.php" class="btn btn-primary btn-sm">
                 Novo Usuário

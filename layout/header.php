@@ -3,6 +3,11 @@ if (session_status() === PHP_SESSION_NONE) {
     session_start();
 }
 
+$modulosConfigPath = __DIR__ . '/../config/modulos.php';
+if (file_exists($modulosConfigPath)) {
+    require_once $modulosConfigPath;
+}
+
 $scriptDir = str_replace('\\', '/', dirname($_SERVER['SCRIPT_NAME'] ?? ''));
 $modulosPos = strpos($scriptDir, '/modulos');
 $appBaseUrl = $modulosPos !== false ? substr($scriptDir, 0, $modulosPos) : $scriptDir;
@@ -18,6 +23,11 @@ $usuarioNome = $_SESSION['usuario_nome'] ?? 'Usuario';
 $nivelUsuario = $_SESSION['nivel'] ?? '';
 $empresaIdSessao = (int)($_SESSION['empresa_id'] ?? 0);
 $empresaNome = 'Empresa nao definida';
+$mostrarTesourariaTopbar = true;
+$mostrarFechamentoTopbar = true;
+$mostrarWhatsappTopbar = $nivelUsuario === 'MASTER';
+$mostrarUsuariosTopbar = $nivelUsuario === 'MASTER' || $nivelUsuario === 'ADMIN';
+$mostrarEmpresasTopbar = $nivelUsuario === 'MASTER';
 
 if (!empty($_SESSION['empresa_nome'])) {
     $empresaNome = (string)$_SESSION['empresa_nome'];
@@ -42,6 +52,14 @@ if (!empty($_SESSION['empresa_nome'])) {
     } catch (Throwable $e) {
         $empresaNome = 'Empresa ' . $empresaIdSessao;
     }
+}
+
+if (isset($pdo_master) && function_exists('grupoPermitido') && function_exists('moduloPermitido')) {
+    $mostrarTesourariaTopbar = grupoPermitido($pdo_master, $empresaIdSessao, 'Tesouraria', $nivelUsuario);
+    $mostrarFechamentoTopbar = grupoPermitido($pdo_master, $empresaIdSessao, 'Fechamento', $nivelUsuario);
+    $mostrarWhatsappTopbar = $nivelUsuario === 'MASTER' && moduloPermitido($pdo_master, $empresaIdSessao, 'whatsapp', $nivelUsuario);
+    $mostrarUsuariosTopbar = in_array($nivelUsuario, ['MASTER', 'ADMIN'], true) && moduloPermitido($pdo_master, $empresaIdSessao, 'usuarios', $nivelUsuario);
+    $mostrarEmpresasTopbar = $nivelUsuario === 'MASTER' && moduloPermitido($pdo_master, $empresaIdSessao, 'empresas', $nivelUsuario);
 }
 
 $homeUrlJson = htmlspecialchars(json_encode($homeUrl), ENT_QUOTES, 'UTF-8');
@@ -434,23 +452,27 @@ $homeUrlJson = htmlspecialchars(json_encode($homeUrl), ENT_QUOTES, 'UTF-8');
                 <li class="nav-item">
                     <a class="nav-link" href="<?= htmlspecialchars($homeUrl) ?>">Painel</a>
                 </li>
-                <li class="nav-item">
-                    <a class="nav-link" href="<?= htmlspecialchars($tesourariaUrl) ?>">Tesouraria</a>
-                </li>
-                <li class="nav-item">
-                    <a class="nav-link" href="<?= htmlspecialchars($fechamentoUrl) ?>">Fechamento</a>
-                </li>
-                <?php if ($nivelUsuario === 'MASTER'): ?>
+                <?php if ($mostrarTesourariaTopbar): ?>
+                    <li class="nav-item">
+                        <a class="nav-link" href="<?= htmlspecialchars($tesourariaUrl) ?>">Tesouraria</a>
+                    </li>
+                <?php endif; ?>
+                <?php if ($mostrarFechamentoTopbar): ?>
+                    <li class="nav-item">
+                        <a class="nav-link" href="<?= htmlspecialchars($fechamentoUrl) ?>">Fechamento</a>
+                    </li>
+                <?php endif; ?>
+                <?php if ($mostrarWhatsappTopbar): ?>
                     <li class="nav-item">
                         <a class="nav-link" href="<?= htmlspecialchars($whatsappUrl) ?>">WhatsApp</a>
                     </li>
                 <?php endif; ?>
-                <?php if ($nivelUsuario === 'MASTER' || $nivelUsuario === 'ADMIN'): ?>
+                <?php if ($mostrarUsuariosTopbar): ?>
                     <li class="nav-item">
                         <a class="nav-link" href="<?= htmlspecialchars($usuariosUrl) ?>">Usuarios</a>
                     </li>
                 <?php endif; ?>
-                <?php if ($nivelUsuario === 'MASTER'): ?>
+                <?php if ($mostrarEmpresasTopbar): ?>
                     <li class="nav-item">
                         <a class="nav-link" href="<?= htmlspecialchars($empresasUrl) ?>">Empresas</a>
                     </li>

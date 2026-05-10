@@ -56,6 +56,119 @@ function redirecionarPendenciasOperador(): void
 
 redirecionarPendenciasOperador();
 
+function caminhoAppAtual(): string
+{
+    $script = str_replace('\\', '/', $_SERVER['SCRIPT_NAME'] ?? '');
+    $base = appBaseUrl();
+
+    if ($base !== '' && strpos($script, $base . '/') === 0) {
+        $script = substr($script, strlen($base) + 1);
+    } else {
+        $script = ltrim($script, '/');
+    }
+
+    return trim($script, '/');
+}
+
+function renderizarAcessoNegadoModulo(string $mensagem = 'Seu usuario nao possui permissao para acessar esta rotina.'): void
+{
+    global $pdo_master;
+
+    http_response_code(403);
+
+    $base = appBaseUrl();
+    $painelUrl = ($base ?: '') . '/index.php';
+
+    if (!isset($pdo_master)) {
+        require_once __DIR__ . '/conexao.php';
+    }
+
+    require __DIR__ . '/../layout/header.php';
+    ?>
+    <div class="card shadow-sm">
+        <div class="card-body text-center py-5">
+            <h1 class="h4 fw-bold mb-2">Acesso negado</h1>
+            <p class="text-muted mb-4"><?= htmlspecialchars($mensagem) ?></p>
+            <a href="<?= htmlspecialchars($painelUrl) ?>" class="btn btn-primary">Voltar ao painel</a>
+        </div>
+    </div>
+    <?php
+    require __DIR__ . '/../layout/footer.php';
+    exit;
+}
+
+function validarPermissaoModuloAtual(): void
+{
+    global $pdo_master;
+
+    $caminho = caminhoAppAtual();
+    if ($caminho === '' || in_array($caminho, ['index.php', 'logout.php'], true)) {
+        return;
+    }
+
+    if (!isset($pdo_master)) {
+        require_once __DIR__ . '/conexao.php';
+    }
+    require_once __DIR__ . '/modulos.php';
+    garantirTabelasModulos($pdo_master);
+
+    $pdo = $pdo_master;
+    $empresaId = (int)($_SESSION['empresa_id'] ?? 0);
+    $perfil = $_SESSION['nivel'] ?? '';
+
+    $menusPorGrupo = [
+        'modulos/tesouraria/menu_tesouraria.php' => 'Tesouraria',
+        'modulos/fechamentodecaixa/menu_fechamento.php' => 'Fechamento',
+        'modulos/auditoria/menu_auditoria.php' => 'Auditoria',
+    ];
+
+    if (isset($menusPorGrupo[$caminho])) {
+        if (!grupoPermitido($pdo, $empresaId, $menusPorGrupo[$caminho], $perfil)) {
+            renderizarAcessoNegadoModulo();
+        }
+        return;
+    }
+
+    $aliases = [
+        'modulos/tesouraria/download.php' => 'tesouraria_extrato',
+        'modulos/tesouraria/editar_movimentacao.php' => 'tesouraria_extrato',
+        'modulos/tesouraria/inventario_resultado.php' => 'tesouraria_inventario',
+        'modulos/fechamentodecaixa/extrato_caixa.php' => 'fechamento_caixa',
+        'modulos/fechamentodecaixa/detalhar_fechamento.php' => 'fechamento_caixa',
+        'modulos/fechamentodecaixa/validar_cm.php' => 'fechamento_caixa',
+        'modulos/fechamentodecaixa/conciliar_recebimentos.php' => 'fechamento_importar_recebimentos',
+        'modulos/fechamentodecaixa/conciliar_manual.php' => 'fechamento_importar_recebimentos',
+        'modulos/fechamentodecaixa/conciliar_exec.php' => 'fechamento_importar_recebimentos',
+        'modulos/fechamentodecaixa/conciliar_auto.php' => 'fechamento_importar_recebimentos',
+        'modulos/fechamentodecaixa/diagnostico_divergencia.php' => 'fechamento_resumo_prazo',
+        'modulos/fechamentodecaixa/conciliacao_dinheiro_divergentes.php' => 'fechamento_dinheiro',
+    ];
+
+    $codigoModulo = $aliases[$caminho] ?? null;
+
+    if ($codigoModulo === null) {
+        $stmtModulo = $pdo->prepare("
+            SELECT codigo
+            FROM sistema_modulos
+            WHERE url = ?
+              AND ativo = 'S'
+            LIMIT 1
+        ");
+        $stmtModulo->execute([$caminho]);
+        $codigoModulo = $stmtModulo->fetchColumn() ?: null;
+    }
+
+    if ($codigoModulo === null) {
+        return;
+    }
+
+    if (!moduloPermitido($pdo, $empresaId, $codigoModulo, $perfil)) {
+        renderizarAcessoNegadoModulo();
+    }
+}
+
+validarPermissaoModuloAtual();
+
 /* Hierarquia oficial do sistema */
 function hierarquia() {
     return [
