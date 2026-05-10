@@ -165,6 +165,21 @@ function buscarRegraImportacao(PDO $pdo, int $empresaId, string $tipoEsperado, a
         return $regra ?: null;
     }
 
+    if ($empresaId !== 1) {
+        $stmt = $pdo->prepare("
+            SELECT *
+            FROM fechamento_importacao_regras
+            WHERE empresa_id = ?
+              AND tipo = ?
+              AND ativo = 'S'
+            ORDER BY ordem, id
+            LIMIT 1
+        ");
+        $stmt->execute([$empresaId, $tipoEsperado]);
+        $regra = $stmt->fetch(PDO::FETCH_ASSOC);
+        return $regra ?: null;
+    }
+
     return $empresaId === 1 ? $fallback : null;
 }
 
@@ -172,8 +187,8 @@ function descricaoRegraImportacao(array $regra): string
 {
     $tipo = $regra['tipo'] ?? '';
 
-    if ($tipo === 'sipag_pos') {
-        return 'Debito CM ' . (int)$regra['cm_debito'] . ' | Credito CM ' . (int)$regra['cm_credito'];
+    if (in_array($tipo, ['sipag_pos', 'granito_pos_comercial'], true)) {
+        return 'Debito CMCONTADOR ' . (int)$regra['cm_debito'] . ' | Credito CMCONTADOR ' . (int)$regra['cm_credito'];
     }
 
     return 'CMCONTADOR ' . (int)$regra['cm_pix'];
