@@ -13,11 +13,23 @@ $_SESSION['data_conciliacao'] = $data;
 
 $inicio = date('Y-m-d 07:00:00', strtotime($data));
 $fim    = date('Y-m-d 03:00:00', strtotime($data . ' +1 day'));
+$modoAutoParam = $_GET['modo'] ?? '';
+$modoLeveAuto = !empty($_GET['auto'])
+    && !empty($_GET['continuar'])
+    && in_array($modoAutoParam, ['seguro', 'movimento'], true);
+
+$conciliados = [];
+$matchSeguro = [];
+$matchAproximado = [];
+$matchDuplicado = [];
+$recebimentos = [];
+$cr001 = [];
 
 /* =========================================================
    CONCILIADOS
 ========================================================= */
-$stmtOk = $pdo_master->prepare("
+if (!$modoLeveAuto) {
+    $stmtOk = $pdo_master->prepare("
     SELECT
         r.id AS rec_id,
         r.data_venda,
@@ -36,13 +48,15 @@ $stmtOk = $pdo_master->prepare("
       AND COALESCE(c.excluido_firebird, 'N') = 'N'
     ORDER BY r.data_venda ASC, r.id ASC, c.CRCONTADOR ASC
 ");
-$stmtOk->execute([$inicio, $fim]);
-$conciliados = $stmtOk->fetchAll(PDO::FETCH_ASSOC);
+    $stmtOk->execute([$inicio, $fim]);
+    $conciliados = $stmtOk->fetchAll(PDO::FETCH_ASSOC);
+}
 
 /* =========================================================
    MATCH SEGURO - EXATO
 ========================================================= */
-$stmtSeguro = $pdo_master->prepare("
+if (!$modoLeveAuto) {
+    $stmtSeguro = $pdo_master->prepare("
     WITH rec AS (
         SELECT
             r.id,
@@ -106,13 +120,15 @@ $stmtSeguro = $pdo_master->prepare("
     WHERE r.qtd_rec = c.qtd_cr
     ORDER BY r.data_venda ASC, r.id ASC, c.CRCONTADOR ASC
 ");
-$stmtSeguro->execute([$inicio, $fim, $inicio, $fim]);
-$matchSeguro = $stmtSeguro->fetchAll(PDO::FETCH_ASSOC);
+    $stmtSeguro->execute([$inicio, $fim, $inicio, $fim]);
+    $matchSeguro = $stmtSeguro->fetchAll(PDO::FETCH_ASSOC);
+}
 
 /* =========================================================
    MATCH APROXIMADO - VALOR + TOLERANCIA DE 5 MINUTOS
 ========================================================= */
-$stmtAprox = $pdo_master->prepare("
+if (!$modoLeveAuto) {
+    $stmtAprox = $pdo_master->prepare("
     SELECT
         r.id AS rec_id,
         r.data_venda,
@@ -143,13 +159,15 @@ $stmtAprox = $pdo_master->prepare("
       )
     ORDER BY r.valor_bruto ASC, r.data_venda ASC, c.DTLANC ASC
 ");
-$stmtAprox->execute([$inicio, $fim, $inicio, $fim]);
-$matchAproximado = $stmtAprox->fetchAll(PDO::FETCH_ASSOC);
+    $stmtAprox->execute([$inicio, $fim, $inicio, $fim]);
+    $matchAproximado = $stmtAprox->fetchAll(PDO::FETCH_ASSOC);
+}
 
 /* =========================================================
    MATCH DUPLICADO - MANTIDO
 ========================================================= */
-$stmtDup = $pdo_master->prepare("
+if (!$modoLeveAuto) {
+    $stmtDup = $pdo_master->prepare("
     WITH rec AS (
         SELECT
             r.id,
@@ -204,13 +222,15 @@ $stmtDup = $pdo_master->prepare("
     WHERE r.qtd_rec <> c.qtd_cr
     ORDER BY r.valor_bruto ASC, r.data_venda ASC, r.id ASC, c.CRCONTADOR ASC
 ");
-$stmtDup->execute([$inicio, $fim, $inicio, $fim]);
-$matchDuplicado = $stmtDup->fetchAll(PDO::FETCH_ASSOC);
+    $stmtDup->execute([$inicio, $fim, $inicio, $fim]);
+    $matchDuplicado = $stmtDup->fetchAll(PDO::FETCH_ASSOC);
+}
 
 /* =========================================================
    RECEBÍVEIS NÃO CONCILIADOS
 ========================================================= */
-$stmtReceb = $pdo_master->prepare("
+if (!$modoLeveAuto) {
+    $stmtReceb = $pdo_master->prepare("
     SELECT
         r.id,
         r.data_venda,
@@ -239,13 +259,15 @@ $stmtReceb = $pdo_master->prepare("
       )
     ORDER BY r.data_venda ASC, r.id ASC
 ");
-$stmtReceb->execute([$inicio, $fim, $inicio, $fim]);
-$recebimentos = $stmtReceb->fetchAll(PDO::FETCH_ASSOC);
+    $stmtReceb->execute([$inicio, $fim, $inicio, $fim]);
+    $recebimentos = $stmtReceb->fetchAll(PDO::FETCH_ASSOC);
+}
 
 /* =========================================================
    CR001 NÃO CONCILIADOS
 ========================================================= */
-$stmtCr = $pdo_master->prepare("
+if (!$modoLeveAuto) {
+    $stmtCr = $pdo_master->prepare("
     SELECT
         c.CRCONTADOR,
         c.DTLANC,
@@ -274,8 +296,9 @@ $stmtCr = $pdo_master->prepare("
       )
     ORDER BY c.DTLANC ASC, c.CRCONTADOR ASC
 ");
-$stmtCr->execute([$inicio, $fim, $inicio, $fim]);
-$cr001 = $stmtCr->fetchAll(PDO::FETCH_ASSOC);
+    $stmtCr->execute([$inicio, $fim, $inicio, $fim]);
+    $cr001 = $stmtCr->fetchAll(PDO::FETCH_ASSOC);
+}
 ?>
 
 <div class="card shadow-sm mb-3">
@@ -348,6 +371,13 @@ $cr001 = $stmtCr->fetchAll(PDO::FETCH_ASSOC);
         </form>
     </div>
 </div>
+
+<?php if ($modoLeveAuto): ?>
+    <div class="alert alert-info">
+        Processamento em lote em andamento. As listas detalhadas foram ocultadas nesta etapa para a tela abrir mais rapido.
+        Ao finalizar o ultimo lote, a conciliacao completa do dia sera exibida novamente.
+    </div>
+<?php else: ?>
 
 <!-- CONCILIADOS -->
 <div class="card shadow-sm mb-3">
@@ -611,5 +641,7 @@ $cr001 = $stmtCr->fetchAll(PDO::FETCH_ASSOC);
         </div>
     </div>
 </div>
+
+<?php endif; ?>
 
 <?php require '../../layout/footer.php'; ?>
