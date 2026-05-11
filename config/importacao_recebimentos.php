@@ -35,6 +35,21 @@ function garantirTabelaRegrasImportacao(PDO $pdo): void
             INDEX idx_importacao_regras_tipo (tipo)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
     ");
+
+    $stmt = $pdo->prepare("
+        SELECT COUNT(*)
+        FROM information_schema.statistics
+        WHERE table_schema = DATABASE()
+          AND table_name = 'armazem_conciliacao_recebimentos'
+          AND index_name = 'ux_conc_rec_empresa_identificador'
+    ");
+    $stmt->execute();
+    if ((int)$stmt->fetchColumn() === 0) {
+        $pdo->exec("
+            ALTER TABLE armazem_conciliacao_recebimentos
+            ADD UNIQUE KEY ux_conc_rec_empresa_identificador (empresa_id, identificador)
+        ");
+    }
 }
 
 function regrasImportacaoFallbackArmazem(): array

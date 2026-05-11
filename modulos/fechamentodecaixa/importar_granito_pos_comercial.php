@@ -68,6 +68,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['arquivo'])) {
                 $ehDebito = stripos($tipo, 'debito') !== false || stripos($tipo, 'débito') !== false;
                 $cmcontador = $ehDebito ? (int)$regraImportacao['cm_debito'] : (int)$regraImportacao['cm_credito'];
                 $tipoOperacao = $ehDebito ? 'D' : 'C';
+                $origem = $regraImportacao['origem'];
                 $identificador = 'GRANITO_POS_' . $idGranito;
 
                 $check = $pdo_master->prepare("SELECT id FROM armazem_conciliacao_recebimentos WHERE empresa_id = ? AND identificador = ?");
@@ -86,7 +87,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['arquivo'])) {
                 ");
                 $stmt->execute([
                     $empresa_id,
-                    $regraImportacao['origem'],
+                    $origem,
                     $dataVenda,
                     $valor,
                     $valor,

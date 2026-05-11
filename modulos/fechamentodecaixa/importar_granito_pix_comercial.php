@@ -35,6 +35,29 @@ function granitoPixData($valor) {
     return $dt ? $dt->format('Y-m-d') : null;
 }
 
+function granitoPixNormalizarCabecalho($valor) {
+    $valor = strtolower(trim((string)$valor));
+    $mapa = [
+        'á' => 'a', 'à' => 'a', 'ã' => 'a', 'â' => 'a',
+        'é' => 'e', 'ê' => 'e',
+        'í' => 'i',
+        'ó' => 'o', 'ô' => 'o', 'õ' => 'o',
+        'ú' => 'u',
+        'ç' => 'c',
+    ];
+    return strtr($valor, $mapa);
+}
+
+function granitoPixCampo(array $dados, array $cabecalho, array $nomes): string {
+    foreach ($nomes as $nome) {
+        $indice = array_search($nome, $cabecalho, true);
+        if ($indice !== false && isset($dados[$indice])) {
+            return trim((string)$dados[$indice]);
+        }
+    }
+    return '';
+}
+
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['arquivo'])) {
     $arquivo = $_FILES['arquivo']['tmp_name'];
     $nomeArquivo = $_FILES['arquivo']['name'];
@@ -49,10 +72,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['arquivo'])) {
         } else {
             $linha = 0;
             $importados = 0;
+            $cabecalho = [];
 
             while (($dados = fgetcsv($handle, 0, ';')) !== false) {
                 $linha++;
-                if ($linha === 1) continue;
+                if ($linha === 1) {
+                    $cabecalho = array_map('granitoPixNormalizarCabecalho', $dados);
+                    continue;
+                }
                 if (count($dados) < 11) continue;
 
                 $idTransacao = trim($dados[0] ?? '');
@@ -66,12 +93,24 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['arquivo'])) {
                 $valorAntecipacao = granitoPixValor($dados[8] ?? 0);
                 $valorLiquido = granitoPixValor($dados[9] ?? 0);
                 $dataPagamento = granitoPixData($dados[10] ?? '');
+                $pagador = granitoPixCampo($dados, $cabecalho, [
+                    'cliente',
+                    'nome cliente',
+                    'nome do cliente',
+                    'pagador',
+                    'nome pagador',
+                    'nome do pagador',
+                    'comprador',
+                    'nome comprador',
+                    'nome do comprador',
+                ]);
 
                 if ($idTransacao === '' || $dataVenda === null || strcasecmp($tipo, 'Pagamento Instantâneo') !== 0 || strcasecmp($status, 'Pago') !== 0 || $valorBruto <= 0) {
                     continue;
                 }
 
                 [$parcela, $totalParcelas] = array_pad(array_map('intval', explode('/', $parcelaTexto)), 2, 1);
+                $origem = $regraImportacao['origem'];
                 $identificador = 'GRANITO_PIX_' . $idTransacao;
 
                 $check = $pdo_master->prepare("SELECT id FROM armazem_conciliacao_recebimentos WHERE empresa_id = ? AND identificador = ?");
@@ -85,13 +124,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['arquivo'])) {
                         pagador, parcela, total_parcelas, status, arquivo_origem, CMCONTADOR,
                         tipo_operacao, bandeira, nsu_transacao, numero_estabelecimento
                     ) VALUES (
-                        ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PIX - GRANITO', 'GRANITO PIX',
+                        ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PIX - GRANITO', ?,
                         ?, ?, ?, ?, ?, 'P', ?, ?, ''
                     )
                 ");
                 $stmt->execute([
                     $empresa_id,
-                    $regraImportacao['origem'],
+                    $origem,
                     $dataVenda,
                     $dataPagamento,
                     $dataPagamento,
@@ -99,6 +138,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['arquivo'])) {
                     $valorTaxa + $valorAntecipacao,
                     $valorLiquido,
                     $identificador,
+                    $pagador !== '' ? $pagador : 'GRANITO PIX',
                     $parcela ?: 1,
                     $totalParcelas ?: 1,
                     $status,
