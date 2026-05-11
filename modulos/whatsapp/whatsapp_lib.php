@@ -301,6 +301,24 @@ function whatsappGeradoresSistema(): array
             'arquivo' => 'modulos/whatsapp/whatsapp_lib.php',
             'funcao' => 'whatsappMensagemClientesVencidos',
         ],
+        'apresentacao_caixa' => [
+            'nome' => 'Apresentacao do Caixa',
+            'descricao' => 'Mostra a diferenca do dinheiro do primeiro operador do dia, das 07:00 ate 18:00.',
+            'arquivo' => 'modulos/whatsapp/whatsapp_lib.php',
+            'funcao' => 'whatsappMensagemApresentacaoCaixa',
+        ],
+        'apresentacao_caixa_1' => [
+            'nome' => 'Apresentacao do Caixa',
+            'descricao' => 'Mostra a diferenca do dinheiro do primeiro operador do dia, das 07:00 ate 18:00.',
+            'arquivo' => 'modulos/whatsapp/whatsapp_lib.php',
+            'funcao' => 'whatsappMensagemApresentacaoCaixa',
+        ],
+        'apresentacao_caixa_2' => [
+            'nome' => 'Apresentacao de Caixa',
+            'descricao' => 'Mostra a diferenca do dinheiro do segundo operador do dia, das 16:00 ate 03:00.',
+            'arquivo' => 'modulos/whatsapp/whatsapp_lib.php',
+            'funcao' => 'whatsappMensagemApresentacaoCaixa2',
+        ],
     ];
 }
 
@@ -552,6 +570,14 @@ function whatsappMensagemRotina(PDO $pdo, array $rotina): array
             return [whatsappMensagemClientesVencidos($pdo, null, $empresaId), null];
         }
 
+        if ($gerador === 'apresentacao_caixa' || $gerador === 'apresentacao_caixa_1') {
+            return [whatsappMensagemApresentacaoCaixa($pdo, null, $empresaId), null];
+        }
+
+        if ($gerador === 'apresentacao_caixa_2') {
+            return [whatsappMensagemApresentacaoCaixa2($pdo, null, $empresaId), null];
+        }
+
         throw new Exception('Gerador de mensagem do sistema nao encontrado.');
     }
 
@@ -781,7 +807,6 @@ function whatsappMensagemResumoDiario(PDO $pdo, int $empresaId = 1): string
           AND v.EMPRESA = ?
           AND v.CANCELADO = 'N'
           AND COALESCE(i.CANCELADO, 'N') = 'N'
-          AND COALESCE(i.excluido_firebird, 'N') = 'N'
         GROUP BY i.PRODUTO, descricao
         ORDER BY quantidade DESC
         LIMIT 10
@@ -805,7 +830,6 @@ function whatsappMensagemResumoDiario(PDO $pdo, int $empresaId = 1): string
           AND v.EMPRESA = ?
           AND v.CANCELADO = 'N'
           AND COALESCE(i.CANCELADO, 'N') = 'N'
-          AND COALESCE(i.excluido_firebird, 'N') = 'N'
         GROUP BY i.PRODUTO, descricao
         ORDER BY total DESC
         LIMIT 10
@@ -897,6 +921,124 @@ function whatsappMensagemAcompanhamentoVendas(PDO $pdo, ?DateTime $base = null, 
     $msg .= "R$ " . number_format($vendaMesAtual, 2, ',', '.') . "\n\n";
     $msg .= "Venda do mes anterior (" . (clone $base)->modify('first day of previous month')->format('m/Y') . "):\n";
     $msg .= "R$ " . number_format($vendaMesAnterior, 2, ',', '.');
+
+    return $msg;
+}
+
+function whatsappMensagemApresentacaoCaixa(PDO $pdo, ?DateTime $base = null, int $empresaId = 1): string
+{
+    date_default_timezone_set('America/Sao_Paulo');
+
+    $base = $base ?: new DateTime('now');
+    $data = $base->format('Y-m-d');
+    $inicio = $data . ' 07:00:00';
+    $fim = $data . ' 18:00:00';
+
+    $stmt = $pdo->prepare("
+        SELECT
+            b.CBCONTADOR,
+            COALESCE(NULLIF(z.NOMEUSER, ''), CONCAT('Caixa ', b.CBCONTADOR)) AS operador,
+            MIN(b.DTLANC) AS primeiro_movimento,
+            SUM(
+                CASE
+                    WHEN b.TIPOMOV = 'C' THEN b.VALORMOV
+                    WHEN b.TIPOMOV = 'D' THEN -b.VALORMOV
+                    ELSE 0
+                END
+            ) AS diferenca
+        FROM armazem_bnc001 b
+        INNER JOIN (
+            SELECT CODCX, MIN(NULLIF(NOMEUSER, '')) AS NOMEUSER
+            FROM armazem_zconfig005
+            WHERE CODCX IS NOT NULL
+              AND EMPRESA = ?
+              AND COALESCE(DESATIVADO, 'N') <> 'S'
+            GROUP BY CODCX
+        ) z ON z.CODCX = b.CBCONTADOR
+        WHERE b.EMPRESA = ?
+          AND b.DTLANC BETWEEN ? AND ?
+          AND COALESCE(b.deletado, 'N') <> 'S'
+        GROUP BY b.CBCONTADOR, operador
+        ORDER BY primeiro_movimento ASC, b.CBCONTADOR ASC
+        LIMIT 1
+    ");
+    $stmt->execute([$empresaId, $empresaId, $inicio, $fim]);
+    $caixas = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+    $msg = "*Apresentacao do Caixa*\n\n";
+    $msg .= "Data: " . $base->format('d/m/Y') . "\n";
+
+    if (empty($caixas)) {
+        $msg .= "Nenhum caixa encontrado no periodo.";
+        return $msg;
+    }
+
+    $caixa = $caixas[0];
+    $msg .= "Operador: " . $caixa['operador'] . "\n";
+    $msg .= "Valor da Diferenca do dinheiro: R$ " . number_format((float)$caixa['diferenca'], 2, ',', '.');
+
+    return $msg;
+}
+
+function whatsappMensagemApresentacaoCaixa1(PDO $pdo, ?DateTime $base = null, int $empresaId = 1): string
+{
+    return whatsappMensagemApresentacaoCaixa($pdo, $base, $empresaId);
+}
+
+function whatsappMensagemApresentacaoCaixa2(PDO $pdo, ?DateTime $base = null, int $empresaId = 1): string
+{
+    date_default_timezone_set('America/Sao_Paulo');
+
+    $base = $base ?: new DateTime('now');
+    if ((int)$base->format('H') < 7) {
+        $base = (clone $base)->modify('-1 day');
+    }
+
+    $data = $base->format('Y-m-d');
+    $inicio = $data . ' 16:00:00';
+    $fim = date('Y-m-d 03:00:00', strtotime($data . ' +1 day'));
+
+    $stmt = $pdo->prepare("
+        SELECT
+            b.CBCONTADOR,
+            COALESCE(NULLIF(z.NOMEUSER, ''), CONCAT('Caixa ', b.CBCONTADOR)) AS operador,
+            MIN(b.DTLANC) AS primeiro_movimento,
+            SUM(
+                CASE
+                    WHEN b.TIPOMOV = 'C' THEN b.VALORMOV
+                    WHEN b.TIPOMOV = 'D' THEN -b.VALORMOV
+                    ELSE 0
+                END
+            ) AS diferenca
+        FROM armazem_bnc001 b
+        INNER JOIN (
+            SELECT CODCX, MIN(NULLIF(NOMEUSER, '')) AS NOMEUSER
+            FROM armazem_zconfig005
+            WHERE CODCX IS NOT NULL
+              AND EMPRESA = ?
+              AND COALESCE(DESATIVADO, 'N') <> 'S'
+            GROUP BY CODCX
+        ) z ON z.CODCX = b.CBCONTADOR
+        WHERE b.EMPRESA = ?
+          AND b.DTLANC BETWEEN ? AND ?
+          AND COALESCE(b.deletado, 'N') <> 'S'
+        GROUP BY b.CBCONTADOR, operador
+        ORDER BY primeiro_movimento ASC, b.CBCONTADOR ASC
+        LIMIT 1 OFFSET 1
+    ");
+    $stmt->execute([$empresaId, $empresaId, $inicio, $fim]);
+    $caixa = $stmt->fetch(PDO::FETCH_ASSOC);
+
+    $msg = "*Apresentacao de Caixa*\n\n";
+    $msg .= "Data: " . $base->format('d/m/Y') . "\n";
+
+    if (!$caixa) {
+        $msg .= "Segundo operador nao encontrado no periodo.";
+        return $msg;
+    }
+
+    $msg .= "Operador: " . $caixa['operador'] . "\n";
+    $msg .= "Valor da Diferenca do dinheiro: R$ " . number_format((float)$caixa['diferenca'], 2, ',', '.');
 
     return $msg;
 }
