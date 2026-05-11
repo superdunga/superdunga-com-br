@@ -990,7 +990,7 @@ function whatsappMensagemApresentacaoCaixa2(PDO $pdo, ?DateTime $base = null, in
     date_default_timezone_set('America/Sao_Paulo');
 
     $base = $base ?: new DateTime('now');
-    if ((int)$base->format('H') < 7) {
+    if ($base->format('H:i') <= '11:00') {
         $base = (clone $base)->modify('-1 day');
     }
 
