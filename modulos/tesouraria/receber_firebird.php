@@ -13,6 +13,8 @@ $tabela = $_GET['tabela'] ?? 'bnc001';
 
 $tabelas_permitidas = [
     'bnc001',
+    'bnc002',
+    'bnc005',
     'cr001',
     'cr001_ativos',
     'cr002',
@@ -25,6 +27,7 @@ $tabelas_permitidas = [
     'est006',
     'est008',
     'zconfig005',
+    'bnc002_ativos',
     'bnc005_ativos',
     'cp001_ativos',
     'cp003_ativos',
@@ -276,6 +279,7 @@ function garantirIndiceUnicoPorEmpresa(PDO $pdo, string $nomeTabela, string $nom
 function garantirChavesMultiEmpresaFirebird(PDO $pdo, ?string $tabela = null): void
 {
     $configs = [
+        'bnc005' => ['armazem_bnc005', 'uniq_bnc005_escontador', 'uniq_bnc005_empresa_escontador', ['ESCONTADOR']],
         'cp001' => ['armazem_cp001', 'uniq_cp001_cpcontador', 'uniq_cp001_empresa_cpcontador', ['CPCONTADOR']],
         'cp003' => ['armazem_cp003', 'uniq_cp003_fcontador', 'uniq_cp003_empresa_fcontador', ['FCONTADOR']],
         'cp004' => ['armazem_cp004', 'uniq_cp004_qtcpcontador', 'uniq_cp004_empresa_qtcpcontador', ['QTCPCONTADOR']],
@@ -293,6 +297,59 @@ function garantirChavesMultiEmpresaFirebird(PDO $pdo, ?string $tabela = null): v
     foreach ($configs as $config) {
         garantirIndiceUnicoPorEmpresa($pdo, ...$config);
     }
+}
+
+function garantirTabelaBnc002(PDO $pdo): void
+{
+    $pdo->exec("
+        CREATE TABLE IF NOT EXISTS armazem_bnc002 (
+            EMPRESA INT NOT NULL,
+            CBCONTADOR INT NOT NULL,
+            BCACONTADOR INT NULL,
+            NUMERO VARCHAR(50) NULL,
+            TITULAR VARCHAR(255) NULL,
+            SALDO DECIMAL(15,4) NULL,
+            DESCABREV VARCHAR(100) NULL,
+            RELATORIO VARCHAR(10) NULL,
+            CONTAREL INT NULL,
+            SELECAO VARCHAR(10) NULL,
+            MOSTRARESUMO VARCHAR(10) NULL,
+            REGSTAMP DATETIME NULL,
+            CONTABLOQUEADA VARCHAR(10) NULL,
+            CLASSIFICACAO VARCHAR(50) NULL,
+            NCONTA_INTERNO VARCHAR(100) NULL,
+            SENHA_CONTA VARCHAR(255) NULL,
+            REGIMPORT VARCHAR(10) NULL,
+            REGDISAB VARCHAR(10) NULL,
+            DTCAIXA DATETIME NULL,
+            GRUPOBNC INT NULL,
+            SUBGRUPOBNC INT NULL,
+            INDICEBNC INT NULL,
+            CONTACONTABIL VARCHAR(255) NULL,
+            IGNORARBLOQUEIOAUTOM VARCHAR(10) NULL,
+            BLOQLANCAMENTOS VARCHAR(10) NULL,
+            TIPOMOV VARCHAR(10) NULL,
+            NAOPARTCAMPCONCESS VARCHAR(10) NULL,
+            IGNORARVERIFCAIXAZERADO VARCHAR(10) NULL,
+            NAOBAIXARVIAARQBANCO VARCHAR(10) NULL,
+            IGNORARNOFLUXOCAIXA VARCHAR(10) NULL,
+            LIMITECREDITO DECIMAL(15,4) NULL,
+            CONTACTBREDUZIDA VARCHAR(255) NULL,
+            CONSIDERARSALDOINICIAL VARCHAR(10) NULL,
+            CNPJ VARCHAR(30) NULL,
+            USERALT INT NULL,
+            USERLANC INT NULL,
+            DTALT DATETIME NULL,
+            DTLANC DATETIME NULL,
+            excluido_firebird CHAR(1) NOT NULL DEFAULT 'N',
+            data_exclusao_firebird DATETIME NULL,
+            motivo_sync VARCHAR(100) NULL,
+            ultima_presenca_firebird DATETIME NULL,
+            PRIMARY KEY (EMPRESA, CBCONTADOR),
+            INDEX idx_bnc002_titular (EMPRESA, TITULAR),
+            INDEX idx_bnc002_excluido (excluido_firebird, CBCONTADOR)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    ");
 }
 
 function processarAtivosFirebird(PDO $pdo, array $dados, array $config): void
@@ -643,7 +700,18 @@ function processarTabelaFirebirdGenerica(PDO $pdo, array $dados, string $nomeTab
 }
 
 $configAtivosFirebird = [
-    'bnc005_ativos' => ['tabela_mysql' => 'armazem_bnc005', 'coluna_chave' => 'ESCONTADOR', 'nome_firebird' => 'BNC005'],
+    'bnc002_ativos' => [
+        'tabela_mysql' => 'armazem_bnc002',
+        'coluna_chave' => 'CBCONTADOR',
+        'nome_firebird' => 'BNC002',
+        'exige_empresa' => true,
+    ],
+    'bnc005_ativos' => [
+        'tabela_mysql' => 'armazem_bnc005',
+        'coluna_chave' => 'ESCONTADOR',
+        'nome_firebird' => 'BNC005',
+        'exige_empresa' => true,
+    ],
     'cp001_ativos' => [
         'tabela_mysql' => 'armazem_cp001',
         'coluna_chave' => 'CPCONTADOR',
@@ -651,8 +719,18 @@ $configAtivosFirebird = [
         'exige_empresa' => true,
         'filtro_exclusao_sql' => " AND (m.`STATUS` IS NULL OR m.`STATUS` <> 'QT')",
     ],
-    'cp003_ativos' => ['tabela_mysql' => 'armazem_cp003', 'coluna_chave' => 'FCONTADOR', 'nome_firebird' => 'CP003'],
-    'cp004_ativos' => ['tabela_mysql' => 'armazem_cp004', 'coluna_chave' => 'QTCPCONTADOR', 'nome_firebird' => 'CP004'],
+    'cp003_ativos' => [
+        'tabela_mysql' => 'armazem_cp003',
+        'coluna_chave' => 'FCONTADOR',
+        'nome_firebird' => 'CP003',
+        'exige_empresa' => true,
+    ],
+    'cp004_ativos' => [
+        'tabela_mysql' => 'armazem_cp004',
+        'coluna_chave' => 'QTCPCONTADOR',
+        'nome_firebird' => 'CP004',
+        'exige_empresa' => true,
+    ],
     'est004_ativos' => ['tabela_mysql' => 'armazem_est004', 'coluna_chave' => 'CODPRODUTO', 'nome_firebird' => 'EST004'],
     'est005_ativos' => ['tabela_mysql' => 'armazem_est005', 'coluna_chave' => 'COMPRACONTADOR', 'nome_firebird' => 'EST005'],
     'est006_ativos' => ['tabela_mysql' => 'armazem_est006', 'colunas_chave' => ['ITEMCOMPRACONTADOR', 'COMPRACONTA'], 'nome_firebird' => 'EST006'],
@@ -663,10 +741,16 @@ $configAtivosFirebird = [
 ];
 
 if (isset($configAtivosFirebird[$tabela])) {
+    if ($tabela === 'bnc002_ativos') {
+        garantirTabelaBnc002($pdo_master);
+    }
+
     processarAtivosFirebird($pdo_master, $dados, $configAtivosFirebird[$tabela]);
 }
 
 $configTabelasGenericas = [
+    'bnc002' => ['tabela_mysql' => 'armazem_bnc002', 'chaves' => ['CBCONTADOR']],
+    'bnc005' => ['tabela_mysql' => 'armazem_bnc005', 'chaves' => ['ESCONTADOR']],
     'cp001' => ['tabela_mysql' => 'armazem_cp001', 'chaves' => ['CPCONTADOR']],
     'cp003' => ['tabela_mysql' => 'armazem_cp003', 'chaves' => ['FCONTADOR']],
     'cp004' => ['tabela_mysql' => 'armazem_cp004', 'chaves' => ['QTCPCONTADOR']],
@@ -675,6 +759,10 @@ $configTabelasGenericas = [
 ];
 
 if (isset($configTabelasGenericas[$tabela])) {
+    if ($tabela === 'bnc002') {
+        garantirTabelaBnc002($pdo_master);
+    }
+
     if ($tabela === 'est006') {
         garantirChaveEst006($pdo_master);
     }

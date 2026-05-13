@@ -17,6 +17,8 @@ $empresa = isset($_GET['empresa']) ? (int)$_GET['empresa'] : null;
 ========================= */
 $tabelas_permitidas = [
     'bnc001',
+    'bnc002',
+    'bnc005',
     'cr001',
     'cr002',
     'cp001',

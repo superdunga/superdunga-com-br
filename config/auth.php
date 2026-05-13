@@ -147,6 +147,7 @@ function validarPermissaoModuloAtual(): void
         'modulos/financeiro/contas_receber.php' => 'financeiro',
         'modulos/financeiro/contas_receber_clientes.php' => 'financeiro_contas_receber',
         'modulos/financeiro/contas_pagar.php' => 'financeiro',
+        'modulos/financeiro/contas.php' => 'financeiro',
     ];
 
     $codigoModulo = $aliases[$caminho] ?? null;

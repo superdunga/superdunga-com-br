@@ -23,6 +23,14 @@ $opcoes = [
         'icone' => 'CP',
         'botao' => 'btn-success',
     ],
+    [
+        'titulo' => 'Contas',
+        'descricao' => 'Extrato financeiro por conta, com saldos, creditos, debitos e base para conciliacao bancaria.',
+        'href' => 'contas.php',
+        'modulo' => 'financeiro',
+        'icone' => 'BC',
+        'botao' => 'btn-info',
+    ],
 ];
 
 $opcoes = filtrarOpcoesPorModulo($pdo_master, $empresaId, $opcoes);
