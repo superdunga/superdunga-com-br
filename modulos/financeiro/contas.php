@@ -258,6 +258,8 @@ foreach ($contasSelecionadas as $contaSaldoBase) {
 }
 
 $saldoResumo = $saldoBase + (float)$resumo['total_creditos'] - (float)$resumo['total_debitos'];
+$limiteExtrato = 1500;
+$totalRegistrosFiltro = (int)($resumo['qtd'] ?? 0);
 
 $stmtSintetico = $pdo_master->prepare("
     SELECT
@@ -307,33 +309,75 @@ foreach ($contasSintetico as &$contaResumo) {
 unset($contaResumo);
 
 $stmt = $pdo_master->prepare("
-    SELECT
-        b.MOVCONTADOR,
-        b.DTMOV,
-        b.TIPOES,
-        COALESCE(t.DESCES, CONCAT('Tipo ', b.TIPOES)) AS tipo_nome,
-        b.HISTMOV,
-        b.NUMDOC,
-        b.NUMDOCORIGEM,
-        b.NUMCONTROLE,
-        b.TIPOMOV,
-        b.VALORMOV,
-        COALESCE(b.deletado, 'N') AS deletado,
-        b.CBCONTADOR,
-        COALESCE(c.TITULAR, CONCAT('Conta ', b.CBCONTADOR)) AS conta_nome
-    FROM armazem_bnc001 b
-    LEFT JOIN armazem_bnc005 t
-        ON t.EMPRESA = b.EMPRESA
-       AND t.ESCONTADOR = b.TIPOES
-    LEFT JOIN armazem_bnc002 c
-        ON c.EMPRESA = b.EMPRESA
-       AND c.CBCONTADOR = b.CBCONTADOR
-    WHERE {$whereSql}
-    ORDER BY b.DTMOV ASC, b.MOVCONTADOR ASC
-    LIMIT 1500
+    SELECT *
+    FROM (
+        SELECT
+            b.MOVCONTADOR,
+            b.DTMOV,
+            b.TIPOES,
+            COALESCE(t.DESCES, CONCAT('Tipo ', b.TIPOES)) AS tipo_nome,
+            b.HISTMOV,
+            b.NUMDOC,
+            b.NUMDOCORIGEM,
+            b.NUMCONTROLE,
+            b.TIPOMOV,
+            b.VALORMOV,
+            COALESCE(b.deletado, 'N') AS deletado,
+            b.CBCONTADOR,
+            COALESCE(c.TITULAR, CONCAT('Conta ', b.CBCONTADOR)) AS conta_nome
+        FROM armazem_bnc001 b
+        LEFT JOIN armazem_bnc005 t
+            ON t.EMPRESA = b.EMPRESA
+           AND t.ESCONTADOR = b.TIPOES
+        LEFT JOIN armazem_bnc002 c
+            ON c.EMPRESA = b.EMPRESA
+           AND c.CBCONTADOR = b.CBCONTADOR
+        WHERE {$whereSql}
+        ORDER BY b.DTMOV DESC, b.MOVCONTADOR DESC
+        LIMIT {$limiteExtrato}
+    ) ultimos_movimentos
+    ORDER BY DTMOV ASC, MOVCONTADOR ASC
 ");
 $stmt->execute($params);
 $registros = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+if (!empty($contasSelecionadas) && !empty($registros)) {
+    $primeiroRegistro = $registros[0];
+    $primeiraDataMov = $primeiroRegistro['DTMOV'];
+    $primeiroMovcontador = (int)$primeiroRegistro['MOVCONTADOR'];
+    $saldoBaseVisual = 0.0;
+
+    foreach ($contasSelecionadas as $contaSaldoVisual) {
+        $saldoConta = $saldosIniciaisPorConta[$contaSaldoVisual] ?? null;
+        $paramsSaldoVisual = [$empresaId, $contaSaldoVisual];
+        $filtrosSaldoVisual = [
+            'b.EMPRESA = ?',
+            'b.CBCONTADOR = ?',
+            "COALESCE(b.deletado, 'N') <> 'S'",
+        ];
+
+        if ($saldoConta) {
+            $saldoBaseVisual += (float)$saldoConta['valor_saldo'];
+            $filtrosSaldoVisual[] = 'DATE(b.DTMOV) > ?';
+            $paramsSaldoVisual[] = $saldoConta['data_saldo'];
+        }
+
+        $filtrosSaldoVisual[] = '(b.DTMOV < ? OR (b.DTMOV = ? AND b.MOVCONTADOR < ?))';
+        $paramsSaldoVisual[] = $primeiraDataMov;
+        $paramsSaldoVisual[] = $primeiraDataMov;
+        $paramsSaldoVisual[] = $primeiroMovcontador;
+
+        $stmtSaldoVisual = $pdo_master->prepare("
+            SELECT COALESCE(SUM(CASE WHEN b.TIPOMOV = 'C' THEN ABS(b.VALORMOV) ELSE -ABS(b.VALORMOV) END), 0)
+            FROM armazem_bnc001 b
+            WHERE " . implode(' AND ', $filtrosSaldoVisual) . "
+        ");
+        $stmtSaldoVisual->execute($paramsSaldoVisual);
+        $saldoBaseVisual += (float)$stmtSaldoVisual->fetchColumn();
+    }
+
+    $saldoBase = $saldoBaseVisual;
+}
 
 $saldoCorrente = $saldoBase;
 foreach ($registros as &$registro) {
@@ -705,6 +749,11 @@ require '../../layout/header.php';
     <div class="bg-white border rounded-2 shadow-sm overflow-hidden">
         <?php if (empty($contasSelecionadas)): ?>
             <div class="alert alert-info m-3 mb-0">Selecione uma ou mais contas para acompanhar o saldo linha a linha do extrato.</div>
+        <?php endif; ?>
+        <?php if ($totalRegistrosFiltro > $limiteExtrato): ?>
+            <div class="alert alert-warning m-3 mb-0">
+                Exibindo os ultimos <?= (int)$limiteExtrato ?> lancamentos de <?= (int)$totalRegistrosFiltro ?> encontrados. Use os filtros de data ou conta para refinar o extrato.
+            </div>
         <?php endif; ?>
         <div class="table-responsive">
             <table class="table table-sm table-hover align-middle mb-0 financeiro-grid">
