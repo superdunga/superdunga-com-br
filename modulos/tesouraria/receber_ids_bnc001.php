@@ -14,6 +14,13 @@ if ($token !== '123456') {
     exit;
 }
 
+if (!$empresaSync || $empresaSync <= 0) {
+    echo json_encode([
+        'erro' => 'Informe empresa para verificar BNC001. A verificacao sem empresa foi bloqueada para evitar marcacao incorreta entre empresas.'
+    ]);
+    exit;
+}
+
 $input = file_get_contents('php://input');
 
 if (!$input) {
@@ -63,6 +70,12 @@ function garantirControleDelecaoBNC001(PDO $pdo): void
     if ((int)$stmt->fetchColumn() === 0) {
         $pdo->exec("ALTER TABLE armazem_bnc001 ADD INDEX idx_bnc001_deletado_dtlanc (deletado, DTLANC)");
     }
+
+    $pdo->exec("
+        CREATE TABLE IF NOT EXISTS armazem_bnc001_ids_temp (
+            MOVCONTADOR INT NOT NULL PRIMARY KEY
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    ");
 }
 
 $ids = array_values(array_unique(array_filter(array_map('intval', $ids))));
@@ -90,8 +103,8 @@ try {
         $stmt->execute([$id]);
     }
 
-    $filtroEmpresa = ($empresaSync !== null && $empresaSync > 0) ? " AND m.EMPRESA = ?" : "";
-    $paramsEmpresa = ($empresaSync !== null && $empresaSync > 0) ? [$empresaSync] : [];
+    $filtroEmpresa = " AND m.EMPRESA = ?";
+    $paramsEmpresa = [$empresaSync];
 
     $stmtAtivos = $pdo_master->prepare("
         UPDATE armazem_bnc001 m

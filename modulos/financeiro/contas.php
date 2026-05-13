@@ -52,6 +52,11 @@ $tipoes = trim($_GET['tipoes'] ?? '');
 $historico = trim($_GET['historico'] ?? '');
 $documento = trim($_GET['documento'] ?? '');
 $dc = strtoupper(trim($_GET['dc'] ?? ''));
+$situacao = trim($_GET['situacao'] ?? 'ativos');
+
+if (!in_array($situacao, ['ativos', 'excluidos', 'todos'], true)) {
+    $situacao = 'ativos';
+}
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['acao'] ?? '') === 'salvar_saldo') {
     $cbcontadorPost = (int)($_POST['cbcontador'] ?? 0);
@@ -96,7 +101,6 @@ if (empty($contas)) {
         FROM armazem_bnc001
         WHERE EMPRESA = ?
           AND CBCONTADOR IS NOT NULL
-          AND COALESCE(deletado, 'N') <> 'S'
         ORDER BY CBCONTADOR
     ");
     $stmtContasFallback->execute([$empresaId]);
@@ -125,7 +129,6 @@ if (empty($tipos)) {
         FROM armazem_bnc001
         WHERE EMPRESA = ?
           AND TIPOES IS NOT NULL
-          AND COALESCE(deletado, 'N') <> 'S'
         ORDER BY TIPOES
     ");
     $stmtTiposFallback->execute([$empresaId]);
@@ -147,9 +150,14 @@ if ($contaSelecionada > 0) {
 
 $where = [
     'b.EMPRESA = ?',
-    "COALESCE(b.deletado, 'N') <> 'S'",
 ];
 $params = [$empresaId];
+
+if ($situacao === 'ativos') {
+    $where[] = "COALESCE(b.deletado, 'N') <> 'S'";
+} elseif ($situacao === 'excluidos') {
+    $where[] = "COALESCE(b.deletado, 'N') = 'S'";
+}
 
 if ($contaSelecionada > 0) {
     $where[] = 'b.CBCONTADOR = ?';
@@ -212,7 +220,13 @@ if ($saldoInicial) {
 
 if ($contaSelecionada > 0 && $saldoInicial) {
     $paramsAntes = [$empresaId, $contaSelecionada, $saldoBaseData];
-    $filtroAntes = "b.EMPRESA = ? AND b.CBCONTADOR = ? AND COALESCE(b.deletado, 'N') <> 'S' AND DATE(b.DTMOV) > ?";
+    $filtroAntes = "b.EMPRESA = ? AND b.CBCONTADOR = ? AND DATE(b.DTMOV) > ?";
+
+    if ($situacao === 'ativos') {
+        $filtroAntes .= " AND COALESCE(b.deletado, 'N') <> 'S'";
+    } elseif ($situacao === 'excluidos') {
+        $filtroAntes .= " AND COALESCE(b.deletado, 'N') = 'S'";
+    }
 
     if ($dataIni !== '') {
         $filtroAntes .= " AND DATE(b.DTMOV) < ?";
@@ -242,6 +256,7 @@ $stmt = $pdo_master->prepare("
         b.NUMCONTROLE,
         b.TIPOMOV,
         b.VALORMOV,
+        COALESCE(b.deletado, 'N') AS deletado,
         b.CBCONTADOR,
         COALESCE(c.TITULAR, CONCAT('Conta ', b.CBCONTADOR)) AS conta_nome
     FROM armazem_bnc001 b
@@ -398,6 +413,14 @@ require '../../layout/header.php';
                 </select>
             </div>
             <div class="col-md-2">
+                <label class="form-label">Situacao</label>
+                <select name="situacao" class="form-select">
+                    <option value="ativos" <?= $situacao === 'ativos' ? 'selected' : '' ?>>Ativos</option>
+                    <option value="todos" <?= $situacao === 'todos' ? 'selected' : '' ?>>Todos</option>
+                    <option value="excluidos" <?= $situacao === 'excluidos' ? 'selected' : '' ?>>Excluidos</option>
+                </select>
+            </div>
+            <div class="col-md-2">
                 <label class="form-label">TipoEs</label>
                 <select name="tipoes" class="form-select">
                     <option value="">Todos</option>
@@ -408,11 +431,11 @@ require '../../layout/header.php';
                     <?php endforeach; ?>
                 </select>
             </div>
-            <div class="col-md-5">
+            <div class="col-md-4">
                 <label class="form-label">Historico</label>
                 <input type="text" name="historico" class="form-control" value="<?= htmlspecialchars($historico) ?>">
             </div>
-            <div class="col-md-3">
+            <div class="col-md-2">
                 <label class="form-label">Documento</label>
                 <input type="text" name="documento" class="form-control" value="<?= htmlspecialchars($documento) ?>">
             </div>
@@ -517,7 +540,12 @@ require '../../layout/header.php';
                             </td>
                             <td data-label="Historico">
                                 <div class="historico-principal"><?= htmlspecialchars((string)$registro['HISTMOV']) ?></div>
-                                <div class="small text-muted">Mov. <?= (int)$registro['MOVCONTADOR'] ?></div>
+                                <div class="small text-muted">
+                                    Mov. <?= (int)$registro['MOVCONTADOR'] ?>
+                                    <?php if (($registro['deletado'] ?? 'N') === 'S'): ?>
+                                        <span class="badge text-bg-secondary ms-1">Excluido</span>
+                                    <?php endif; ?>
+                                </div>
                             </td>
                             <td data-label="Documento" class="col-doc"><?= htmlspecialchars((string)$doc) ?></td>
                             <td data-label="D/C" class="col-dc">
