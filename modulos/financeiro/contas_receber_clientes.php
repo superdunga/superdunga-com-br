@@ -305,7 +305,9 @@ function gerarPdfFinanceiroClientes(string $titulo, array $metadados, array $col
         $idsPaginas[] = $paginaId;
     }
 
-    $kids = implode(' ', array_map(static fn($id) => "{$id} 0 R", $idsPaginas));
+    $kids = implode(' ', array_map(static function ($id): string {
+        return "{$id} 0 R";
+    }, $idsPaginas));
     $objetos[2] = "<< /Type /Pages /Kids [{$kids}] /Count " . count($idsPaginas) . " >>";
 
     ksort($objetos);
