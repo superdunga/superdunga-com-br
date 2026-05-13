@@ -106,8 +106,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['arquivo'])) {
                 // EVITAR DUPLICIDADE
                 $check = $pdo_master->prepare("SELECT id FROM armazem_conciliacao_recebimentos WHERE empresa_id = ? AND identificador = ?");
                 $check->execute([$empresa_id, $identificador]);
+                $registroExistente = $check->fetch(PDO::FETCH_ASSOC);
 
-                if ($check->fetch()) continue;
+                if ($registroExistente) {
+                    if ($pagador !== '' && $pagador !== 'PIX') {
+                        $updatePagador = $pdo_master->prepare("
+                            UPDATE armazem_conciliacao_recebimentos
+                            SET pagador = ?
+                            WHERE id = ?
+                              AND (pagador IS NULL OR pagador = '' OR pagador = 'PIX')
+                        ");
+                        $updatePagador->execute([$pagador, $registroExistente['id']]);
+                    }
+                    continue;
+                }
 
                 // DESCRIÇÃO
                 $descricao = 'PIX - SIPAG - Terminal ' . $terminal;

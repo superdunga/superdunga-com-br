@@ -120,6 +120,7 @@ function validarPermissaoModuloAtual(): void
         'modulos/tesouraria/menu_tesouraria.php' => 'Tesouraria',
         'modulos/fechamentodecaixa/menu_fechamento.php' => 'Fechamento',
         'modulos/auditoria/menu_auditoria.php' => 'Auditoria',
+        'modulos/financeiro/menu_financeiro.php' => 'Financeiro',
     ];
 
     if (isset($menusPorGrupo[$caminho])) {
@@ -143,6 +144,9 @@ function validarPermissaoModuloAtual(): void
         'modulos/fechamentodecaixa/conciliar_auto.php' => 'fechamento_importar_recebimentos',
         'modulos/fechamentodecaixa/diagnostico_divergencia.php' => 'fechamento_resumo_prazo',
         'modulos/fechamentodecaixa/conciliacao_dinheiro_divergentes.php' => 'fechamento_dinheiro',
+        'modulos/financeiro/contas_receber.php' => 'financeiro',
+        'modulos/financeiro/contas_receber_clientes.php' => 'financeiro_contas_receber',
+        'modulos/financeiro/contas_pagar.php' => 'financeiro',
     ];
 
     $codigoModulo = $aliases[$caminho] ?? null;

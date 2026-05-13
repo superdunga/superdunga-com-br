@@ -307,6 +307,7 @@ function processarAtivosFirebird(PDO $pdo, array $dados, array $config): void
     $filtroSql = '';
     $filtroParams = [];
     $empresaSync = isset($_GET['empresa']) ? (int)$_GET['empresa'] : null;
+    $filtroExclusaoSql = $config['filtro_exclusao_sql'] ?? '';
 
     if (!empty($config['coluna_data'])) {
         $inicio = $_GET['inicio'] ?? ($dados['inicio'] ?? null);
@@ -322,6 +323,13 @@ function processarAtivosFirebird(PDO $pdo, array $dados, array $config): void
         $colunaData = $config['coluna_data'];
         $filtroSql = " AND m.`$colunaData` BETWEEN ? AND ?";
         $filtroParams = [$inicio, $fim];
+    }
+
+    if (!empty($config['exige_empresa']) && (!$empresaSync || $empresaSync <= 0)) {
+        echo json_encode([
+            "erro" => "Informe empresa para verificar ativos de $tabelaFirebird."
+        ]);
+        exit;
     }
 
     if ($empresaSync !== null && $empresaSync > 0) {
@@ -388,6 +396,9 @@ function processarAtivosFirebird(PDO $pdo, array $dados, array $config): void
         }
 
         $exprChave = montarExpressaoChaveSql('m', $colunasChave);
+        $stmtContar = $pdo->prepare("SELECT COUNT(*) FROM sync_firebird_ativos_temp WHERE sync_id = ? AND tabela = ?");
+        $stmtContar->execute([$syncId, $nomeTabela]);
+        $totalSnapshot = (int)$stmtContar->fetchColumn();
 
         $pdo->beginTransaction();
         try {
@@ -418,13 +429,10 @@ function processarAtivosFirebird(PDO $pdo, array $dados, array $config): void
                 WHERE t.chave_sync IS NULL
                   AND COALESCE(m.excluido_firebird, 'N') <> 'S'
                   $filtroSql
+                  $filtroExclusaoSql
             ");
             $stmtExcluir->execute(array_merge([$syncId, $nomeTabela, "Nao encontrado na foto $tabelaFirebird do Firebird"], $filtroParams));
             $marcadosExcluidos = $stmtExcluir->rowCount();
-
-            $stmtContar = $pdo->prepare("SELECT COUNT(*) FROM sync_firebird_ativos_temp WHERE sync_id = ? AND tabela = ?");
-            $stmtContar->execute([$syncId, $nomeTabela]);
-            $totalSnapshot = (int)$stmtContar->fetchColumn();
 
             $stmtLimpar = $pdo->prepare("DELETE FROM sync_firebird_ativos_temp WHERE sync_id = ? AND tabela = ?");
             $stmtLimpar->execute([$syncId, $nomeTabela]);
@@ -472,8 +480,9 @@ function processarAtivosFirebird(PDO $pdo, array $dados, array $config): void
                 m.data_exclusao_firebird = NULL,
                 m.motivo_sync = NULL,
                 m.ultima_presenca_firebird = NOW()
+            WHERE 1=1 $filtroSql
         ");
-        $stmtReativar->execute();
+        $stmtReativar->execute($filtroParams);
         $reativados = $stmtReativar->rowCount();
 
         $stmtExcluir = $pdo->prepare("
@@ -485,8 +494,10 @@ function processarAtivosFirebird(PDO $pdo, array $dados, array $config): void
                 m.motivo_sync = ?
             WHERE t.id IS NULL
               AND COALESCE(m.excluido_firebird, 'N') <> 'S'
+              $filtroSql
+              $filtroExclusaoSql
         ");
-        $stmtExcluir->execute(["Nao encontrado na foto $tabelaFirebird do Firebird"]);
+        $stmtExcluir->execute(array_merge(["Nao encontrado na foto $tabelaFirebird do Firebird"], $filtroParams));
         $marcadosExcluidos = $stmtExcluir->rowCount();
 
         $pdo->commit();
@@ -513,6 +524,9 @@ function processarTabelaFirebirdGenerica(PDO $pdo, array $dados, string $nomeTab
         'data_exclusao_firebird',
         'motivo_sync',
         'ultima_presenca_firebird',
+        'financeiro_verificado',
+        'financeiro_verificado_por',
+        'financeiro_verificado_em',
     ]);
 
     $stmtColunas = $pdo->prepare("
@@ -630,7 +644,13 @@ function processarTabelaFirebirdGenerica(PDO $pdo, array $dados, string $nomeTab
 
 $configAtivosFirebird = [
     'bnc005_ativos' => ['tabela_mysql' => 'armazem_bnc005', 'coluna_chave' => 'ESCONTADOR', 'nome_firebird' => 'BNC005'],
-    'cp001_ativos' => ['tabela_mysql' => 'armazem_cp001', 'coluna_chave' => 'CPCONTADOR', 'nome_firebird' => 'CP001'],
+    'cp001_ativos' => [
+        'tabela_mysql' => 'armazem_cp001',
+        'coluna_chave' => 'CPCONTADOR',
+        'nome_firebird' => 'CP001',
+        'exige_empresa' => true,
+        'filtro_exclusao_sql' => " AND (m.`STATUS` IS NULL OR m.`STATUS` <> 'QT')",
+    ],
     'cp003_ativos' => ['tabela_mysql' => 'armazem_cp003', 'coluna_chave' => 'FCONTADOR', 'nome_firebird' => 'CP003'],
     'cp004_ativos' => ['tabela_mysql' => 'armazem_cp004', 'coluna_chave' => 'QTCPCONTADOR', 'nome_firebird' => 'CP004'],
     'est004_ativos' => ['tabela_mysql' => 'armazem_est004', 'coluna_chave' => 'CODPRODUTO', 'nome_firebird' => 'EST004'],
@@ -871,6 +891,13 @@ elseif ($tabela === 'cr001_ativos') {
     $registros = $dados['registros'] ?? $dados['ativos'] ?? $dados;
     $empresaSync = isset($_GET['empresa']) ? (int)$_GET['empresa'] : null;
 
+    if ($empresaSync === null || $empresaSync <= 0) {
+        echo json_encode([
+            "erro" => "Informe empresa para verificar CR001 ativos. A verificacao sem empresa foi bloqueada para evitar marcacao incorreta entre empresas."
+        ]);
+        exit;
+    }
+
     if (!$inicio || !$fim || !is_array($registros)) {
         echo json_encode([
             "erro" => "Informe inicio, fim e a lista de CRCONTADOR ativos."
@@ -908,11 +935,9 @@ elseif ($tabela === 'cr001_ativos') {
         }
     }
 
-    $filtroEmpresa = ($empresaSync !== null && $empresaSync > 0) ? " AND c.EMPRESA = ?" : "";
+    $filtroEmpresa = " AND c.EMPRESA = ?";
     $paramsPeriodo = [$inicio, $fim];
-    $paramsPeriodoEmpresa = ($empresaSync !== null && $empresaSync > 0)
-        ? array_merge($paramsPeriodo, [$empresaSync])
-        : $paramsPeriodo;
+    $paramsPeriodoEmpresa = array_merge($paramsPeriodo, [$empresaSync]);
 
     $stmtReativar = $pdo_master->prepare("
         UPDATE armazem_cr001 c

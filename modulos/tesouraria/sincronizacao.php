@@ -72,6 +72,14 @@ $logs = $stmt->fetchAll(PDO::FETCH_ASSOC);
                 <tbody>
 
                     <?php foreach ($logs as $l): ?>
+                        <?php
+                            $mensagemLog = (string)($l['mensagem'] ?? '');
+                            $statusErro = ($l['status'] !== 'OK')
+                                || stripos($mensagemLog, 'Fatal error') !== false
+                                || stripos($mensagemLog, 'PDOException') !== false
+                                || stripos($mensagemLog, 'Server Error') !== false
+                                || stripos($mensagemLog, '"erro"') !== false;
+                        ?>
 
                         <tr>
                             <td><?= date('d/m/Y H:i:s', strtotime($l['data_execucao'])) ?></td>
@@ -79,14 +87,14 @@ $logs = $stmt->fetchAll(PDO::FETCH_ASSOC);
                             <td><?= (int)$l['registros'] ?></td>
 
                             <td>
-                                <?php if ($l['status'] === 'OK'): ?>
-                                    <span class="badge bg-success">OK</span>
-                                <?php else: ?>
+                                <?php if ($statusErro): ?>
                                     <span class="badge bg-danger">ERRO</span>
+                                <?php else: ?>
+                                    <span class="badge bg-success">OK</span>
                                 <?php endif; ?>
                             </td>
 
-                            <td><?= htmlspecialchars($l['mensagem']) ?></td>
+                            <td><?= htmlspecialchars($mensagemLog) ?></td>
                         </tr>
 
                     <?php endforeach; ?>

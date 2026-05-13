@@ -97,12 +97,27 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['arquivo'])) {
                     'cliente',
                     'nome cliente',
                     'nome do cliente',
+                    'nome',
+                    'nome completo',
                     'pagador',
                     'nome pagador',
                     'nome do pagador',
+                    'remetente',
+                    'nome remetente',
+                    'nome do remetente',
+                    'remetente pix',
+                    'nome remetente pix',
+                    'nome do remetente pix',
                     'comprador',
                     'nome comprador',
                     'nome do comprador',
+                    'titular',
+                    'nome titular',
+                    'nome do titular',
+                    'razao social',
+                    'razao social pagador',
+                    'cpf/cnpj pagador',
+                    'documento pagador',
                 ]);
 
                 if ($idTransacao === '' || $dataVenda === null || strcasecmp($tipo, 'Pagamento Instantâneo') !== 0 || strcasecmp($status, 'Pago') !== 0 || $valorBruto <= 0) {
@@ -115,7 +130,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['arquivo'])) {
 
                 $check = $pdo_master->prepare("SELECT id FROM armazem_conciliacao_recebimentos WHERE empresa_id = ? AND identificador = ?");
                 $check->execute([$empresa_id, $identificador]);
-                if ($check->fetch()) continue;
+                $registroExistente = $check->fetch(PDO::FETCH_ASSOC);
+                if ($registroExistente) {
+                    if ($pagador !== '') {
+                        $updatePagador = $pdo_master->prepare("
+                            UPDATE armazem_conciliacao_recebimentos
+                            SET pagador = ?
+                            WHERE id = ?
+                              AND (pagador IS NULL OR pagador = '' OR pagador = 'GRANITO PIX')
+                        ");
+                        $updatePagador->execute([$pagador, $registroExistente['id']]);
+                    }
+                    continue;
+                }
 
                 $stmt = $pdo_master->prepare("
                     INSERT INTO armazem_conciliacao_recebimentos (

@@ -1,7 +1,15 @@
 </main>
 
+<?php
+$scriptDirFooter = str_replace('\\', '/', dirname($_SERVER['SCRIPT_NAME'] ?? ''));
+$modulosPosFooter = strpos($scriptDirFooter, '/modulos');
+$appBaseUrlFooter = $modulosPosFooter !== false ? substr($scriptDirFooter, 0, $modulosPosFooter) : $scriptDirFooter;
+$appBaseUrlFooter = rtrim($appBaseUrlFooter, '/');
+$bootstrapJsUrl = ($appBaseUrlFooter ?: '') . '/assets/bootstrap/bootstrap.bundle.min.js';
+?>
+
 <!-- Bootstrap JS -->
-<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+<script src="<?= htmlspecialchars($bootstrapJsUrl) ?>"></script>
 
 <footer class="text-center py-4 text-muted">
     <small>SuperDunga &copy; <?= date('Y') ?> - Sistema Financeiro</small>

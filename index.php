@@ -36,6 +36,15 @@ $atalhos = [
         'visivel' => grupoPermitido($pdo_master, $empresaId, 'Auditoria', $nivelUsuario),
     ],
     [
+        'titulo' => 'Financeiro',
+        'descricao' => 'Central para contas, pagamentos, recebimentos e controles financeiros.',
+        'href' => 'modulos/financeiro/menu_financeiro.php',
+        'classe' => 'border-primary',
+        'botao' => 'btn-primary',
+        'icone' => 'FN',
+        'visivel' => grupoPermitido($pdo_master, $empresaId, 'Financeiro', $nivelUsuario),
+    ],
+    [
         'titulo' => 'Sincronizar Dados',
         'descricao' => 'Atualize dados integrados antes das rotinas operacionais.',
         'href' => 'modulos/tesouraria/sincronizacao.php',

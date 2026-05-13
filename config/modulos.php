@@ -24,6 +24,9 @@ function sistemaModulosPadrao(): array
         ['codigo' => 'auditoria_compras', 'grupo' => 'Auditoria', 'nome' => 'Compras', 'url' => 'modulos/auditoria/listar.php', 'ordem' => 210],
         ['codigo' => 'auditoria_itens_fora_padrao', 'grupo' => 'Auditoria', 'nome' => 'Itens fora do padrao', 'url' => 'modulos/auditoria/itens_fora_padrao.php', 'ordem' => 220],
 
+        ['codigo' => 'financeiro', 'grupo' => 'Financeiro', 'nome' => 'Financeiro', 'url' => 'modulos/financeiro/menu_financeiro.php', 'ordem' => 260],
+        ['codigo' => 'financeiro_contas_receber', 'grupo' => 'Financeiro', 'nome' => 'Contas a Receber - Clientes', 'url' => 'modulos/financeiro/contas_receber_clientes.php', 'ordem' => 270],
+
         ['codigo' => 'whatsapp', 'grupo' => 'Administracao', 'nome' => 'Mensagens WhatsApp', 'url' => 'modulos/whatsapp/index.php', 'ordem' => 310],
         ['codigo' => 'usuarios', 'grupo' => 'Administracao', 'nome' => 'Gerenciar Usuarios', 'url' => 'modulos/usuarios/listar.php', 'ordem' => 320],
         ['codigo' => 'usuarios_permissoes', 'grupo' => 'Administracao', 'nome' => 'Permissoes por Perfil', 'url' => 'modulos/usuarios/permissoes.php', 'ordem' => 325],
@@ -40,6 +43,34 @@ function garantirTabelasModulos(PDO $pdo): void
         return;
     }
     $executado = true;
+
+    $modulosPadrao = sistemaModulosPadrao();
+    $codigosPadrao = array_column($modulosPadrao, 'codigo');
+    $tabelas = ['sistema_modulos', 'empresa_modulos', 'perfil_modulos', 'usuario_modulos'];
+
+    $placeholdersTabelas = implode(',', array_fill(0, count($tabelas), '?'));
+    $stmtTabelas = $pdo->prepare("
+        SELECT COUNT(*)
+        FROM information_schema.TABLES
+        WHERE TABLE_SCHEMA = DATABASE()
+          AND TABLE_NAME IN ({$placeholdersTabelas})
+    ");
+    $stmtTabelas->execute($tabelas);
+
+    if ((int)$stmtTabelas->fetchColumn() === count($tabelas)) {
+        $placeholdersCodigos = implode(',', array_fill(0, count($codigosPadrao), '?'));
+        $stmtModulos = $pdo->prepare("
+            SELECT COUNT(*)
+            FROM sistema_modulos
+            WHERE codigo IN ({$placeholdersCodigos})
+              AND ativo = 'S'
+        ");
+        $stmtModulos->execute($codigosPadrao);
+
+        if ((int)$stmtModulos->fetchColumn() === count($codigosPadrao)) {
+            return;
+        }
+    }
 
     $pdo->exec("
         CREATE TABLE IF NOT EXISTS sistema_modulos (
@@ -115,7 +146,7 @@ function garantirTabelasModulos(PDO $pdo): void
             ativo = 'S'
     ");
 
-    foreach (sistemaModulosPadrao() as $modulo) {
+    foreach ($modulosPadrao as $modulo) {
         $stmt->execute([
             $modulo['codigo'],
             $modulo['grupo'],

@@ -16,6 +16,7 @@ $homeUrl = ($appBaseUrl ?: '') . '/index.php';
 $logoutUrl = ($appBaseUrl ?: '') . '/logout.php';
 $tesourariaUrl = ($appBaseUrl ?: '') . '/modulos/tesouraria/menu_tesouraria.php';
 $fechamentoUrl = ($appBaseUrl ?: '') . '/modulos/fechamentodecaixa/menu_fechamento.php';
+$financeiroUrl = ($appBaseUrl ?: '') . '/modulos/financeiro/menu_financeiro.php';
 $whatsappUrl = ($appBaseUrl ?: '') . '/modulos/whatsapp/index.php';
 $usuariosUrl = ($appBaseUrl ?: '') . '/modulos/usuarios/listar.php';
 $empresasUrl = ($appBaseUrl ?: '') . '/modulos/empresas/listar.php';
@@ -25,6 +26,7 @@ $empresaIdSessao = (int)($_SESSION['empresa_id'] ?? 0);
 $empresaNome = 'Empresa nao definida';
 $mostrarTesourariaTopbar = true;
 $mostrarFechamentoTopbar = true;
+$mostrarFinanceiroTopbar = true;
 $mostrarWhatsappTopbar = $nivelUsuario === 'MASTER';
 $mostrarUsuariosTopbar = $nivelUsuario === 'MASTER' || $nivelUsuario === 'ADMIN';
 $mostrarEmpresasTopbar = $nivelUsuario === 'MASTER';
@@ -57,12 +59,14 @@ if (!empty($_SESSION['empresa_nome'])) {
 if (isset($pdo_master) && function_exists('grupoPermitido') && function_exists('moduloPermitido')) {
     $mostrarTesourariaTopbar = grupoPermitido($pdo_master, $empresaIdSessao, 'Tesouraria', $nivelUsuario);
     $mostrarFechamentoTopbar = grupoPermitido($pdo_master, $empresaIdSessao, 'Fechamento', $nivelUsuario);
+    $mostrarFinanceiroTopbar = grupoPermitido($pdo_master, $empresaIdSessao, 'Financeiro', $nivelUsuario);
     $mostrarWhatsappTopbar = $nivelUsuario === 'MASTER' && moduloPermitido($pdo_master, $empresaIdSessao, 'whatsapp', $nivelUsuario);
     $mostrarUsuariosTopbar = in_array($nivelUsuario, ['MASTER', 'ADMIN'], true) && moduloPermitido($pdo_master, $empresaIdSessao, 'usuarios', $nivelUsuario);
     $mostrarEmpresasTopbar = $nivelUsuario === 'MASTER' && moduloPermitido($pdo_master, $empresaIdSessao, 'empresas', $nivelUsuario);
 }
 
 $homeUrlJson = htmlspecialchars(json_encode($homeUrl), ENT_QUOTES, 'UTF-8');
+$bootstrapCssUrl = ($appBaseUrl ?: '') . '/assets/bootstrap/bootstrap.min.css';
 ?>
 <!DOCTYPE html>
 <html lang="pt-br">
@@ -72,7 +76,7 @@ $homeUrlJson = htmlspecialchars(json_encode($homeUrl), ENT_QUOTES, 'UTF-8');
     <meta name="viewport" content="width=device-width, initial-scale=1">
 
     <!-- Bootstrap 5 -->
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="<?= htmlspecialchars($bootstrapCssUrl) ?>" rel="stylesheet">
 
     <style>
         :root {
@@ -460,6 +464,11 @@ $homeUrlJson = htmlspecialchars(json_encode($homeUrl), ENT_QUOTES, 'UTF-8');
                 <?php if ($mostrarFechamentoTopbar): ?>
                     <li class="nav-item">
                         <a class="nav-link" href="<?= htmlspecialchars($fechamentoUrl) ?>">Fechamento</a>
+                    </li>
+                <?php endif; ?>
+                <?php if ($mostrarFinanceiroTopbar): ?>
+                    <li class="nav-item">
+                        <a class="nav-link" href="<?= htmlspecialchars($financeiroUrl) ?>">Financeiro</a>
                     </li>
                 <?php endif; ?>
                 <?php if ($mostrarWhatsappTopbar): ?>
