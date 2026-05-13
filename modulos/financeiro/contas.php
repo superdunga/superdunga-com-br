@@ -45,7 +45,27 @@ function normalizarDecimalConta(string $valor): float
     return is_numeric($valor) ? (float)$valor : 0.0;
 }
 
-$contaSelecionada = (int)($_GET['cbcontador'] ?? 0);
+function normalizarContasSelecionadas($valor): array
+{
+    $valores = is_array($valor) ? $valor : [$valor];
+    $contas = [];
+
+    foreach ($valores as $item) {
+        if ($item === '' || $item === null) {
+            continue;
+        }
+
+        $conta = (int)$item;
+        if ($conta > 0) {
+            $contas[$conta] = true;
+        }
+    }
+
+    return array_keys($contas);
+}
+
+$contasSelecionadas = normalizarContasSelecionadas($_GET['cbcontador'] ?? []);
+$contaSelecionada = count($contasSelecionadas) === 1 ? $contasSelecionadas[0] : 0;
 $dataIni = trim($_GET['data_ini'] ?? '');
 $dataFim = trim($_GET['data_fim'] ?? '');
 $tipoes = trim($_GET['tipoes'] ?? '');
@@ -110,6 +130,7 @@ if (empty($contas)) {
 
 if ($contaSelecionada === 0 && count($contas) === 1) {
     $contaSelecionada = (int)$contas[0]['CBCONTADOR'];
+    $contasSelecionadas = [$contaSelecionada];
 }
 
 $stmtTipos = $pdo_master->prepare("
@@ -136,18 +157,18 @@ if (empty($tipos)) {
     $tipos = $stmtTiposFallback->fetchAll(PDO::FETCH_ASSOC);
 }
 
-$saldoInicial = null;
-if ($contaSelecionada > 0) {
-    $stmtSaldoAtual = $pdo_master->prepare("
-        SELECT *
-        FROM financeiro_contas_saldos
-        WHERE empresa_id = ?
-          AND cbcontador = ?
-        LIMIT 1
-    ");
-    $stmtSaldoAtual->execute([$empresaId, $contaSelecionada]);
-    $saldoInicial = $stmtSaldoAtual->fetch(PDO::FETCH_ASSOC) ?: null;
+$saldosIniciaisPorConta = [];
+$stmtSaldos = $pdo_master->prepare("
+    SELECT cbcontador, data_saldo, valor_saldo
+    FROM financeiro_contas_saldos
+    WHERE empresa_id = ?
+");
+$stmtSaldos->execute([$empresaId]);
+foreach ($stmtSaldos->fetchAll(PDO::FETCH_ASSOC) as $saldoConta) {
+    $saldosIniciaisPorConta[(int)$saldoConta['cbcontador']] = $saldoConta;
 }
+
+$saldoInicial = $contaSelecionada > 0 ? ($saldosIniciaisPorConta[$contaSelecionada] ?? null) : null;
 
 $where = [
     'b.EMPRESA = ?',
@@ -155,9 +176,11 @@ $where = [
 ];
 $params = [$empresaId];
 
-if ($contaSelecionada > 0) {
-    $where[] = 'b.CBCONTADOR = ?';
-    $params[] = $contaSelecionada;
+if (!empty($contasSelecionadas)) {
+    $where[] = 'b.CBCONTADOR IN (' . implode(',', array_fill(0, count($contasSelecionadas), '?')) . ')';
+    foreach ($contasSelecionadas as $contaFiltro) {
+        $params[] = $contaFiltro;
+    }
 }
 
 if ($dataIni !== '') {
@@ -209,13 +232,15 @@ $resumo = $stmtResumo->fetch(PDO::FETCH_ASSOC) ?: ['qtd' => 0, 'total_creditos' 
 $saldoBase = 0.0;
 $saldoBaseData = null;
 
-if ($saldoInicial) {
-    $saldoBase = (float)$saldoInicial['valor_saldo'];
-    $saldoBaseData = $saldoInicial['data_saldo'];
-}
+foreach ($contasSelecionadas as $contaSaldoBase) {
+    $saldoContaBase = $saldosIniciaisPorConta[$contaSaldoBase] ?? null;
+    if (!$saldoContaBase) {
+        continue;
+    }
 
-if ($contaSelecionada > 0 && $saldoInicial) {
-    $paramsAntes = [$empresaId, $contaSelecionada, $saldoBaseData];
+    $saldoBase += (float)$saldoContaBase['valor_saldo'];
+    $saldoBaseData = $saldoContaBase['data_saldo'];
+    $paramsAntes = [$empresaId, $contaSaldoBase, $saldoBaseData];
     $filtroAntes = "b.EMPRESA = ? AND b.CBCONTADOR = ? AND DATE(b.DTMOV) > ? AND COALESCE(b.deletado, 'N') <> 'S'";
 
     if ($dataIni !== '') {
@@ -251,17 +276,6 @@ $stmtSintetico = $pdo_master->prepare("
 ");
 $stmtSintetico->execute($params);
 $contasSintetico = $stmtSintetico->fetchAll(PDO::FETCH_ASSOC);
-
-$saldosIniciaisPorConta = [];
-$stmtSaldos = $pdo_master->prepare("
-    SELECT cbcontador, data_saldo, valor_saldo
-    FROM financeiro_contas_saldos
-    WHERE empresa_id = ?
-");
-$stmtSaldos->execute([$empresaId]);
-foreach ($stmtSaldos->fetchAll(PDO::FETCH_ASSOC) as $saldoConta) {
-    $saldosIniciaisPorConta[(int)$saldoConta['cbcontador']] = $saldoConta;
-}
 
 foreach ($contasSintetico as &$contaResumo) {
     $cbcontadorResumo = (int)$contaResumo['CBCONTADOR'];
@@ -342,6 +356,59 @@ function queryContasBanco(array $extra = []): string
     return http_build_query($params);
 }
 
+if (($_GET['exportar'] ?? '') === 'excel') {
+    $nomeArquivo = 'contas_' . $visao . '_' . date('Ymd_His') . '.xls';
+
+    header('Content-Type: application/vnd.ms-excel; charset=utf-8');
+    header('Content-Disposition: attachment; filename="' . $nomeArquivo . '"');
+    header('Pragma: no-cache');
+    header('Expires: 0');
+
+    echo "\xEF\xBB\xBF";
+    echo '<table border="1">';
+
+    if ($visao === 'sintetico') {
+        echo '<tr>';
+        foreach (['Conta', 'Nome', 'Creditos', 'Debitos', 'Saldo'] as $cabecalho) {
+            echo '<th>' . htmlspecialchars($cabecalho) . '</th>';
+        }
+        echo '</tr>';
+
+        foreach ($contasSintetico as $contaResumo) {
+            echo '<tr>';
+            echo '<td>' . (int)$contaResumo['CBCONTADOR'] . '</td>';
+            echo '<td>' . htmlspecialchars((string)$contaResumo['conta_nome']) . '</td>';
+            echo '<td>' . number_format((float)$contaResumo['total_creditos'], 2, ',', '.') . '</td>';
+            echo '<td>' . number_format((float)$contaResumo['total_debitos'], 2, ',', '.') . '</td>';
+            echo '<td>' . number_format((float)$contaResumo['saldo'], 2, ',', '.') . '</td>';
+            echo '</tr>';
+        }
+    } else {
+        echo '<tr>';
+        foreach (['Data', 'Conta', 'TipoEs', 'Historico', 'Documento', 'D/C', 'Valor', 'Saldo'] as $cabecalho) {
+            echo '<th>' . htmlspecialchars($cabecalho) . '</th>';
+        }
+        echo '</tr>';
+
+        foreach ($registros as $registro) {
+            $documentoExcel = $registro['NUMDOC'] ?: ($registro['NUMDOCORIGEM'] ?: $registro['NUMCONTROLE']);
+            echo '<tr>';
+            echo '<td>' . htmlspecialchars(dataContasBanco($registro['DTMOV'])) . '</td>';
+            echo '<td>' . (int)$registro['CBCONTADOR'] . ' - ' . htmlspecialchars((string)$registro['conta_nome']) . '</td>';
+            echo '<td>' . (int)$registro['TIPOES'] . ' - ' . htmlspecialchars((string)$registro['tipo_nome']) . '</td>';
+            echo '<td>' . htmlspecialchars((string)$registro['HISTMOV']) . '</td>';
+            echo '<td>' . htmlspecialchars((string)$documentoExcel) . '</td>';
+            echo '<td>' . htmlspecialchars((string)$registro['TIPOMOV']) . '</td>';
+            echo '<td>' . number_format(abs((float)$registro['VALORMOV']), 2, ',', '.') . '</td>';
+            echo '<td>' . (!empty($contasSelecionadas) ? number_format((float)$registro['saldo_calculado'], 2, ',', '.') : '') . '</td>';
+            echo '</tr>';
+        }
+    }
+
+    echo '</table>';
+    exit;
+}
+
 require '../../layout/header.php';
 ?>
 
@@ -362,6 +429,36 @@ require '../../layout/header.php';
     .historico-principal { line-height: 1.2; }
     .saldo-card-negativo { color: #dc3545; }
     .saldo-card-positivo { color: #087f5b; }
+    .contas-filter-actions .btn { white-space: nowrap; }
+    .contas-selector {
+        max-height: 190px;
+        overflow-y: auto;
+        border: 1px solid #d7dee8;
+        border-radius: .5rem;
+        padding: .35rem .45rem;
+        background: #fff;
+    }
+    .contas-selector-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+        gap: .18rem .75rem;
+    }
+    .conta-check {
+        display: flex;
+        align-items: center;
+        gap: .45rem;
+        min-width: 0;
+        padding: .18rem .45rem;
+        border-radius: .4rem;
+    }
+    .conta-check:hover { background: #f5f8fc; }
+    .conta-check input { flex: 0 0 auto; }
+    .conta-check span {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        font-size: .9rem;
+    }
 
     @media (max-width: 575.98px) {
         .financeiro-grid {
@@ -412,6 +509,14 @@ require '../../layout/header.php';
             display: block;
             margin-bottom: .25rem;
         }
+        .contas-filter-actions {
+            display: grid !important;
+            grid-template-columns: 1fr 1fr;
+        }
+        .contas-filter-actions .btn,
+        .contas-filter-actions button {
+            width: 100%;
+        }
     }
 </style>
 
@@ -433,27 +538,31 @@ require '../../layout/header.php';
 <section class="mb-3">
     <form method="GET" class="bg-white border rounded-2 shadow-sm p-3">
         <input type="hidden" name="visao" value="<?= htmlspecialchars($visao) ?>">
-        <div class="row g-3 align-items-end">
-            <div class="col-md-4">
+        <div class="row g-3">
+            <div class="col-12">
                 <label class="form-label">Conta</label>
-                <select name="cbcontador" class="form-select">
-                    <option value="">Todas</option>
-                    <?php foreach ($contas as $conta): ?>
-                        <option value="<?= (int)$conta['CBCONTADOR'] ?>" <?= $contaSelecionada === (int)$conta['CBCONTADOR'] ? 'selected' : '' ?>>
-                            <?= (int)$conta['CBCONTADOR'] ?> - <?= htmlspecialchars($conta['TITULAR'] ?: $conta['DESCABREV']) ?>
-                        </option>
-                    <?php endforeach; ?>
-                </select>
+                <div class="contas-selector">
+                    <div class="contas-selector-grid">
+                        <?php foreach ($contas as $conta): ?>
+                            <?php $codigoConta = (int)$conta['CBCONTADOR']; ?>
+                            <label class="conta-check" title="<?= htmlspecialchars($codigoConta . ' - ' . ($conta['TITULAR'] ?: $conta['DESCABREV'])) ?>">
+                                <input type="checkbox" name="cbcontador[]" value="<?= $codigoConta ?>" <?= in_array($codigoConta, $contasSelecionadas, true) ? 'checked' : '' ?>>
+                                <span><?= $codigoConta ?> - <?= htmlspecialchars($conta['TITULAR'] ?: $conta['DESCABREV']) ?></span>
+                            </label>
+                        <?php endforeach; ?>
+                    </div>
+                </div>
+                <div class="form-text">Marque uma ou mais contas. Sem marcar nenhuma, a tela mostra todas.</div>
             </div>
-            <div class="col-md-2">
+            <div class="col-6 col-lg-2">
                 <label class="form-label">Data inicial</label>
                 <input type="date" name="data_ini" class="form-control" value="<?= htmlspecialchars($dataIni) ?>">
             </div>
-            <div class="col-md-2">
+            <div class="col-6 col-lg-2">
                 <label class="form-label">Data final</label>
                 <input type="date" name="data_fim" class="form-control" value="<?= htmlspecialchars($dataFim) ?>">
             </div>
-            <div class="col-md-2">
+            <div class="col-6 col-lg-2">
                 <label class="form-label">D/C</label>
                 <select name="dc" class="form-select">
                     <option value="">Todos</option>
@@ -461,7 +570,7 @@ require '../../layout/header.php';
                     <option value="D" <?= $dc === 'D' ? 'selected' : '' ?>>Debito</option>
                 </select>
             </div>
-            <div class="col-md-2">
+            <div class="col-6 col-lg-2">
                 <label class="form-label">TipoEs</label>
                 <select name="tipoes" class="form-select">
                     <option value="">Todos</option>
@@ -472,18 +581,19 @@ require '../../layout/header.php';
                     <?php endforeach; ?>
                 </select>
             </div>
-            <div class="col-md-6">
+            <div class="col-12 col-lg-4">
                 <label class="form-label">Historico</label>
                 <input type="text" name="historico" class="form-control" value="<?= htmlspecialchars($historico) ?>">
             </div>
-            <div class="col-md-2">
+            <div class="col-12 col-lg-3">
                 <label class="form-label">Documento</label>
                 <input type="text" name="documento" class="form-control" value="<?= htmlspecialchars($documento) ?>">
             </div>
-            <div class="col-md-4 d-flex gap-2 justify-content-end">
+            <div class="col-12 col-lg-9 d-flex flex-wrap gap-2 justify-content-lg-end contas-filter-actions">
                 <a href="contas.php" class="btn btn-outline-secondary">Limpar</a>
                 <a href="contas.php?<?= htmlspecialchars(queryContasBanco(['visao' => 'sintetico'])) ?>" class="btn <?= $visao === 'sintetico' ? 'btn-success' : 'btn-outline-success' ?>">Sintetico</a>
                 <a href="contas.php?<?= htmlspecialchars(queryContasBanco(['visao' => 'extrato'])) ?>" class="btn <?= $visao === 'extrato' ? 'btn-primary' : 'btn-outline-primary' ?>">Extrato</a>
+                <a href="contas.php?<?= htmlspecialchars(queryContasBanco(['exportar' => 'excel'])) ?>" class="btn btn-outline-success">Exportar Excel</a>
                 <button type="submit" class="btn btn-primary">Filtrar</button>
             </div>
         </div>
@@ -500,6 +610,8 @@ require '../../layout/header.php';
                 <div class="fw-semibold">
                     <?php if ($contaSelecionada > 0): ?>
                         Conta <?= (int)$contaSelecionada ?>
+                    <?php elseif (count($contasSelecionadas) > 1): ?>
+                        Selecione apenas uma conta para configurar
                     <?php else: ?>
                         Selecione uma conta para configurar
                     <?php endif; ?>
@@ -591,8 +703,8 @@ require '../../layout/header.php';
 <?php else: ?>
 <section>
     <div class="bg-white border rounded-2 shadow-sm overflow-hidden">
-        <?php if ($contaSelecionada === 0): ?>
-            <div class="alert alert-info m-3 mb-0">Selecione uma conta para acompanhar o saldo linha a linha do extrato.</div>
+        <?php if (empty($contasSelecionadas)): ?>
+            <div class="alert alert-info m-3 mb-0">Selecione uma ou mais contas para acompanhar o saldo linha a linha do extrato.</div>
         <?php endif; ?>
         <div class="table-responsive">
             <table class="table table-sm table-hover align-middle mb-0 financeiro-grid">
@@ -617,7 +729,7 @@ require '../../layout/header.php';
                             <td data-label="Data" class="col-date"><?= dataContasBanco($registro['DTMOV']) ?></td>
                             <td data-label="TipoEs" class="col-type">
                                 <div class="fw-semibold"><?= (int)$registro['TIPOES'] ?> - <?= htmlspecialchars($registro['tipo_nome']) ?></div>
-                                <?php if ($contaSelecionada === 0): ?>
+                                <?php if (count($contasSelecionadas) !== 1): ?>
                                     <div class="small text-muted">Conta <?= (int)$registro['CBCONTADOR'] ?> - <?= htmlspecialchars($registro['conta_nome']) ?></div>
                                 <?php endif; ?>
                             </td>
@@ -636,7 +748,7 @@ require '../../layout/header.php';
                             </td>
                             <td data-label="Valor" class="text-end fw-semibold col-money"><?= moedaContasBanco(abs((float)$registro['VALORMOV'])) ?></td>
                             <td data-label="Saldo" class="text-end col-money <?= ((float)$registro['saldo_calculado']) < 0 ? 'saldo-card-negativo' : 'saldo-card-positivo' ?>">
-                                <?= $contaSelecionada > 0 ? moedaContasBanco($registro['saldo_calculado']) : '-' ?>
+                                <?= !empty($contasSelecionadas) ? moedaContasBanco($registro['saldo_calculado']) : '-' ?>
                             </td>
                         </tr>
                     <?php endforeach; ?>
