@@ -52,10 +52,10 @@ $tipoes = trim($_GET['tipoes'] ?? '');
 $historico = trim($_GET['historico'] ?? '');
 $documento = trim($_GET['documento'] ?? '');
 $dc = strtoupper(trim($_GET['dc'] ?? ''));
-$situacao = trim($_GET['situacao'] ?? 'ativos');
+$visao = trim($_GET['visao'] ?? 'extrato');
 
-if (!in_array($situacao, ['ativos', 'excluidos', 'todos'], true)) {
-    $situacao = 'ativos';
+if (!in_array($visao, ['extrato', 'sintetico'], true)) {
+    $visao = 'extrato';
 }
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['acao'] ?? '') === 'salvar_saldo') {
@@ -87,6 +87,7 @@ $stmtContas = $pdo_master->prepare("
     FROM armazem_bnc002
     WHERE EMPRESA = ?
       AND COALESCE(excluido_firebird, 'N') <> 'S'
+      AND COALESCE(CONTABLOQUEADA, 'N') <> 'S'
     ORDER BY CBCONTADOR
 ");
 $stmtContas->execute([$empresaId]);
@@ -150,14 +151,9 @@ if ($contaSelecionada > 0) {
 
 $where = [
     'b.EMPRESA = ?',
+    "COALESCE(b.deletado, 'N') <> 'S'",
 ];
 $params = [$empresaId];
-
-if ($situacao === 'ativos') {
-    $where[] = "COALESCE(b.deletado, 'N') <> 'S'";
-} elseif ($situacao === 'excluidos') {
-    $where[] = "COALESCE(b.deletado, 'N') = 'S'";
-}
 
 if ($contaSelecionada > 0) {
     $where[] = 'b.CBCONTADOR = ?';
@@ -220,13 +216,7 @@ if ($saldoInicial) {
 
 if ($contaSelecionada > 0 && $saldoInicial) {
     $paramsAntes = [$empresaId, $contaSelecionada, $saldoBaseData];
-    $filtroAntes = "b.EMPRESA = ? AND b.CBCONTADOR = ? AND DATE(b.DTMOV) > ?";
-
-    if ($situacao === 'ativos') {
-        $filtroAntes .= " AND COALESCE(b.deletado, 'N') <> 'S'";
-    } elseif ($situacao === 'excluidos') {
-        $filtroAntes .= " AND COALESCE(b.deletado, 'N') = 'S'";
-    }
+    $filtroAntes = "b.EMPRESA = ? AND b.CBCONTADOR = ? AND DATE(b.DTMOV) > ? AND COALESCE(b.deletado, 'N') <> 'S'";
 
     if ($dataIni !== '') {
         $filtroAntes .= " AND DATE(b.DTMOV) < ?";
@@ -243,6 +233,64 @@ if ($contaSelecionada > 0 && $saldoInicial) {
 }
 
 $saldoResumo = $saldoBase + (float)$resumo['total_creditos'] - (float)$resumo['total_debitos'];
+
+$stmtSintetico = $pdo_master->prepare("
+    SELECT
+        b.CBCONTADOR,
+        COALESCE(c.TITULAR, c.DESCABREV, CONCAT('Conta ', b.CBCONTADOR)) AS conta_nome,
+        COUNT(*) AS qtd,
+        COALESCE(SUM(CASE WHEN b.TIPOMOV = 'C' THEN ABS(b.VALORMOV) ELSE 0 END), 0) AS total_creditos,
+        COALESCE(SUM(CASE WHEN b.TIPOMOV = 'D' THEN ABS(b.VALORMOV) ELSE 0 END), 0) AS total_debitos
+    FROM armazem_bnc001 b
+    LEFT JOIN armazem_bnc002 c
+        ON c.EMPRESA = b.EMPRESA
+       AND c.CBCONTADOR = b.CBCONTADOR
+    WHERE {$whereSql}
+    GROUP BY b.CBCONTADOR, conta_nome
+    ORDER BY b.CBCONTADOR
+");
+$stmtSintetico->execute($params);
+$contasSintetico = $stmtSintetico->fetchAll(PDO::FETCH_ASSOC);
+
+$saldosIniciaisPorConta = [];
+$stmtSaldos = $pdo_master->prepare("
+    SELECT cbcontador, data_saldo, valor_saldo
+    FROM financeiro_contas_saldos
+    WHERE empresa_id = ?
+");
+$stmtSaldos->execute([$empresaId]);
+foreach ($stmtSaldos->fetchAll(PDO::FETCH_ASSOC) as $saldoConta) {
+    $saldosIniciaisPorConta[(int)$saldoConta['cbcontador']] = $saldoConta;
+}
+
+foreach ($contasSintetico as &$contaResumo) {
+    $cbcontadorResumo = (int)$contaResumo['CBCONTADOR'];
+    $saldoBaseConta = 0.0;
+    $saldoConta = $saldosIniciaisPorConta[$cbcontadorResumo] ?? null;
+
+    if ($saldoConta) {
+        $saldoBaseConta = (float)$saldoConta['valor_saldo'];
+        $paramsAntesConta = [$empresaId, $cbcontadorResumo, $saldoConta['data_saldo']];
+        $filtroAntesConta = "b.EMPRESA = ? AND b.CBCONTADOR = ? AND DATE(b.DTMOV) > ? AND COALESCE(b.deletado, 'N') <> 'S'";
+
+        if ($dataIni !== '') {
+            $filtroAntesConta .= " AND DATE(b.DTMOV) < ?";
+            $paramsAntesConta[] = $dataIni;
+        }
+
+        $stmtAntesConta = $pdo_master->prepare("
+            SELECT COALESCE(SUM(CASE WHEN b.TIPOMOV = 'C' THEN ABS(b.VALORMOV) ELSE -ABS(b.VALORMOV) END), 0)
+            FROM armazem_bnc001 b
+            WHERE {$filtroAntesConta}
+        ");
+        $stmtAntesConta->execute($paramsAntesConta);
+        $saldoBaseConta += (float)$stmtAntesConta->fetchColumn();
+    }
+
+    $contaResumo['saldo_base'] = $saldoBaseConta;
+    $contaResumo['saldo'] = $saldoBaseConta + (float)$contaResumo['total_creditos'] - (float)$contaResumo['total_debitos'];
+}
+unset($contaResumo);
 
 $stmt = $pdo_master->prepare("
     SELECT
@@ -384,6 +432,7 @@ require '../../layout/header.php';
 
 <section class="mb-3">
     <form method="GET" class="bg-white border rounded-2 shadow-sm p-3">
+        <input type="hidden" name="visao" value="<?= htmlspecialchars($visao) ?>">
         <div class="row g-3 align-items-end">
             <div class="col-md-4">
                 <label class="form-label">Conta</label>
@@ -413,14 +462,6 @@ require '../../layout/header.php';
                 </select>
             </div>
             <div class="col-md-2">
-                <label class="form-label">Situacao</label>
-                <select name="situacao" class="form-select">
-                    <option value="ativos" <?= $situacao === 'ativos' ? 'selected' : '' ?>>Ativos</option>
-                    <option value="todos" <?= $situacao === 'todos' ? 'selected' : '' ?>>Todos</option>
-                    <option value="excluidos" <?= $situacao === 'excluidos' ? 'selected' : '' ?>>Excluidos</option>
-                </select>
-            </div>
-            <div class="col-md-2">
                 <label class="form-label">TipoEs</label>
                 <select name="tipoes" class="form-select">
                     <option value="">Todos</option>
@@ -431,7 +472,7 @@ require '../../layout/header.php';
                     <?php endforeach; ?>
                 </select>
             </div>
-            <div class="col-md-4">
+            <div class="col-md-6">
                 <label class="form-label">Historico</label>
                 <input type="text" name="historico" class="form-control" value="<?= htmlspecialchars($historico) ?>">
             </div>
@@ -441,6 +482,8 @@ require '../../layout/header.php';
             </div>
             <div class="col-md-4 d-flex gap-2 justify-content-end">
                 <a href="contas.php" class="btn btn-outline-secondary">Limpar</a>
+                <a href="contas.php?<?= htmlspecialchars(queryContasBanco(['visao' => 'sintetico'])) ?>" class="btn <?= $visao === 'sintetico' ? 'btn-success' : 'btn-outline-success' ?>">Sintetico</a>
+                <a href="contas.php?<?= htmlspecialchars(queryContasBanco(['visao' => 'extrato'])) ?>" class="btn <?= $visao === 'extrato' ? 'btn-primary' : 'btn-outline-primary' ?>">Extrato</a>
                 <button type="submit" class="btn btn-primary">Filtrar</button>
             </div>
         </div>
@@ -506,6 +549,46 @@ require '../../layout/header.php';
     </div>
 </section>
 
+<?php if ($visao === 'sintetico'): ?>
+<section>
+    <div class="bg-white border rounded-2 shadow-sm overflow-hidden">
+        <div class="table-responsive">
+            <table class="table table-sm table-hover align-middle mb-0 financeiro-grid">
+                <thead class="table-primary">
+                    <tr>
+                        <th>Conta</th>
+                        <th class="text-end col-money">Registros</th>
+                        <th class="text-end col-money">Creditos</th>
+                        <th class="text-end col-money">Debitos</th>
+                        <th class="text-end col-money">Saldo</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <?php foreach ($contasSintetico as $contaResumo): ?>
+                        <?php $saldoContaResumo = (float)$contaResumo['saldo']; ?>
+                        <tr>
+                            <td data-label="Conta">
+                                <div class="fw-semibold"><?= (int)$contaResumo['CBCONTADOR'] ?> - <?= htmlspecialchars((string)$contaResumo['conta_nome']) ?></div>
+                            </td>
+                            <td data-label="Registros" class="text-end col-money"><?= (int)$contaResumo['qtd'] ?></td>
+                            <td data-label="Creditos" class="text-end col-money saldo-card-positivo"><?= moedaContasBanco($contaResumo['total_creditos']) ?></td>
+                            <td data-label="Debitos" class="text-end col-money saldo-card-negativo"><?= moedaContasBanco($contaResumo['total_debitos']) ?></td>
+                            <td data-label="Saldo" class="text-end fw-bold col-money <?= $saldoContaResumo < 0 ? 'saldo-card-negativo' : 'saldo-card-positivo' ?>">
+                                <?= moedaContasBanco($saldoContaResumo) ?>
+                            </td>
+                        </tr>
+                    <?php endforeach; ?>
+                    <?php if (empty($contasSintetico)): ?>
+                        <tr>
+                            <td colspan="5" class="text-center text-muted py-4">Nenhuma conta encontrada com os filtros informados.</td>
+                        </tr>
+                    <?php endif; ?>
+                </tbody>
+            </table>
+        </div>
+    </div>
+</section>
+<?php else: ?>
 <section>
     <div class="bg-white border rounded-2 shadow-sm overflow-hidden">
         <?php if ($contaSelecionada === 0): ?>
@@ -572,5 +655,6 @@ require '../../layout/header.php';
         <?php endif; ?>
     </div>
 </section>
+<?php endif; ?>
 
 <?php require '../../layout/footer.php'; ?>
