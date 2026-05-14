@@ -50,6 +50,7 @@ $sqlSeguro = "
             WHERE cx.recebimento_id = r.id
               AND cx.EMPRESA = $empresa_id
               AND COALESCE(cx.excluido_firebird, 'N') = 'N'
+                AND COALESCE(cx.STATUS, '') <> 'QT'
         )
           AND r.empresa_id = $empresa_id
     ),
@@ -71,6 +72,7 @@ $sqlSeguro = "
           AND c.EMPRESA = $empresa_id
           AND (c.validado IS NULL OR c.validado <> 'S')
           AND COALESCE(c.excluido_firebird, 'N') = 'N'
+      AND COALESCE(c.STATUS, '') <> 'QT'
     )
     SELECT r.id rec_id, r.CMCONTADOR, c.CRCONTADOR
     FROM rec r
@@ -116,6 +118,7 @@ $sqlMovimento = "
             WHERE cx.recebimento_id = r.id
               AND cx.EMPRESA = $empresa_id
               AND COALESCE(cx.excluido_firebird, 'N') = 'N'
+                AND COALESCE(cx.STATUS, '') <> 'QT'
         )
           AND r.empresa_id = $empresa_id
     ),
@@ -138,7 +141,7 @@ $sqlMovimento = "
           AND c.CMCONTADOR <> 9
           AND (c.validado IS NULL OR c.validado <> 'S')
           AND COALESCE(c.excluido_firebird, 'N') = 'N'
-          AND NOT (c.CMCONTADOR = 1 AND c.STATUS = 'QT')
+      AND COALESCE(c.STATUS, '') <> 'QT'
     )
     SELECT r.id rec_id, r.CMCONTADOR, c.CRCONTADOR
     FROM rec r
@@ -178,12 +181,14 @@ $sqlAproximado = "
       AND c.recebimento_id IS NULL
       AND (c.validado IS NULL OR c.validado <> 'S')
       AND COALESCE(c.excluido_firebird, 'N') = 'N'
+      AND COALESCE(c.STATUS, '') <> 'QT'
       AND NOT EXISTS (
           SELECT 1
           FROM armazem_cr001 cx
           WHERE cx.recebimento_id = r.id
             AND cx.EMPRESA = $empresa_id
             AND COALESCE(cx.excluido_firebird, 'N') = 'N'
+                AND COALESCE(cx.STATUS, '') <> 'QT'
       )
 ";
 
@@ -207,6 +212,7 @@ function conciliar($pdo, $rec_id, $cm, $crcontador, $empresa_id) {
         WHERE CRCONTADOR = ?
           AND EMPRESA = ?
           AND COALESCE(excluido_firebird, 'N') = 'N'
+          AND COALESCE(STATUS, '') <> 'QT'
     ");
     $check->execute([$crcontador, $empresa_id]);
     $existe = $check->fetch(PDO::FETCH_ASSOC);
@@ -222,6 +228,7 @@ function conciliar($pdo, $rec_id, $cm, $crcontador, $empresa_id) {
         WHERE recebimento_id = ?
           AND EMPRESA = ?
           AND COALESCE(excluido_firebird, 'N') = 'N'
+          AND COALESCE(STATUS, '') <> 'QT'
         LIMIT 1
     ");
     $checkRec->execute([$rec_id, $empresa_id]);
@@ -237,6 +244,7 @@ function conciliar($pdo, $rec_id, $cm, $crcontador, $empresa_id) {
         AND EMPRESA = ?
         AND recebimento_id IS NULL
         AND COALESCE(excluido_firebird, 'N') = 'N'
+        AND COALESCE(STATUS, '') <> 'QT'
     ");
 
     return $update->execute([$rec_id, $cm, $crcontador, $empresa_id]);

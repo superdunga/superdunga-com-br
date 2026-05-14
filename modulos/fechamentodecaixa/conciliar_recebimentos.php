@@ -47,6 +47,7 @@ if (!$modoLeveAuto) {
       AND r.empresa_id = $empresa_id
       AND c.EMPRESA = $empresa_id
       AND COALESCE(c.excluido_firebird, 'N') = 'N'
+      AND COALESCE(c.STATUS, '') <> 'QT'
     ORDER BY r.data_venda ASC, r.id ASC, c.CRCONTADOR ASC
 ");
     $stmtOk->execute([$inicio, $fim]);
@@ -81,6 +82,7 @@ if (!$modoLeveAuto) {
               WHERE cx.recebimento_id = r.id
                 AND cx.EMPRESA = $empresa_id
                 AND COALESCE(cx.excluido_firebird, 'N') = 'N'
+                AND COALESCE(cx.STATUS, '') <> 'QT'
           )
     ),
     cr AS (
@@ -103,6 +105,7 @@ if (!$modoLeveAuto) {
           AND c.recebimento_id IS NULL
           AND (c.validado IS NULL OR c.validado <> 'S')
           AND COALESCE(c.excluido_firebird, 'N') = 'N'
+      AND COALESCE(c.STATUS, '') <> 'QT'
     )
     SELECT
         r.id AS rec_id,
@@ -153,6 +156,7 @@ if (!$modoLeveAuto) {
               WHERE cx.recebimento_id = r.id
                 AND cx.EMPRESA = $empresa_id
                 AND COALESCE(cx.excluido_firebird, 'N') = 'N'
+                AND COALESCE(cx.STATUS, '') <> 'QT'
           )
     ),
     cr AS (
@@ -176,7 +180,7 @@ if (!$modoLeveAuto) {
           AND c.CMCONTADOR <> 9
           AND (c.validado IS NULL OR c.validado <> 'S')
           AND COALESCE(c.excluido_firebird, 'N') = 'N'
-          AND NOT (c.CMCONTADOR = 1 AND c.STATUS = 'QT')
+      AND COALESCE(c.STATUS, '') <> 'QT'
     )
     SELECT
         r.id AS rec_id,
@@ -227,12 +231,14 @@ if (!$modoLeveAuto) {
       AND c.recebimento_id IS NULL
       AND (c.validado IS NULL OR c.validado <> 'S')
       AND COALESCE(c.excluido_firebird, 'N') = 'N'
+      AND COALESCE(c.STATUS, '') <> 'QT'
       AND NOT EXISTS (
           SELECT 1
           FROM armazem_cr001 cx
           WHERE cx.recebimento_id = r.id
             AND cx.EMPRESA = $empresa_id
             AND COALESCE(cx.excluido_firebird, 'N') = 'N'
+                AND COALESCE(cx.STATUS, '') <> 'QT'
       )
     ORDER BY r.valor_bruto ASC, r.data_venda ASC, c.DTLANC ASC
 ");
@@ -264,6 +270,7 @@ if (!$modoLeveAuto) {
               WHERE cx.recebimento_id = r.id
                 AND cx.EMPRESA = $empresa_id
                 AND COALESCE(cx.excluido_firebird, 'N') = 'N'
+                AND COALESCE(cx.STATUS, '') <> 'QT'
           )
     ),
     cr AS (
@@ -282,6 +289,7 @@ if (!$modoLeveAuto) {
           AND c.recebimento_id IS NULL
           AND (c.validado IS NULL OR c.validado <> 'S')
           AND COALESCE(c.excluido_firebird, 'N') = 'N'
+      AND COALESCE(c.STATUS, '') <> 'QT'
     )
     SELECT
         r.id AS rec_id,
@@ -322,6 +330,7 @@ if (!$modoLeveAuto) {
           WHERE cx.recebimento_id = r.id
             AND cx.EMPRESA = $empresa_id
             AND COALESCE(cx.excluido_firebird, 'N') = 'N'
+                AND COALESCE(cx.STATUS, '') <> 'QT'
       )
       AND NOT EXISTS (
           SELECT 1
@@ -333,6 +342,7 @@ if (!$modoLeveAuto) {
             AND c.recebimento_id IS NULL
             AND (c.validado IS NULL OR c.validado <> 'S')
             AND COALESCE(c.excluido_firebird, 'N') = 'N'
+      AND COALESCE(c.STATUS, '') <> 'QT'
       )
     ORDER BY r.data_venda ASC, r.id ASC
 ");
@@ -356,6 +366,7 @@ if (!$modoLeveAuto) {
       AND c.recebimento_id IS NULL
       AND (c.validado IS NULL OR c.validado <> 'S')
       AND COALESCE(c.excluido_firebird, 'N') = 'N'
+      AND COALESCE(c.STATUS, '') <> 'QT'
       AND NOT EXISTS (
           SELECT 1
           FROM armazem_conciliacao_recebimentos r
@@ -369,6 +380,7 @@ if (!$modoLeveAuto) {
                 WHERE cx.recebimento_id = r.id
                   AND cx.EMPRESA = $empresa_id
                   AND COALESCE(cx.excluido_firebird, 'N') = 'N'
+                AND COALESCE(cx.STATUS, '') <> 'QT'
             )
       )
     ORDER BY c.DTLANC ASC, c.CRCONTADOR ASC
