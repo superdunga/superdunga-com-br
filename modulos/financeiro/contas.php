@@ -103,12 +103,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['acao'] ?? '') === 'salvar_
 }
 
 $stmtContas = $pdo_master->prepare("
-    SELECT CBCONTADOR, TITULAR, DESCABREV
+    SELECT
+        CBCONTADOR,
+        TITULAR,
+        DESCABREV,
+        TRIM(COALESCE(NULLIF(TITULAR, ''), NULLIF(DESCABREV, ''), CONCAT('Conta ', CBCONTADOR))) AS nome_conta
     FROM armazem_bnc002
     WHERE EMPRESA = ?
       AND COALESCE(excluido_firebird, 'N') <> 'S'
       AND COALESCE(CONTABLOQUEADA, 'N') <> 'S'
-    ORDER BY CBCONTADOR
+    ORDER BY nome_conta ASC, CBCONTADOR ASC
 ");
 $stmtContas->execute([$empresaId]);
 $contas = $stmtContas->fetchAll(PDO::FETCH_ASSOC);
@@ -118,11 +122,12 @@ if (empty($contas)) {
         SELECT DISTINCT
             CBCONTADOR,
             CONCAT('Conta ', CBCONTADOR) AS TITULAR,
-            CONCAT('Conta ', CBCONTADOR) AS DESCABREV
+            CONCAT('Conta ', CBCONTADOR) AS DESCABREV,
+            CONCAT('Conta ', CBCONTADOR) AS nome_conta
         FROM armazem_bnc001
         WHERE EMPRESA = ?
           AND CBCONTADOR IS NOT NULL
-        ORDER BY CBCONTADOR
+        ORDER BY nome_conta ASC, CBCONTADOR ASC
     ");
     $stmtContasFallback->execute([$empresaId]);
     $contas = $stmtContasFallback->fetchAll(PDO::FETCH_ASSOC);
@@ -484,8 +489,8 @@ require '../../layout/header.php';
     }
     .contas-selector-grid {
         display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
-        gap: .18rem .75rem;
+        grid-template-columns: 1fr;
+        gap: .12rem;
     }
     .conta-check {
         display: flex;
@@ -498,10 +503,9 @@ require '../../layout/header.php';
     .conta-check:hover { background: #f5f8fc; }
     .conta-check input { flex: 0 0 auto; }
     .conta-check span {
-        overflow: hidden;
-        text-overflow: ellipsis;
-        white-space: nowrap;
         font-size: .9rem;
+        line-height: 1.15;
+        overflow-wrap: anywhere;
     }
 
     @media (max-width: 575.98px) {
@@ -589,9 +593,10 @@ require '../../layout/header.php';
                     <div class="contas-selector-grid">
                         <?php foreach ($contas as $conta): ?>
                             <?php $codigoConta = (int)$conta['CBCONTADOR']; ?>
-                            <label class="conta-check" title="<?= htmlspecialchars($codigoConta . ' - ' . ($conta['TITULAR'] ?: $conta['DESCABREV'])) ?>">
+                            <?php $nomeConta = trim((string)($conta['nome_conta'] ?? ($conta['TITULAR'] ?: $conta['DESCABREV']))); ?>
+                            <label class="conta-check" title="<?= htmlspecialchars($codigoConta . ' - ' . $nomeConta) ?>">
                                 <input type="checkbox" name="cbcontador[]" value="<?= $codigoConta ?>" <?= in_array($codigoConta, $contasSelecionadas, true) ? 'checked' : '' ?>>
-                                <span><?= $codigoConta ?> - <?= htmlspecialchars($conta['TITULAR'] ?: $conta['DESCABREV']) ?></span>
+                                <span><?= $codigoConta ?> - <?= htmlspecialchars($nomeConta) ?></span>
                             </label>
                         <?php endforeach; ?>
                     </div>

@@ -17,6 +17,7 @@ $logoutUrl = ($appBaseUrl ?: '') . '/logout.php';
 $tesourariaUrl = ($appBaseUrl ?: '') . '/modulos/tesouraria/menu_tesouraria.php';
 $fechamentoUrl = ($appBaseUrl ?: '') . '/modulos/fechamentodecaixa/menu_fechamento.php';
 $financeiroUrl = ($appBaseUrl ?: '') . '/modulos/financeiro/menu_financeiro.php';
+$estoqueUrl = ($appBaseUrl ?: '') . '/modulos/estoque/menu_estoque.php';
 $whatsappUrl = ($appBaseUrl ?: '') . '/modulos/whatsapp/index.php';
 $usuariosUrl = ($appBaseUrl ?: '') . '/modulos/usuarios/listar.php';
 $empresasUrl = ($appBaseUrl ?: '') . '/modulos/empresas/listar.php';
@@ -27,6 +28,7 @@ $empresaNome = 'Empresa nao definida';
 $mostrarTesourariaTopbar = true;
 $mostrarFechamentoTopbar = true;
 $mostrarFinanceiroTopbar = true;
+$mostrarEstoqueTopbar = true;
 $mostrarWhatsappTopbar = $nivelUsuario === 'MASTER';
 $mostrarUsuariosTopbar = $nivelUsuario === 'MASTER' || $nivelUsuario === 'ADMIN';
 $mostrarEmpresasTopbar = $nivelUsuario === 'MASTER';
@@ -60,6 +62,7 @@ if (isset($pdo_master) && function_exists('grupoPermitido') && function_exists('
     $mostrarTesourariaTopbar = grupoPermitido($pdo_master, $empresaIdSessao, 'Tesouraria', $nivelUsuario);
     $mostrarFechamentoTopbar = grupoPermitido($pdo_master, $empresaIdSessao, 'Fechamento', $nivelUsuario);
     $mostrarFinanceiroTopbar = grupoPermitido($pdo_master, $empresaIdSessao, 'Financeiro', $nivelUsuario);
+    $mostrarEstoqueTopbar = grupoPermitido($pdo_master, $empresaIdSessao, 'Estoque', $nivelUsuario);
     $mostrarWhatsappTopbar = $nivelUsuario === 'MASTER' && moduloPermitido($pdo_master, $empresaIdSessao, 'whatsapp', $nivelUsuario);
     $mostrarUsuariosTopbar = in_array($nivelUsuario, ['MASTER', 'ADMIN'], true) && moduloPermitido($pdo_master, $empresaIdSessao, 'usuarios', $nivelUsuario);
     $mostrarEmpresasTopbar = $nivelUsuario === 'MASTER' && moduloPermitido($pdo_master, $empresaIdSessao, 'empresas', $nivelUsuario);
@@ -469,6 +472,11 @@ $bootstrapCssUrl = ($appBaseUrl ?: '') . '/assets/bootstrap/bootstrap.min.css';
                 <?php if ($mostrarFinanceiroTopbar): ?>
                     <li class="nav-item">
                         <a class="nav-link" href="<?= htmlspecialchars($financeiroUrl) ?>">Financeiro</a>
+                    </li>
+                <?php endif; ?>
+                <?php if ($mostrarEstoqueTopbar): ?>
+                    <li class="nav-item">
+                        <a class="nav-link" href="<?= htmlspecialchars($estoqueUrl) ?>">Estoque</a>
                     </li>
                 <?php endif; ?>
                 <?php if ($mostrarWhatsappTopbar): ?>

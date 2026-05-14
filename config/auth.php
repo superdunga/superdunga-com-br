@@ -121,6 +121,7 @@ function validarPermissaoModuloAtual(): void
         'modulos/fechamentodecaixa/menu_fechamento.php' => 'Fechamento',
         'modulos/auditoria/menu_auditoria.php' => 'Auditoria',
         'modulos/financeiro/menu_financeiro.php' => 'Financeiro',
+        'modulos/estoque/menu_estoque.php' => 'Estoque',
     ];
 
     if (isset($menusPorGrupo[$caminho])) {
@@ -148,6 +149,7 @@ function validarPermissaoModuloAtual(): void
         'modulos/financeiro/contas_receber_clientes.php' => 'financeiro_contas_receber',
         'modulos/financeiro/contas_pagar.php' => 'financeiro',
         'modulos/financeiro/contas.php' => 'financeiro',
+        'modulos/estoque/posicao_estoque.php' => 'estoque_posicao',
     ];
 
     $codigoModulo = $aliases[$caminho] ?? null;

@@ -45,6 +45,15 @@ $atalhos = [
         'visivel' => grupoPermitido($pdo_master, $empresaId, 'Financeiro', $nivelUsuario),
     ],
     [
+        'titulo' => 'Estoque',
+        'descricao' => 'Posicao de estoque, saldos, entradas, saidas e valor inventariado.',
+        'href' => 'modulos/estoque/menu_estoque.php',
+        'classe' => 'border-success',
+        'botao' => 'btn-success',
+        'icone' => 'ES',
+        'visivel' => grupoPermitido($pdo_master, $empresaId, 'Estoque', $nivelUsuario),
+    ],
+    [
         'titulo' => 'Sincronizar Dados',
         'descricao' => 'Atualize dados integrados antes das rotinas operacionais.',
         'href' => 'modulos/tesouraria/sincronizacao.php',

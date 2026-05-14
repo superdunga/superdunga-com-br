@@ -27,6 +27,9 @@ function sistemaModulosPadrao(): array
         ['codigo' => 'financeiro', 'grupo' => 'Financeiro', 'nome' => 'Financeiro', 'url' => 'modulos/financeiro/menu_financeiro.php', 'ordem' => 260],
         ['codigo' => 'financeiro_contas_receber', 'grupo' => 'Financeiro', 'nome' => 'Contas a Receber - Clientes', 'url' => 'modulos/financeiro/contas_receber_clientes.php', 'ordem' => 270],
 
+        ['codigo' => 'estoque', 'grupo' => 'Estoque', 'nome' => 'Estoque', 'url' => 'modulos/estoque/menu_estoque.php', 'ordem' => 290],
+        ['codigo' => 'estoque_posicao', 'grupo' => 'Estoque', 'nome' => 'Posicao de Estoque', 'url' => 'modulos/estoque/posicao_estoque.php', 'ordem' => 300],
+
         ['codigo' => 'whatsapp', 'grupo' => 'Administracao', 'nome' => 'Mensagens WhatsApp', 'url' => 'modulos/whatsapp/index.php', 'ordem' => 310],
         ['codigo' => 'usuarios', 'grupo' => 'Administracao', 'nome' => 'Gerenciar Usuarios', 'url' => 'modulos/usuarios/listar.php', 'ordem' => 320],
         ['codigo' => 'usuarios_permissoes', 'grupo' => 'Administracao', 'nome' => 'Permissoes por Perfil', 'url' => 'modulos/usuarios/permissoes.php', 'ordem' => 325],

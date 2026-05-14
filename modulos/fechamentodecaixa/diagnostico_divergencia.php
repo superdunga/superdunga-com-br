@@ -51,6 +51,80 @@ $stmtExcluidosCR = $pdo_master->prepare("
 $stmtExcluidosCR->execute([$inicio, $fim, $empresa_id]);
 $excluidosCR001 = $stmtExcluidosCR->fetchAll(PDO::FETCH_ASSOC);
 
+$vendasCR001 = [];
+foreach (array_merge($pendentesCR001, $excluidosCR001) as $registroCR) {
+    $vendaOrigem = (int)($registroCR['NUMDOCORIGEM'] ?? 0);
+    if ($vendaOrigem > 0) {
+        $vendasCR001[$vendaOrigem] = true;
+    }
+}
+
+$itensPorVenda = [];
+if (!empty($vendasCR001)) {
+    $idsVenda = array_keys($vendasCR001);
+    $placeholders = implode(',', array_fill(0, count($idsVenda), '?'));
+    $stmtItensVenda = $pdo_master->prepare("
+        SELECT
+            i.ITEMVENDACONTADOR,
+            i.VENDACONTA,
+            i.PRODUTO,
+            i.QTDE,
+            i.VALOR,
+            i.TOTPROD,
+            p.CODPRODUTO,
+            p.DESCPRODUTO,
+            p.UNIDADE
+        FROM armazem_est008 i
+        LEFT JOIN armazem_est004 p
+            ON p.EMPRESA = i.EMPRESA
+           AND p.CONTAPRODUTO = i.PRODUTO
+        WHERE i.EMPRESA = ?
+          AND i.ITEMVENDACONTADOR IN ($placeholders)
+          AND COALESCE(i.CANCELADO, 'N') <> 'S'
+        ORDER BY i.ITEMVENDACONTADOR ASC, i.VENDACONTA ASC
+    ");
+    $stmtItensVenda->execute(array_merge([$empresa_id], $idsVenda));
+    while ($itemVenda = $stmtItensVenda->fetch(PDO::FETCH_ASSOC)) {
+        $itensPorVenda[(int)$itemVenda['ITEMVENDACONTADOR']][] = $itemVenda;
+    }
+}
+
+function renderizarItensVendaDiagnostico(array $itens): void
+{
+    if (empty($itens)) {
+        echo '<div class="text-muted small">Nenhum item encontrado para esta venda.</div>';
+        return;
+    }
+    ?>
+    <div class="table-responsive">
+        <table class="table table-sm table-bordered mb-0">
+            <thead>
+                <tr>
+                    <th>Item</th>
+                    <th>Produto</th>
+                    <th>Descricao</th>
+                    <th class="text-end">Qtde</th>
+                    <th class="text-end">Unitario</th>
+                    <th class="text-end">Total</th>
+                </tr>
+            </thead>
+            <tbody>
+                <?php foreach ($itens as $item): ?>
+                    <tr>
+                        <td><?= htmlspecialchars($item['VENDACONTA'] ?? '') ?></td>
+                        <td><?= htmlspecialchars($item['CODPRODUTO'] ?? $item['PRODUTO'] ?? '') ?></td>
+                        <td class="text-start"><?= htmlspecialchars($item['DESCPRODUTO'] ?? '') ?></td>
+                        <td class="text-end"><?= number_format((float)($item['QTDE'] ?? 0), 3, ',', '.') ?> <?= htmlspecialchars($item['UNIDADE'] ?? '') ?></td>
+                        <td class="text-end">R$ <?= number_format((float)($item['VALOR'] ?? 0), 2, ',', '.') ?></td>
+                        <td class="text-end">R$ <?= number_format((float)($item['TOTPROD'] ?? 0), 2, ',', '.') ?></td>
+                    </tr>
+                <?php endforeach; ?>
+            </tbody>
+        </table>
+    </div>
+    <?php
+}
+
 $totalPendenteSistema = array_sum(array_column($pendentesSistema, 'valor_bruto'));
 $totalPendenteCR001 = array_sum(array_column($pendentesCR001, 'VLRPARCELA'));
 $diferencaPendentes = $totalPendenteSistema - $totalPendenteCR001;
@@ -130,22 +204,41 @@ $diferencaPendentes = $totalPendenteSistema - $totalPendenteCR001;
                         <table class="table table-sm table-bordered text-center mb-0">
                             <thead>
                                 <tr>
-                                    <th>CR001</th>
+                                    <th>NUMDOCORIGEM</th>
                                     <th>Data</th>
                                     <th>Valor</th>
                                     <th>CM</th>
+                                    <th></th>
                                 </tr>
                             </thead>
                             <tbody>
                                 <?php if (empty($pendentesCR001)): ?>
-                                    <tr><td colspan="4" class="text-muted">Nenhum registro</td></tr>
+                                    <tr><td colspan="5" class="text-muted">Nenhum registro</td></tr>
                                 <?php else: ?>
                                     <?php foreach ($pendentesCR001 as $c): ?>
+                                        <?php
+                                            $vendaOrigem = (int)($c['NUMDOCORIGEM'] ?? 0);
+                                            $collapseId = 'itens-cr-' . (int)$c['CRCONTADOR'];
+                                        ?>
                                         <tr>
-                                            <td><?= $c['CRCONTADOR'] ?></td>
+                                            <td><?= htmlspecialchars($c['NUMDOCORIGEM'] ?? '') ?></td>
                                             <td><?= date('d/m/Y H:i', strtotime($c['DTLANC'])) ?></td>
                                             <td>R$ <?= number_format($c['VLRPARCELA'], 2, ',', '.') ?></td>
                                             <td><?= $c['CMCONTADOR'] ?></td>
+                                            <td>
+                                                <button class="btn btn-sm btn-outline-primary"
+                                                        type="button"
+                                                        data-bs-toggle="collapse"
+                                                        data-bs-target="#<?= $collapseId ?>"
+                                                        title="Ver itens da venda">
+                                                    &#128269;
+                                                </button>
+                                            </td>
+                                        </tr>
+                                        <tr class="collapse" id="<?= $collapseId ?>">
+                                            <td colspan="5" class="bg-light">
+                                                <?php renderizarItensVendaDiagnostico($itensPorVenda[$vendaOrigem] ?? []); ?>
+                                            </td>
                                         </tr>
                                     <?php endforeach; ?>
                                 <?php endif; ?>
@@ -162,26 +255,45 @@ $diferencaPendentes = $totalPendenteSistema - $totalPendenteCR001;
                 <table class="table table-sm table-bordered text-center mb-0">
                     <thead>
                         <tr>
-                            <th>CR001</th>
+                            <th>NUMDOCORIGEM</th>
                             <th>Data</th>
                             <th>Valor</th>
                             <th>CM</th>
+                            <th></th>
                             <th>Recebivel</th>
                             <th>Marcado em</th>
                         </tr>
                     </thead>
                     <tbody>
                         <?php if (empty($excluidosCR001)): ?>
-                            <tr><td colspan="6" class="text-muted">Nenhum registro</td></tr>
+                            <tr><td colspan="7" class="text-muted">Nenhum registro</td></tr>
                         <?php else: ?>
                             <?php foreach ($excluidosCR001 as $c): ?>
+                                <?php
+                                    $vendaOrigem = (int)($c['NUMDOCORIGEM'] ?? 0);
+                                    $collapseId = 'itens-cr-excluido-' . (int)$c['CRCONTADOR'];
+                                ?>
                                 <tr>
-                                    <td><?= $c['CRCONTADOR'] ?></td>
+                                    <td><?= htmlspecialchars($c['NUMDOCORIGEM'] ?? '') ?></td>
                                     <td><?= !empty($c['DTLANC']) ? date('d/m/Y H:i', strtotime($c['DTLANC'])) : '-' ?></td>
                                     <td>R$ <?= number_format($c['VLRPARCELA'], 2, ',', '.') ?></td>
                                     <td><?= $c['CMCONTADOR'] ?></td>
+                                    <td>
+                                        <button class="btn btn-sm btn-outline-primary"
+                                                type="button"
+                                                data-bs-toggle="collapse"
+                                                data-bs-target="#<?= $collapseId ?>"
+                                                title="Ver itens da venda">
+                                            &#128269;
+                                        </button>
+                                    </td>
                                     <td><?= $c['recebimento_id'] ?: '-' ?></td>
                                     <td><?= !empty($c['data_exclusao_firebird']) ? date('d/m/Y H:i', strtotime($c['data_exclusao_firebird'])) : '-' ?></td>
+                                </tr>
+                                <tr class="collapse" id="<?= $collapseId ?>">
+                                    <td colspan="7" class="bg-light">
+                                        <?php renderizarItensVendaDiagnostico($itensPorVenda[$vendaOrigem] ?? []); ?>
+                                    </td>
                                 </tr>
                             <?php endforeach; ?>
                         <?php endif; ?>
