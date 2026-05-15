@@ -3,7 +3,9 @@ require '../../config/auth.php';
 require '../../config/conexao.php';
 
 $empresa_id = $_SESSION['empresa_id'];
-$isMaster = ($_SESSION['nivel'] ?? '') === 'MASTER';
+$nivelUsuario = $_SESSION['nivel'] ?? '';
+$isMaster = $nivelUsuario === 'MASTER';
+$podeVerDetalhes = in_array($nivelUsuario, ['MASTER', 'OPERADOR'], true);
 
 /* =========================
    EXCLUIR MOVIMENTACAO (MASTER)
@@ -214,11 +216,11 @@ $stmt->execute($params);
 $movimentacoes = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
 /* =========================
-   DETALHAMENTO (MASTER)
+   DETALHAMENTO (MASTER / OPERADOR)
 ========================= */
 $detalhesMov = [];
 
-if ($isMaster) {
+if ($podeVerDetalhes) {
 
     $sql = "
         SELECT 
@@ -330,15 +332,19 @@ require '../../layout/header.php';
                             <td>
                                 <div class="d-flex align-items-center gap-1">
 
-                                    <?php if ($isMaster): ?>
+                                    <?php if ($podeVerDetalhes): ?>
 
                                         <button 
                                             class="btn btn-sm btn-outline-dark"
                                             data-bs-toggle="modal"
                                             data-bs-target="#modalMov<?= $m['id'] ?>"
                                             title="Detalhes">
-                                            🔍
+                                            &#128269;
                                         </button>
+
+                                    <?php endif; ?>
+
+                                    <?php if ($isMaster): ?>
 
                                         <a href="movimentar.php?id=<?= $m['id'] ?>" 
                                            class="btn btn-sm btn-outline-dark"
@@ -398,8 +404,8 @@ require '../../layout/header.php';
     </div>
 </div>
 
-<!-- MODAIS (INALTERADO) -->
-<?php if ($isMaster): ?>
+<!-- MODAIS -->
+<?php if ($podeVerDetalhes): ?>
 <?php foreach ($movimentacoes as $m): ?>
 
 <div class="modal fade" id="modalMov<?= $m['id'] ?>" tabindex="-1">
