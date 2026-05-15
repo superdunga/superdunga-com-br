@@ -319,6 +319,7 @@ if (!$modoLeveAuto) {
     SELECT
         r.id,
         r.data_venda,
+        r.pagador,
         r.valor_bruto,
         r.CMCONTADOR
     FROM armazem_conciliacao_recebimentos r
@@ -357,6 +358,7 @@ if (!$modoLeveAuto) {
     $stmtCr = $pdo_master->prepare("
     SELECT
         c.CRCONTADOR,
+        c.NUMDOCORIGEM,
         c.DTLANC,
         c.VLRPARCELA,
         c.CMCONTADOR
@@ -387,6 +389,82 @@ if (!$modoLeveAuto) {
 ");
     $stmtCr->execute([$inicio, $fim, $inicio, $fim]);
     $cr001 = $stmtCr->fetchAll(PDO::FETCH_ASSOC);
+}
+
+$itensPorVenda = [];
+if (!$modoLeveAuto && !empty($cr001)) {
+    $vendasOrigem = [];
+    foreach ($cr001 as $registroCR) {
+        $vendaOrigem = (int)($registroCR['NUMDOCORIGEM'] ?? 0);
+        if ($vendaOrigem > 0) {
+            $vendasOrigem[$vendaOrigem] = true;
+        }
+    }
+
+    if (!empty($vendasOrigem)) {
+        $idsVenda = array_keys($vendasOrigem);
+        $placeholders = implode(',', array_fill(0, count($idsVenda), '?'));
+        $stmtItensVenda = $pdo_master->prepare("
+            SELECT
+                i.ITEMVENDACONTADOR,
+                i.VENDACONTA,
+                i.PRODUTO,
+                i.QTDE,
+                i.VALOR,
+                i.TOTPROD,
+                p.CODPRODUTO,
+                p.DESCPRODUTO,
+                p.UNIDADE
+            FROM armazem_est008 i
+            LEFT JOIN armazem_est004 p
+                ON p.EMPRESA = i.EMPRESA
+               AND p.CONTAPRODUTO = i.PRODUTO
+            WHERE i.EMPRESA = ?
+              AND i.ITEMVENDACONTADOR IN ($placeholders)
+              AND COALESCE(i.CANCELADO, 'N') <> 'S'
+            ORDER BY i.ITEMVENDACONTADOR ASC, i.VENDACONTA ASC
+        ");
+        $stmtItensVenda->execute(array_merge([$empresa_id], $idsVenda));
+        while ($itemVenda = $stmtItensVenda->fetch(PDO::FETCH_ASSOC)) {
+            $itensPorVenda[(int)$itemVenda['ITEMVENDACONTADOR']][] = $itemVenda;
+        }
+    }
+}
+
+function renderizarItensVendaRecebimentos(array $itens): void
+{
+    if (empty($itens)) {
+        echo '<div class="text-muted small">Nenhum item encontrado para esta venda.</div>';
+        return;
+    }
+    ?>
+    <div class="table-responsive">
+        <table class="table table-sm table-bordered mb-0">
+            <thead>
+                <tr>
+                    <th>Item</th>
+                    <th>Produto</th>
+                    <th>Descricao</th>
+                    <th class="text-end">Qtde</th>
+                    <th class="text-end">Unitario</th>
+                    <th class="text-end">Total</th>
+                </tr>
+            </thead>
+            <tbody>
+                <?php foreach ($itens as $item): ?>
+                    <tr>
+                        <td><?= htmlspecialchars($item['VENDACONTA'] ?? '') ?></td>
+                        <td><?= htmlspecialchars($item['CODPRODUTO'] ?? $item['PRODUTO'] ?? '') ?></td>
+                        <td><?= htmlspecialchars($item['DESCPRODUTO'] ?? '') ?></td>
+                        <td class="text-end"><?= number_format((float)($item['QTDE'] ?? 0), 3, ',', '.') ?> <?= htmlspecialchars($item['UNIDADE'] ?? '') ?></td>
+                        <td class="text-end">R$ <?= number_format((float)($item['VALOR'] ?? 0), 2, ',', '.') ?></td>
+                        <td class="text-end">R$ <?= number_format((float)($item['TOTPROD'] ?? 0), 2, ',', '.') ?></td>
+                    </tr>
+                <?php endforeach; ?>
+            </tbody>
+        </table>
+    </div>
+    <?php
 }
 ?>
 
@@ -728,6 +806,7 @@ if (!$modoLeveAuto) {
                         <tr>
                             <th>ID</th>
                             <th>Data</th>
+                            <th>Pagador</th>
                             <th>Valor</th>
                             <th>CM</th>
                             <th>Ação</th>
@@ -736,13 +815,14 @@ if (!$modoLeveAuto) {
                     <tbody>
                         <?php if (empty($recebimentos)): ?>
                             <tr>
-                                <td colspan="5" class="text-center text-muted">Nenhum recebível não conciliado nesta data.</td>
+                                <td colspan="6" class="text-center text-muted">Nenhum recebível não conciliado nesta data.</td>
                             </tr>
                         <?php else: ?>
                             <?php foreach ($recebimentos as $r): ?>
                                 <tr>
                                     <td><?= $r['id'] ?></td>
                                     <td><?= !empty($r['data_venda']) ? date('d/m/Y H:i', strtotime($r['data_venda'])) : '-' ?></td>
+                                    <td><?= htmlspecialchars($r['pagador'] ?? '') ?></td>
                                     <td>R$ <?= number_format((float)$r['valor_bruto'], 2, ',', '.') ?></td>
                                     <td><?= $r['CMCONTADOR'] ?? '-' ?></td>
                                     <td>
@@ -770,20 +850,39 @@ if (!$modoLeveAuto) {
                             <th>Data</th>
                             <th>Valor</th>
                             <th>CM</th>
+                            <th></th>
                         </tr>
                     </thead>
                     <tbody>
                         <?php if (empty($cr001)): ?>
                             <tr>
-                                <td colspan="4" class="text-center text-muted">Nenhum CR001 não conciliado nesta data.</td>
+                                <td colspan="5" class="text-center text-muted">Nenhum CR001 não conciliado nesta data.</td>
                             </tr>
                         <?php else: ?>
                             <?php foreach ($cr001 as $c): ?>
+                                <?php
+                                    $vendaOrigem = (int)($c['NUMDOCORIGEM'] ?? 0);
+                                    $collapseId = 'itens-cr001-' . (int)$c['CRCONTADOR'];
+                                ?>
                                 <tr>
                                     <td><?= $c['CRCONTADOR'] ?></td>
                                     <td><?= !empty($c['DTLANC']) ? date('d/m/Y H:i', strtotime($c['DTLANC'])) : '-' ?></td>
                                     <td>R$ <?= number_format((float)$c['VLRPARCELA'], 2, ',', '.') ?></td>
                                     <td><?= $c['CMCONTADOR'] ?? '-' ?></td>
+                                    <td class="text-center">
+                                        <button
+                                            type="button"
+                                            class="btn btn-sm btn-outline-primary"
+                                            data-bs-toggle="collapse"
+                                            data-bs-target="#<?= $collapseId ?>"
+                                            title="Ver produtos da venda"
+                                        >&#128269;</button>
+                                    </td>
+                                </tr>
+                                <tr class="collapse" id="<?= $collapseId ?>">
+                                    <td colspan="5" class="bg-light">
+                                        <?php renderizarItensVendaRecebimentos($itensPorVenda[$vendaOrigem] ?? []); ?>
+                                    </td>
                                 </tr>
                             <?php endforeach; ?>
                         <?php endif; ?>

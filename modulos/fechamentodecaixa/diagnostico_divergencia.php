@@ -174,7 +174,7 @@ $diferencaPendentes = $totalPendenteSistema - $totalPendenteCR001;
                                     <th>Data</th>
                                     <th>Valor</th>
                                     <th>CM</th>
-                                    <th>Origem</th>
+                                    <th>Pagador</th>
                                 </tr>
                             </thead>
                             <tbody>
@@ -187,7 +187,7 @@ $diferencaPendentes = $totalPendenteSistema - $totalPendenteCR001;
                                             <td><?= date('d/m/Y H:i', strtotime($r['data_venda'])) ?></td>
                                             <td>R$ <?= number_format($r['valor_bruto'], 2, ',', '.') ?></td>
                                             <td><?= $r['CMCONTADOR'] ?></td>
-                                            <td><?= htmlspecialchars($r['origem'] ?? '') ?></td>
+                                            <td><?= htmlspecialchars($r['pagador'] ?? '') ?></td>
                                         </tr>
                                     <?php endforeach; ?>
                                 <?php endif; ?>
