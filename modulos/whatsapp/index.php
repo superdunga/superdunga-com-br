@@ -429,7 +429,7 @@ require __DIR__ . '/../../layout/header.php';
 
                     <div class="col-12">
                         <label class="form-label">Token da API Waseller</label>
-                        <input type="password" name="token" class="form-control" value="<?= htmlspecialchars($config['token'] ?? '') ?>" required>
+                        <input type="text" name="token" class="form-control font-monospace" value="<?= htmlspecialchars($config['token'] ?? '') ?>" required>
                         <div class="form-text">
                             Use aqui o token gerado no painel da Waseller para envio das mensagens.
                         </div>
