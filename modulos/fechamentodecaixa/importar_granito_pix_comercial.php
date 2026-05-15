@@ -2,6 +2,7 @@
 require '../../config/auth.php';
 require '../../config/conexao.php';
 require_once '../../config/importacao_recebimentos.php';
+require_once '../../config/inter_pix.php';
 require '../../layout/header.php';
 
 ini_set('display_errors', 1);
@@ -9,6 +10,7 @@ error_reporting(E_ALL);
 
 $empresa_id = (int)$_SESSION['empresa_id'];
 $regraImportacao = buscarRegraImportacao($pdo_master, $empresa_id, 'granito_pix_comercial', []);
+$mensagens = [];
 
 if (!$regraImportacao) {
     echo "<div class='alert alert-warning'>Nenhuma regra de importacao Granito PIX Comercial cadastrada para esta empresa.</div>";
@@ -58,17 +60,57 @@ function granitoPixCampo(array $dados, array $cabecalho, array $nomes): string {
     return '';
 }
 
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['arquivo'])) {
+garantirTabelaInterPix($pdo_master);
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['acao'] ?? '') === 'salvar_inter_pix') {
+    $dadosConfig = [
+        'ambiente' => in_array(($_POST['ambiente'] ?? ''), ['producao', 'sandbox'], true) ? $_POST['ambiente'] : 'producao',
+        'client_id' => trim((string)($_POST['client_id'] ?? '')),
+        'client_secret' => trim((string)($_POST['client_secret'] ?? '')),
+        'conta_corrente' => trim((string)($_POST['conta_corrente'] ?? '')),
+        'cert_path' => trim((string)($_POST['cert_path'] ?? '')),
+        'key_path' => trim((string)($_POST['key_path'] ?? '')),
+        'cert_password' => trim((string)($_POST['cert_password'] ?? '')),
+        'ativo' => ($_POST['ativo'] ?? 'S') === 'S' ? 'S' : 'N',
+    ];
+
+    try {
+        salvarConfigInterPix($pdo_master, $empresa_id, $dadosConfig);
+        $mensagens[] = ['tipo' => 'success', 'texto' => 'Configuracao da API Inter Pix salva com sucesso.'];
+    } catch (Throwable $e) {
+        $mensagens[] = ['tipo' => 'danger', 'texto' => 'Erro ao salvar configuracao Inter Pix: ' . $e->getMessage()];
+    }
+}
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['acao'] ?? '') === 'consultar_inter_pix') {
+    $dataIniInter = $_POST['data_ini_inter'] ?? date('Y-m-d');
+    $dataFimInter = $_POST['data_fim_inter'] ?? date('Y-m-d');
+
+    try {
+        $resultadoInter = consultarInterPix($pdo_master, $empresa_id, $regraImportacao, $dataIniInter, $dataFimInter);
+        $mensagens[] = [
+            'tipo' => 'success',
+            'texto' => 'Consulta Inter Pix concluida. Lidos: ' . (int)$resultadoInter['lidos']
+                . ' | Importados: ' . (int)$resultadoInter['importados']
+                . ' | Atualizados: ' . (int)$resultadoInter['atualizados']
+                . ' | Ignorados: ' . (int)$resultadoInter['ignorados'],
+        ];
+    } catch (Throwable $e) {
+        $mensagens[] = ['tipo' => 'danger', 'texto' => 'Erro na consulta Inter Pix: ' . $e->getMessage()];
+    }
+}
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['acao'] ?? '') === 'upload_csv' && isset($_FILES['arquivo'])) {
     $arquivo = $_FILES['arquivo']['tmp_name'];
     $nomeArquivo = $_FILES['arquivo']['name'];
 
     if (!file_exists($arquivo)) {
-        echo "<div class='alert alert-danger'>Arquivo nao encontrado.</div>";
+        $mensagens[] = ['tipo' => 'danger', 'texto' => 'Arquivo nao encontrado.'];
     } else {
         $handle = fopen($arquivo, 'r');
 
         if (!$handle) {
-            echo "<div class='alert alert-danger'>Erro ao abrir arquivo.</div>";
+            $mensagens[] = ['tipo' => 'danger', 'texto' => 'Erro ao abrir arquivo.'];
         } else {
             $linha = 0;
             $importados = 0;
@@ -179,11 +221,26 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['arquivo'])) {
             }
 
             fclose($handle);
-            echo "<div class='alert alert-success'>Importacao concluida! Registros importados: <strong>{$importados}</strong></div>";
+            $mensagens[] = ['tipo' => 'success', 'texto' => "Importacao concluida! Registros importados: {$importados}"];
         }
     }
 }
+
+$configInterPix = buscarConfigInterPix($pdo_master, $empresa_id) ?: [
+    'ambiente' => 'producao',
+    'client_id' => '',
+    'conta_corrente' => '',
+    'cert_path' => '',
+    'key_path' => '',
+    'ativo' => 'S',
+];
 ?>
+
+<?php foreach ($mensagens as $mensagem): ?>
+    <div class="alert alert-<?= htmlspecialchars($mensagem['tipo']) ?>">
+        <?= htmlspecialchars($mensagem['texto']) ?>
+    </div>
+<?php endforeach; ?>
 
 <div class="card shadow-sm">
     <div class="card-header d-flex justify-content-between align-items-center">
@@ -193,6 +250,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['arquivo'])) {
 
     <div class="card-body">
         <form method="POST" enctype="multipart/form-data">
+            <input type="hidden" name="acao" value="upload_csv">
             <input type="hidden" name="regra_id" value="<?= (int)$regraImportacao['id'] ?>">
             <div class="mb-3">
                 <label class="form-label">Selecione o arquivo CSV de agenda Granito</label>
@@ -200,6 +258,88 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['arquivo'])) {
             </div>
             <button type="submit" class="btn btn-primary">Importar Arquivo</button>
         </form>
+    </div>
+</div>
+
+<div class="card shadow-sm mt-3">
+    <div class="card-header">
+        <h5 class="mb-0">Consulta automatica Banco Inter Pix</h5>
+    </div>
+    <div class="card-body">
+        <div class="alert alert-info small">
+            Esta consulta usa o endpoint Pix do Banco Inter e alimenta esta mesma regra de importacao
+            com CMCONTADOR <?= (int)$regraImportacao['cm_pix'] ?>. O identificador gravado sera o EndToEndId do Pix.
+        </div>
+
+        <form method="POST" class="row g-3 mb-4">
+            <input type="hidden" name="acao" value="consultar_inter_pix">
+            <input type="hidden" name="regra_id" value="<?= (int)$regraImportacao['id'] ?>">
+            <div class="col-md-4">
+                <label class="form-label">Data inicial</label>
+                <input type="date" name="data_ini_inter" value="<?= htmlspecialchars($_POST['data_ini_inter'] ?? date('Y-m-d')) ?>" class="form-control" required>
+            </div>
+            <div class="col-md-4">
+                <label class="form-label">Data final</label>
+                <input type="date" name="data_fim_inter" value="<?= htmlspecialchars($_POST['data_fim_inter'] ?? date('Y-m-d')) ?>" class="form-control" required>
+            </div>
+            <div class="col-md-4 d-flex align-items-end">
+                <button type="submit" class="btn btn-primary w-100">Consultar e importar Pix</button>
+            </div>
+        </form>
+
+        <div class="border rounded p-3 bg-light">
+            <h6 class="fw-bold mb-3">Configuracao da API Inter</h6>
+            <form method="POST" class="row g-3">
+                <input type="hidden" name="acao" value="salvar_inter_pix">
+                <input type="hidden" name="regra_id" value="<?= (int)$regraImportacao['id'] ?>">
+                <div class="col-md-3">
+                    <label class="form-label">Ambiente</label>
+                    <select name="ambiente" class="form-select">
+                        <option value="producao" <?= ($configInterPix['ambiente'] ?? '') === 'producao' ? 'selected' : '' ?>>Producao</option>
+                        <option value="sandbox" <?= ($configInterPix['ambiente'] ?? '') === 'sandbox' ? 'selected' : '' ?>>Sandbox</option>
+                    </select>
+                </div>
+                <div class="col-md-3">
+                    <label class="form-label">Conta corrente</label>
+                    <input type="text" name="conta_corrente" value="<?= htmlspecialchars($configInterPix['conta_corrente'] ?? '') ?>" class="form-control">
+                </div>
+                <div class="col-md-3">
+                    <label class="form-label">Ativo</label>
+                    <select name="ativo" class="form-select">
+                        <option value="S" <?= ($configInterPix['ativo'] ?? 'S') === 'S' ? 'selected' : '' ?>>Sim</option>
+                        <option value="N" <?= ($configInterPix['ativo'] ?? 'S') === 'N' ? 'selected' : '' ?>>Nao</option>
+                    </select>
+                </div>
+                <div class="col-md-3">
+                    <label class="form-label">Client ID</label>
+                    <input type="text" name="client_id" value="<?= htmlspecialchars($configInterPix['client_id'] ?? '') ?>" class="form-control">
+                </div>
+                <div class="col-md-6">
+                    <label class="form-label">Client Secret</label>
+                    <input type="password" name="client_secret" value="" class="form-control" placeholder="<?= !empty($configInterPix['client_secret']) ? 'Preenchido - informe apenas para alterar' : '' ?>">
+                </div>
+                <div class="col-md-6">
+                    <label class="form-label">Senha do certificado</label>
+                    <input type="password" name="cert_password" value="" class="form-control" placeholder="<?= !empty($configInterPix['cert_password']) ? 'Preenchida - informe apenas para alterar' : '' ?>">
+                </div>
+                <div class="col-md-6">
+                    <label class="form-label">Caminho do certificado (.crt/.pem/.pfx/.p12)</label>
+                    <input type="text" name="cert_path" value="<?= htmlspecialchars($configInterPix['cert_path'] ?? '') ?>" class="form-control" placeholder="/home/usuario/certs/inter.crt">
+                </div>
+                <div class="col-md-6">
+                    <label class="form-label">Caminho da chave privada (.key) se houver</label>
+                    <input type="text" name="key_path" value="<?= htmlspecialchars($configInterPix['key_path'] ?? '') ?>" class="form-control" placeholder="/home/usuario/certs/inter.key">
+                </div>
+                <div class="col-12">
+                    <div class="small text-muted">
+                        Para certificado PFX/P12, informe apenas o caminho do certificado e a senha. Para certificado PEM/CRT, informe tambem a chave privada.
+                    </div>
+                </div>
+                <div class="col-md-3">
+                    <button type="submit" class="btn btn-outline-primary w-100">Salvar configuracao</button>
+                </div>
+            </form>
+        </div>
     </div>
 </div>
 
