@@ -920,6 +920,9 @@ function whatsappMensagemApresentacaoCaixa(PDO $pdo, ?DateTime $base = null, int
     date_default_timezone_set('America/Sao_Paulo');
 
     $base = $base ?: new DateTime('now');
+    if ((int)$base->format('H') < 7) {
+        $base = (clone $base)->modify('-1 day');
+    }
     $data = $base->format('Y-m-d');
     $inicio = $data . ' 07:00:00';
     $fim = date('Y-m-d 03:00:00', strtotime($data . ' +1 day'));
@@ -935,7 +938,18 @@ function whatsappMensagemApresentacaoCaixa(PDO $pdo, ?DateTime $base = null, int
                     WHEN b.TIPOMOV = 'D' THEN -b.VALORMOV
                     ELSE 0
                 END
-            ) AS diferenca
+            ) AS diferenca,
+            (
+                SELECT bf.VALORMOV
+                FROM armazem_bnc001 bf
+                WHERE bf.EMPRESA = b.EMPRESA
+                  AND bf.CBCONTADOR = b.CBCONTADOR
+                  AND bf.DTLANC BETWEEN ? AND ?
+                  AND COALESCE(bf.deletado, 'N') <> 'S'
+                  AND bf.HISTMOV LIKE 'FECHAMENTO%'
+                ORDER BY bf.DTLANC DESC, bf.MOVCONTADOR DESC
+                LIMIT 1
+            ) AS valor_fechamento
         FROM armazem_bnc001 b
         INNER JOIN (
             SELECT CODCX, MIN(NULLIF(NOMEUSER, '')) AS NOMEUSER
@@ -951,7 +965,7 @@ function whatsappMensagemApresentacaoCaixa(PDO $pdo, ?DateTime $base = null, int
         GROUP BY b.CBCONTADOR, operador
         ORDER BY primeiro_movimento ASC, b.CBCONTADOR ASC
     ");
-    $stmt->execute([$empresaId, $empresaId, $inicio, $fim]);
+    $stmt->execute([$inicio, $fim, $empresaId, $empresaId, $inicio, $fim]);
     $caixas = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
     $msg = "*Apresentacao do Caixa*\n\n";
@@ -962,17 +976,14 @@ function whatsappMensagemApresentacaoCaixa(PDO $pdo, ?DateTime $base = null, int
         return $msg;
     }
 
-    $total = 0.0;
     foreach ($caixas as $caixa) {
         $diferenca = (float)$caixa['diferenca'];
-        $total += $diferenca;
         $msg .= "Operador: " . $caixa['operador'] . "\n";
-        $msg .= "Valor da Diferenca do dinheiro: R$ " . number_format($diferenca, 2, ',', '.') . "\n\n";
+        $msg .= "Valor da Diferenca do dinheiro: R$ " . number_format($diferenca, 2, ',', '.') . "\n";
+        $msg .= "Valor do Fechamento: R$ " . number_format((float)($caixa['valor_fechamento'] ?? 0), 2, ',', '.') . "\n\n";
     }
 
-    $msg .= "Total da Diferenca do dinheiro: R$ " . number_format($total, 2, ',', '.');
-
-    return $msg;
+    return trim($msg);
 }
 
 function whatsappMensagemApresentacaoCaixa1(PDO $pdo, ?DateTime $base = null, int $empresaId = 1): string
