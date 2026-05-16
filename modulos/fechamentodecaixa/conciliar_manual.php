@@ -51,6 +51,7 @@ $stmtCr = $pdo_master->prepare("
     WHERE c.recebimento_id IS NULL
       AND c.EMPRESA = ?
       AND c.CMCONTADOR <> 9
+      AND COALESCE(c.STATUS, '') <> 'QT'
       AND (c.validado IS NULL OR c.validado <> 'S')
       AND COALESCE(c.excluido_firebird, 'N') = 'N'
 
@@ -94,6 +95,7 @@ if (empty($crs)) {
         WHERE c.recebimento_id IS NULL
           AND c.EMPRESA = ?
           AND c.CMCONTADOR <> 9
+          AND COALESCE(c.STATUS, '') <> 'QT'
           AND (c.validado IS NULL OR c.validado <> 'S')
           AND COALESCE(c.excluido_firebird, 'N') = 'N'
 
@@ -129,6 +131,7 @@ if ($modoFallback && empty($crs)) {
         WHERE c.recebimento_id IS NULL
           AND c.EMPRESA = ?
           AND c.CMCONTADOR <> 9
+          AND COALESCE(c.STATUS, '') <> 'QT'
           AND (c.validado IS NULL OR c.validado <> 'S')
           AND COALESCE(c.excluido_firebird, 'N') = 'N'
           AND ABS(c.VLRPARCELA) = ABS(?)
