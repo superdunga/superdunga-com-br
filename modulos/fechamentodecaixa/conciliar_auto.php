@@ -205,6 +205,21 @@ if ($modo === 'aproximado') {
 ========================================================= */
 function conciliar($pdo, $rec_id, $cm, $crcontador, $empresa_id) {
 
+    // Evita reutilizar o mesmo recebivel quando o vinculo ja foi gravado nele.
+    $checkRecebivel = $pdo->prepare("
+        SELECT CRCONTADOR
+        FROM armazem_conciliacao_recebimentos
+        WHERE id = ?
+          AND empresa_id = ?
+        LIMIT 1
+    ");
+    $checkRecebivel->execute([$rec_id, $empresa_id]);
+    $recebivel = $checkRecebivel->fetch(PDO::FETCH_ASSOC);
+
+    if (!$recebivel || !empty($recebivel['CRCONTADOR'])) {
+        return false;
+    }
+
     // Evita reutilizar o mesmo CR001.
     $check = $pdo->prepare("
         SELECT recebimento_id
@@ -237,17 +252,48 @@ function conciliar($pdo, $rec_id, $cm, $crcontador, $empresa_id) {
         return false;
     }
 
-    $update = $pdo->prepare("
-        UPDATE armazem_cr001
-        SET recebimento_id = ?, CMCONTADOR = ?
-        WHERE CRCONTADOR = ?
-        AND EMPRESA = ?
-        AND recebimento_id IS NULL
-        AND COALESCE(excluido_firebird, 'N') = 'N'
-        AND COALESCE(STATUS, '') <> 'QT'
-    ");
+    $pdo->beginTransaction();
 
-    return $update->execute([$rec_id, $cm, $crcontador, $empresa_id]);
+    try {
+        $update = $pdo->prepare("
+            UPDATE armazem_cr001
+            SET recebimento_id = ?, CMCONTADOR = ?
+            WHERE CRCONTADOR = ?
+            AND EMPRESA = ?
+            AND recebimento_id IS NULL
+            AND COALESCE(excluido_firebird, 'N') = 'N'
+            AND COALESCE(STATUS, '') <> 'QT'
+        ");
+
+        $update->execute([$rec_id, $cm, $crcontador, $empresa_id]);
+
+        if ($update->rowCount() < 1) {
+            $pdo->rollBack();
+            return false;
+        }
+
+        $updateRecebivel = $pdo->prepare("
+            UPDATE armazem_conciliacao_recebimentos
+            SET CRCONTADOR = ?
+            WHERE id = ?
+              AND empresa_id = ?
+              AND CRCONTADOR IS NULL
+        ");
+        $updateRecebivel->execute([$crcontador, $rec_id, $empresa_id]);
+
+        if ($updateRecebivel->rowCount() < 1) {
+            $pdo->rollBack();
+            return false;
+        }
+
+        $pdo->commit();
+        return true;
+    } catch (Throwable $e) {
+        if ($pdo->inTransaction()) {
+            $pdo->rollBack();
+        }
+        return false;
+    }
 }
 
 /* =========================================================

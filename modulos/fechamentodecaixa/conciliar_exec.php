@@ -5,30 +5,21 @@ error_reporting(E_ALL);
 require '../../config/auth.php';
 require '../../config/conexao.php';
 
-/* =========================
-   RECEBER PARÂMETROS
-========================= */
 $rec_id = $_GET['rec'] ?? null;
 $cr_id  = $_GET['cr'] ?? null;
 $data   = $_GET['data'] ?? null;
 $empresa_id = (int)$_SESSION['empresa_id'];
 
-/* =========================
-   VALIDAÇÕES
-========================= */
 if (!$rec_id || !$cr_id) {
-    die("Parâmetros inválidos.");
+    die("Parametros invalidos.");
 }
 
 if (!$data) {
-    die("Data não informada.");
+    die("Data nao informada.");
 }
 
-/* =========================
-   BUSCAR RECEBÍVEL
-========================= */
 $stmt = $pdo_master->prepare("
-    SELECT CMCONTADOR
+    SELECT CMCONTADOR, CRCONTADOR
     FROM armazem_conciliacao_recebimentos
     WHERE id = ?
       AND empresa_id = ?
@@ -37,48 +28,75 @@ $stmt->execute([$rec_id, $empresa_id]);
 $rec = $stmt->fetch(PDO::FETCH_ASSOC);
 
 if (!$rec) {
-    die("Recebível não encontrado.");
+    die("Recebivel nao encontrado.");
 }
 
-/* =========================
-   VALIDAR SE CR001 JÁ FOI USADO
-========================= */
+if (!empty($rec['CRCONTADOR'])) {
+    die("Este recebivel ja esta vinculado ao CR001 " . (int)$rec['CRCONTADOR'] . ".");
+}
+
 $stmt = $pdo_master->prepare("
     SELECT recebimento_id
     FROM armazem_cr001
     WHERE CRCONTADOR = ?
       AND EMPRESA = ?
       AND COALESCE(excluido_firebird, 'N') = 'N'
+      AND COALESCE(STATUS, '') <> 'QT'
 ");
 $stmt->execute([$cr_id, $empresa_id]);
 $cr = $stmt->fetch(PDO::FETCH_ASSOC);
 
-if (!empty($cr['recebimento_id'])) {
-    die("Este CR001 já está vinculado a outro recebível.");
+if (!$cr) {
+    die("CR001 nao encontrado ou indisponivel.");
 }
 
-/* =========================
-   FAZER VÍNCULO REAL
-========================= */
-$stmt = $pdo_master->prepare("
-    UPDATE armazem_cr001
-    SET 
-        CMCONTADOR = ?,
-        recebimento_id = ?
-    WHERE CRCONTADOR = ?
-    AND EMPRESA = ?
-    AND recebimento_id IS NULL
-    AND COALESCE(excluido_firebird, 'N') = 'N'
-");
-$stmt->execute([
-    $rec['CMCONTADOR'],
-    $rec_id,
-    $cr_id,
-    $empresa_id
-]);
+if (!empty($cr['recebimento_id'])) {
+    die("Este CR001 ja esta vinculado a outro recebivel.");
+}
 
-/* =========================
-   REDIRECIONAR (DATA GARANTIDA)
-========================= */
+$pdo_master->beginTransaction();
+
+try {
+    $stmt = $pdo_master->prepare("
+        UPDATE armazem_cr001
+        SET
+            CMCONTADOR = ?,
+            recebimento_id = ?
+        WHERE CRCONTADOR = ?
+          AND EMPRESA = ?
+          AND recebimento_id IS NULL
+          AND COALESCE(excluido_firebird, 'N') = 'N'
+          AND COALESCE(STATUS, '') <> 'QT'
+    ");
+    $stmt->execute([
+        $rec['CMCONTADOR'],
+        $rec_id,
+        $cr_id,
+        $empresa_id
+    ]);
+
+    if ($stmt->rowCount() < 1) {
+        throw new RuntimeException("Nao foi possivel vincular o CR001 informado.");
+    }
+
+    $stmt = $pdo_master->prepare("
+        UPDATE armazem_conciliacao_recebimentos
+        SET CRCONTADOR = ?
+        WHERE id = ?
+          AND empresa_id = ?
+          AND CRCONTADOR IS NULL
+    ");
+    $stmt->execute([$cr_id, $rec_id, $empresa_id]);
+
+    if ($stmt->rowCount() < 1) {
+        throw new RuntimeException("Nao foi possivel gravar o CRCONTADOR no recebivel.");
+    }
+
+    $pdo_master->commit();
+} catch (Throwable $e) {
+    $pdo_master->rollBack();
+    die($e->getMessage());
+}
+
 header("Location: conciliar_recebimentos.php?data=" . urlencode($data));
 exit;
