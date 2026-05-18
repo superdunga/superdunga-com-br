@@ -68,6 +68,28 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['acao'] ?? '') === 'verific
     exit;
 }
 
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['acao'] ?? '') === 'verificar_lote') {
+    $crcontadores = $_POST['crcontadores'] ?? [];
+    $crcontadores = array_values(array_unique(array_filter(array_map('intval', (array)$crcontadores))));
+
+    if (!empty($crcontadores)) {
+        $placeholders = implode(',', array_fill(0, count($crcontadores), '?'));
+        $stmt = $pdo_master->prepare("
+            UPDATE armazem_cr001
+            SET financeiro_verificado = 'S',
+                financeiro_verificado_por = ?,
+                financeiro_verificado_em = NOW()
+            WHERE EMPRESA = ?
+              AND CRCONTADOR IN ($placeholders)
+        ");
+        $stmt->execute(array_merge([$usuarioId, $empresaId], $crcontadores));
+    }
+
+    $query = $_GET ? '?' . http_build_query($_GET) : '';
+    header('Location: contas_receber_clientes.php' . $query);
+    exit;
+}
+
 $where = [
     'c.EMPRESA = ?',
     "(c.STATUS IS NULL OR c.STATUS <> 'QT')",
@@ -749,6 +771,7 @@ require '../../layout/header.php';
         <div class="d-flex flex-wrap justify-content-start gap-2 p-3 border-bottom financeiro-toolbar">
             <button type="button" class="btn btn-sm btn-outline-primary" id="marcarTodos">Marcar todos</button>
             <button type="button" class="btn btn-sm btn-outline-secondary" id="desmarcarTodos">Desmarcar todos</button>
+            <button type="button" class="btn btn-sm btn-success" id="marcarSelecionadosVerificados">Marcar selecionados como verificados</button>
         </div>
         <div class="table-responsive">
             <table class="table table-sm table-hover align-middle mb-0 financeiro-grid">
@@ -774,6 +797,7 @@ require '../../layout/header.php';
                                 <input
                                     type="checkbox"
                                     class="form-check-input js-somar"
+                                    value="<?= (int)$registro['CRCONTADOR'] ?>"
                                     data-valor="<?= htmlspecialchars((string)((float)$registro['VLRRESTANTE'])) ?>"
                                 >
                             </td>
@@ -814,12 +838,18 @@ require '../../layout/header.php';
 </section>
 <?php endif; ?>
 
+<form method="POST" id="formVerificarLote" class="d-none">
+    <input type="hidden" name="acao" value="verificar_lote">
+</form>
+
 <script>
 document.addEventListener('DOMContentLoaded', function () {
     const totalMarcado = document.getElementById('totalMarcado');
     const checks = document.querySelectorAll('.js-somar');
     const marcarTodos = document.getElementById('marcarTodos');
     const desmarcarTodos = document.getElementById('desmarcarTodos');
+    const marcarSelecionadosVerificados = document.getElementById('marcarSelecionadosVerificados');
+    const formVerificarLote = document.getElementById('formVerificarLote');
 
     function formatarMoeda(valor) {
         return valor.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
@@ -854,6 +884,37 @@ document.addEventListener('DOMContentLoaded', function () {
                 check.checked = false;
             });
             atualizarTotal();
+        });
+    }
+
+    if (marcarSelecionadosVerificados && formVerificarLote) {
+        marcarSelecionadosVerificados.addEventListener('click', function () {
+            const selecionados = Array.from(checks).filter(function (check) {
+                return check.checked;
+            });
+
+            if (selecionados.length === 0) {
+                alert('Selecione ao menos um titulo.');
+                return;
+            }
+
+            if (!confirm('Marcar os titulos selecionados como verificados?')) {
+                return;
+            }
+
+            formVerificarLote.querySelectorAll('input[name="crcontadores[]"]').forEach(function (input) {
+                input.remove();
+            });
+
+            selecionados.forEach(function (check) {
+                const input = document.createElement('input');
+                input.type = 'hidden';
+                input.name = 'crcontadores[]';
+                input.value = check.value;
+                formVerificarLote.appendChild(input);
+            });
+
+            formVerificarLote.submit();
         });
     }
 });
