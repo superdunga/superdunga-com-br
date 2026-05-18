@@ -9,8 +9,8 @@ $empresaId = (int)($_SESSION['empresa_id'] ?? 0);
 $opcoes = [
     [
         'titulo' => 'Movimentacao',
-        'descricao' => 'Registre entradas, saidas e ajustes da tesouraria.',
-        'href' => 'movimentar.php',
+        'descricao' => 'Abertura, fechamento e movimentacoes completas da tesouraria.',
+        'href' => 'menu_movimentacao.php',
         'modulo' => 'tesouraria_movimentacao',
         'icone' => '$',
         'botao' => 'btn-success',

@@ -133,6 +133,7 @@ function validarPermissaoModuloAtual(): void
 
     $aliases = [
         'modulos/tesouraria/download.php' => 'tesouraria_extrato',
+        'modulos/tesouraria/menu_movimentacao.php' => 'tesouraria_movimentacao',
         'modulos/tesouraria/editar_movimentacao.php' => 'tesouraria_extrato',
         'modulos/tesouraria/inventario_resultado.php' => 'tesouraria_inventario',
         'modulos/fechamentodecaixa/importar_recebimentos.php' => 'fechamento_importar_recebimentos',

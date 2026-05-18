@@ -10,6 +10,21 @@ require '../../config/conexao.php';
 ========================= */
 $id = $_GET['id'] ?? null;
 $modoEdicao = !empty($id);
+$fluxo = $_GET['fluxo'] ?? '';
+$fluxosEspeciais = [
+    'abertura' => [
+        'titulo' => 'Abertura de Caixa',
+        'tipo' => 'D',
+        'historico' => 'Abertura de caixa ',
+    ],
+    'fechamento' => [
+        'titulo' => 'Fechamento de Caixa',
+        'tipo' => 'C',
+        'historico' => 'Fechamento de caixa ',
+    ],
+];
+$fluxoEspecial = (!$modoEdicao && isset($fluxosEspeciais[$fluxo])) ? $fluxosEspeciais[$fluxo] : null;
+$dispensaComprovante = $fluxoEspecial !== null;
 
 if ($modoEdicao && $_SESSION['nivel'] !== 'MASTER') {
     die("Acesso negado: edição permitida apenas para MASTER.");
@@ -122,6 +137,10 @@ if ($modoEdicao) {
     $usuario_id = (int)($_SESSION['usuario_id'] ?? 0);
 
     $tipo = $_POST['tipo_movimentacao'] ?? '';
+    if ($fluxoEspecial) {
+        $tipo = $fluxoEspecial['tipo'];
+    }
+
     $observacao = trim($_POST['observacao'] ?? '');
 
     /* 🔥 CORREÇÃO DA DATA */
@@ -186,7 +205,7 @@ if ($modoEdicao) {
         $totalArquivosExistentes = (int)$stmtExist->fetchColumn();
     }
 
-    if (($tipo === 'D' || $tipo === 'C') && ($totalArquivos + $totalArquivosExistentes) === 0) {
+    if (!$dispensaComprovante && ($tipo === 'D' || $tipo === 'C') && ($totalArquivos + $totalArquivosExistentes) === 0) {
         die('Anexe pelo menos um comprovante.');
     }
 
@@ -239,7 +258,7 @@ if ($modoEdicao) {
 
             if ($jaExiste) {
                 $pdo_master->rollBack();
-                header("Location: movimentar.php?sucesso=1&mov_id=" . $jaExiste['id']);
+                header("Location: movimentar.php?sucesso=1&mov_id=" . $jaExiste['id'] . ($fluxoEspecial ? "&fluxo=" . urlencode($fluxo) : ""));
                 exit;
             }
         }
@@ -484,7 +503,7 @@ if ($modoEdicao) {
 
         $pdo_master->commit();
 
-        header("Location: movimentar.php?sucesso=1&mov_id=" . $mov_id . ($modoEdicao ? "&id=" . $mov_id : ""));
+        header("Location: movimentar.php?sucesso=1&mov_id=" . $mov_id . ($modoEdicao ? "&id=" . $mov_id : "") . ($fluxoEspecial ? "&fluxo=" . urlencode($fluxo) : ""));
         exit;
 
     } catch (Throwable $e) {
@@ -499,11 +518,18 @@ if ($modoEdicao) {
 require '../../layout/header.php';
 
 if (isset($_GET['sucesso'])) {
+    echo "<script>setTimeout(function(){ window.location.href='menu_movimentacao.php'; }, 0);</script>";
     echo "<script>alert('Movimentação salva com sucesso');</script>";
 }
 
 $mov_id = $modoEdicao ? $id : ($_GET['mov_id'] ?? null);
 $comprovantes = [];
+$tipoFormulario = $mov['tipo_operacao'] ?? ($fluxoEspecial['tipo'] ?? '');
+$historicoFormulario = $mov['observacao'] ?? ($fluxoEspecial['historico'] ?? '');
+$urlVoltar = 'menu_movimentacao.php';
+$mostrarEntrada = !$fluxoEspecial || $fluxo === 'fechamento';
+$mostrarSaida = !$fluxoEspecial || $fluxo === 'abertura';
+$colunaDinheiro = ($mostrarEntrada && $mostrarSaida) ? 'col-12 col-md-6' : 'col-12';
 
 if ($mov_id) {
     $stmt = $pdo_master->prepare("
@@ -733,7 +759,7 @@ input[type="file"] {
 <div class="card shadow-sm">
     <div class="card-body">
 
-        <h4 class="mb-1">Tesouraria</h4>
+        <h4 class="mb-1"><?= htmlspecialchars($fluxoEspecial['titulo'] ?? 'Tesouraria') ?></h4>
 
         <form method="POST" enctype="multipart/form-data" id="formMovimentacao">
 
@@ -742,30 +768,35 @@ input[type="file"] {
 
                 <div class="row mt-1">
                     <div class="col-4">
-                        <button type="button" class="btn btn-tipo" onclick="setTipo('C', this)">
+                        <button type="button" class="btn btn-tipo" onclick="setTipo('C', this)" <?= $fluxoEspecial ? 'disabled' : '' ?>>
                             Crédito
                         </button>
                     </div>
 
                     <div class="col-4">
-                        <button type="button" class="btn btn-tipo" onclick="setTipo('D', this)">
+                        <button type="button" class="btn btn-tipo" onclick="setTipo('D', this)" <?= $fluxoEspecial ? 'disabled' : '' ?>>
                             Débito
                         </button>
                     </div>
 
                     <div class="col-4">
-                        <button type="button" class="btn btn-tipo" onclick="setTipo('T', this)">
+                        <button type="button" class="btn btn-tipo" onclick="setTipo('T', this)" <?= $fluxoEspecial ? 'disabled' : '' ?>>
                             Troca
                         </button>
                     </div>
                 </div>
 
-                <input type="hidden" name="tipo_movimentacao" id="tipoMovimentacao" value="<?= htmlspecialchars($mov['tipo_operacao'] ?? '') ?>">
+                <?php if ($fluxoEspecial): ?>
+                    <div class="form-text">Tipo fixo para esta rotina.</div>
+                <?php endif; ?>
+
+                <input type="hidden" name="tipo_movimentacao" id="tipoMovimentacao" value="<?= htmlspecialchars($tipoFormulario) ?>">
             </div>
 
             <div class="row">
                 <!-- Entrada -->
-                <div class="col-12 col-md-6 mb-2">
+                <?php if ($mostrarEntrada): ?>
+                <div class="<?= htmlspecialchars($colunaDinheiro) ?> mb-2">
                     <div class="titulo-secao text-success">Entrada de dinheiro</div>
 
                     <div class="subcabecalho">
@@ -823,9 +854,13 @@ input[type="file"] {
                         Total Entrada: R$ <span id="totalEntrada">0,00</span>
                     </div>
                 </div>
+                <?php else: ?>
+                    <span id="totalEntrada" class="d-none">0,00</span>
+                <?php endif; ?>
 
                 <!-- Saída -->
-                <div class="col-12 col-md-6 mb-2">
+                <?php if ($mostrarSaida): ?>
+                <div class="<?= htmlspecialchars($colunaDinheiro) ?> mb-2">
                     <div class="titulo-secao text-danger">Saída de dinheiro</div>
 
                     <div class="subcabecalho">
@@ -883,6 +918,9 @@ input[type="file"] {
                         Total Saída: R$ <span id="totalSaida">0,00</span>
                     </div>
                 </div>
+                <?php else: ?>
+                    <span id="totalSaida" class="d-none">0,00</span>
+                <?php endif; ?>
             </div>
 
             <hr class="my-2">
@@ -908,13 +946,14 @@ input[type="file"] {
 <?php endif; ?>
 
             <div class="row">
-                <div class="col-md-6 mb-2">
+                <div class="<?= $dispensaComprovante ? 'col-md-12' : 'col-md-6' ?> mb-2">
                     <label>Histórico *</label>
-                    <textarea name="observacao" class="form-control"><?= htmlspecialchars($mov['observacao'] ?? '') ?></textarea>
+                    <textarea name="observacao" class="form-control"><?= htmlspecialchars($historicoFormulario) ?></textarea>
                 </div>
 
+                <?php if (!$dispensaComprovante): ?>
                 <div class="col-md-6 mb-2">
-                    <label>Comprovantes *</label>
+                    <label>Comprovantes <?= $dispensaComprovante ? '(opcional)' : '*' ?></label>
 
                     <?php if (!empty($comprovantes)): ?>
                         <div style="margin-top:10px;">
@@ -933,6 +972,7 @@ input[type="file"] {
                     <input type="file" id="comprovante" name="comprovante[]" multiple class="form-control">
                     <div id="listaArquivos"></div>
                 </div>
+                <?php endif; ?>
             </div>
 
             <div class="mt-2">
@@ -969,6 +1009,10 @@ function renderListaArquivos() {
     const lista = document.getElementById('listaArquivos');
     const input = document.getElementById('comprovante');
 
+    if (!lista || !input) {
+        return;
+    }
+
     lista.innerHTML = '';
 
     if (input.files.length === 0) {
@@ -983,10 +1027,13 @@ function renderListaArquivos() {
     });
 }
 
-document.getElementById('comprovante').addEventListener('change', function() {
-    renderListaArquivos();
-    calcular();
-});
+const inputComprovante = document.getElementById('comprovante');
+if (inputComprovante) {
+    inputComprovante.addEventListener('change', function() {
+        renderListaArquivos();
+        calcular();
+    });
+}
 
 function calcular() {
     let totalEntrada = 0;
@@ -1015,9 +1062,11 @@ function calcular() {
 
     const tipo = document.getElementById('tipoMovimentacao').value;
     const historico = document.querySelector('textarea[name="observacao"]').value.trim();
-    const totalArquivosNovos = document.getElementById('comprovante').files.length;
+    const inputArquivo = document.getElementById('comprovante');
+    const totalArquivosNovos = inputArquivo ? inputArquivo.files.length : 0;
     const totalArquivosExistentes = <?= count($comprovantes) ?>;
     const totalArquivos = totalArquivosNovos + totalArquivosExistentes;
+    const dispensaComprovante = <?= $dispensaComprovante ? 'true' : 'false' ?>;
 
     let ok = true;
     let msg = '';
@@ -1028,7 +1077,7 @@ function calcular() {
     } else if (!historico) {
         ok = false;
         msg = 'Informe o histórico';
-    } else if ((tipo === 'D' || tipo === 'C') && totalArquivos === 0) {
+    } else if (!dispensaComprovante && (tipo === 'D' || tipo === 'C') && totalArquivos === 0) {
         ok = false;
         msg = 'Anexe pelo menos um comprovante';
     } else if (tipo === 'D' && totalSaida <= totalEntrada) {
@@ -1136,7 +1185,7 @@ document.addEventListener('DOMContentLoaded', function() {
 </style>
 
 <div class="btn-voltar-fixo">
-    <button onclick="window.location.href='menu_tesouraria.php'" class="btn btn-secondary">
+    <button onclick="window.location.href='<?= htmlspecialchars($urlVoltar) ?>'" class="btn btn-secondary">
         ← Voltar
     </button>
 </div>

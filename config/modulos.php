@@ -9,7 +9,7 @@ define('SISTEMA_MODULOS_CONFIG_CARREGADO', true);
 function sistemaModulosPadrao(): array
 {
     return [
-        ['codigo' => 'tesouraria_movimentacao', 'grupo' => 'Tesouraria', 'nome' => 'Movimentacao', 'url' => 'modulos/tesouraria/movimentar.php', 'ordem' => 10],
+        ['codigo' => 'tesouraria_movimentacao', 'grupo' => 'Tesouraria', 'nome' => 'Movimentacao', 'url' => 'modulos/tesouraria/menu_movimentacao.php', 'ordem' => 10],
         ['codigo' => 'tesouraria_extrato', 'grupo' => 'Tesouraria', 'nome' => 'Extrato', 'url' => 'modulos/tesouraria/extrato.php', 'ordem' => 20],
         ['codigo' => 'tesouraria_inventario', 'grupo' => 'Tesouraria', 'nome' => 'Inventario Fisico', 'url' => 'modulos/tesouraria/inventario.php', 'ordem' => 30],
         ['codigo' => 'tesouraria_inventarios', 'grupo' => 'Tesouraria', 'nome' => 'Historico de Inventarios', 'url' => 'modulos/tesouraria/inventarios.php', 'ordem' => 40],
