@@ -67,6 +67,28 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['acao'] ?? '') === 'verific
     exit;
 }
 
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['acao'] ?? '') === 'verificar_lote') {
+    $cpcontadores = $_POST['cpcontadores'] ?? [];
+    $cpcontadores = array_values(array_unique(array_filter(array_map('intval', (array)$cpcontadores))));
+
+    if (!empty($cpcontadores)) {
+        $placeholders = implode(',', array_fill(0, count($cpcontadores), '?'));
+        $stmt = $pdo_master->prepare("
+            UPDATE armazem_cp001
+            SET financeiro_verificado = 'S',
+                financeiro_verificado_por = ?,
+                financeiro_verificado_em = NOW()
+            WHERE EMPRESA = ?
+              AND CPCONTADOR IN ($placeholders)
+        ");
+        $stmt->execute(array_merge([$usuarioId, $empresaId], $cpcontadores));
+    }
+
+    $query = $_GET ? '?' . http_build_query($_GET) : '';
+    header('Location: contas_pagar.php' . $query);
+    exit;
+}
+
 $where = [
     'cp.EMPRESA = ?',
     "(cp.STATUS IS NULL OR cp.STATUS <> 'QT')",
@@ -701,10 +723,16 @@ require '../../layout/header.php';
 
 <section>
     <div class="bg-white border rounded-2 shadow-sm overflow-hidden">
+        <div class="d-flex flex-wrap justify-content-start gap-2 p-3 border-bottom financeiro-toolbar">
+            <button type="button" class="btn btn-sm btn-outline-primary" id="marcarTodos">Marcar todos</button>
+            <button type="button" class="btn btn-sm btn-outline-secondary" id="desmarcarTodos">Desmarcar todos</button>
+            <button type="button" class="btn btn-sm btn-success" id="marcarSelecionadosVerificados">Marcar selecionados como verificados</button>
+        </div>
         <div class="table-responsive">
             <table class="table table-sm table-hover align-middle mb-0 financeiro-grid">
                 <thead class="table-primary">
                     <tr>
+                        <th class="text-center col-check">Sel.</th>
                         <th class="col-date">Compra</th>
                         <th class="col-code">Cod.</th>
                         <th>Fornecedor</th>
@@ -721,6 +749,13 @@ require '../../layout/header.php';
                 <tbody>
                     <?php foreach ($registros as $registro): ?>
                         <tr>
+                            <td data-label="Sel." class="text-center col-check">
+                                <input
+                                    type="checkbox"
+                                    class="form-check-input js-selecionar"
+                                    value="<?= (int)$registro['CPCONTADOR'] ?>"
+                                >
+                            </td>
                             <td data-label="Compra" class="col-date"><?= dataContasPagar($registro['DTCOMPRA']) ?></td>
                             <td data-label="Cod." class="fw-semibold col-code"><?= (int)$registro['FCONTADOR'] ?></td>
                             <td data-label="Fornecedor">
@@ -751,7 +786,7 @@ require '../../layout/header.php';
                     <?php endforeach; ?>
                     <?php if (empty($registros)): ?>
                         <tr>
-                            <td colspan="10" class="text-center text-muted py-4">Nenhum titulo encontrado com os filtros informados.</td>
+                            <td colspan="12" class="text-center text-muted py-4">Nenhum titulo encontrado com os filtros informados.</td>
                         </tr>
                     <?php endif; ?>
                 </tbody>
@@ -764,5 +799,66 @@ require '../../layout/header.php';
         <?php endif; ?>
     </div>
 </section>
+
+<form method="POST" id="formVerificarLote" class="d-none">
+    <input type="hidden" name="acao" value="verificar_lote">
+</form>
+
+<script>
+document.addEventListener('DOMContentLoaded', function () {
+    const checks = document.querySelectorAll('.js-selecionar');
+    const marcarTodos = document.getElementById('marcarTodos');
+    const desmarcarTodos = document.getElementById('desmarcarTodos');
+    const marcarSelecionadosVerificados = document.getElementById('marcarSelecionadosVerificados');
+    const formVerificarLote = document.getElementById('formVerificarLote');
+
+    if (marcarTodos) {
+        marcarTodos.addEventListener('click', function () {
+            checks.forEach(function (check) {
+                check.checked = true;
+            });
+        });
+    }
+
+    if (desmarcarTodos) {
+        desmarcarTodos.addEventListener('click', function () {
+            checks.forEach(function (check) {
+                check.checked = false;
+            });
+        });
+    }
+
+    if (marcarSelecionadosVerificados && formVerificarLote) {
+        marcarSelecionadosVerificados.addEventListener('click', function () {
+            const selecionados = Array.from(checks).filter(function (check) {
+                return check.checked;
+            });
+
+            if (selecionados.length === 0) {
+                alert('Selecione ao menos um titulo.');
+                return;
+            }
+
+            if (!confirm('Marcar os titulos selecionados como verificados?')) {
+                return;
+            }
+
+            formVerificarLote.querySelectorAll('input[name="cpcontadores[]"]').forEach(function (input) {
+                input.remove();
+            });
+
+            selecionados.forEach(function (check) {
+                const input = document.createElement('input');
+                input.type = 'hidden';
+                input.name = 'cpcontadores[]';
+                input.value = check.value;
+                formVerificarLote.appendChild(input);
+            });
+
+            formVerificarLote.submit();
+        });
+    }
+});
+</script>
 
 <?php require '../../layout/footer.php'; ?>
