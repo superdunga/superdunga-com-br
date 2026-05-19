@@ -20,6 +20,7 @@ $inicioPeriodo = $mesFiltro . '-01';
 $fimPeriodo = date('Y-m-t', strtotime($inicioPeriodo . ' +1 month'));
 $mesAtualLabel = date('m/Y', strtotime($inicioPeriodo));
 $mesSeguinteLabel = date('m/Y', strtotime($inicioPeriodo . ' +1 month'));
+$limiteVencimentoLabel = dataGestao($fimPeriodo);
 
 function moedaGestao($valor): string
 {
@@ -110,9 +111,9 @@ $stmtReceberResumo = $pdo_master->prepare("
       AND (c.STATUS IS NULL OR c.STATUS <> 'QT')
       AND COALESCE(c.excluido_firebird, 'N') <> 'S'
       AND COALESCE(c.financeiro_verificado, 'N') <> 'S'
-      AND DATE(c.DTVENC) BETWEEN ? AND ?
+      AND DATE(c.DTVENC) <= ?
 ");
-$stmtReceberResumo->execute(array_merge($paramEmpresa, [$inicioPeriodo, $fimPeriodo]));
+$stmtReceberResumo->execute(array_merge($paramEmpresa, [$fimPeriodo]));
 $receberResumo = $stmtReceberResumo->fetch(PDO::FETCH_ASSOC) ?: ['qtd' => 0, 'total_restante' => 0];
 
 $stmtReceber = $pdo_master->prepare("
@@ -132,11 +133,11 @@ $stmtReceber = $pdo_master->prepare("
       AND (c.STATUS IS NULL OR c.STATUS <> 'QT')
       AND COALESCE(c.excluido_firebird, 'N') <> 'S'
       AND COALESCE(c.financeiro_verificado, 'N') <> 'S'
-      AND DATE(c.DTVENC) BETWEEN ? AND ?
+      AND DATE(c.DTVENC) <= ?
     ORDER BY c.DTVENC ASC, cliente ASC, c.CRCONTADOR ASC
     LIMIT 300
 ");
-$stmtReceber->execute(array_merge($paramEmpresa, [$inicioPeriodo, $fimPeriodo]));
+$stmtReceber->execute(array_merge($paramEmpresa, [$fimPeriodo]));
 $receber = $stmtReceber->fetchAll(PDO::FETCH_ASSOC);
 
 $stmtPagarResumo = $pdo_master->prepare("
@@ -148,9 +149,9 @@ $stmtPagarResumo = $pdo_master->prepare("
       AND (cp.STATUS IS NULL OR cp.STATUS <> 'QT')
       AND COALESCE(cp.excluido_firebird, 'N') <> 'S'
       AND COALESCE(cp.financeiro_verificado, 'N') <> 'S'
-      AND DATE(cp.DTVENC) BETWEEN ? AND ?
+      AND DATE(cp.DTVENC) <= ?
 ");
-$stmtPagarResumo->execute(array_merge($paramEmpresa, [$inicioPeriodo, $fimPeriodo]));
+$stmtPagarResumo->execute(array_merge($paramEmpresa, [$fimPeriodo]));
 $pagarResumo = $stmtPagarResumo->fetch(PDO::FETCH_ASSOC) ?: ['qtd' => 0, 'total_restante' => 0];
 
 $stmtPagar = $pdo_master->prepare("
@@ -173,11 +174,11 @@ $stmtPagar = $pdo_master->prepare("
       AND (cp.STATUS IS NULL OR cp.STATUS <> 'QT')
       AND COALESCE(cp.excluido_firebird, 'N') <> 'S'
       AND COALESCE(cp.financeiro_verificado, 'N') <> 'S'
-      AND DATE(cp.DTVENC) BETWEEN ? AND ?
+      AND DATE(cp.DTVENC) <= ?
     ORDER BY cp.DTVENC ASC, fornecedor ASC, cp.CPCONTADOR ASC
     LIMIT 300
 ");
-$stmtPagar->execute(array_merge($paramEmpresa, [$inicioPeriodo, $fimPeriodo]));
+$stmtPagar->execute(array_merge($paramEmpresa, [$fimPeriodo]));
 $pagar = $stmtPagar->fetchAll(PDO::FETCH_ASSOC);
 
 $stmtContas = $pdo_master->prepare("
@@ -269,7 +270,7 @@ require '../../layout/header.php';
                 <span class="badge text-bg-primary mb-3">Gestão</span>
                 <h1 class="h3 fw-bold mb-2">DRE</h1>
                 <p class="text-muted mb-0">
-                    Visao gerencial de <?= htmlspecialchars($empresaNome) ?> para <?= htmlspecialchars($mesAtualLabel) ?> e <?= htmlspecialchars($mesSeguinteLabel) ?>.
+                    Visao gerencial de <?= htmlspecialchars($empresaNome) ?> com titulos abertos vencendo ate <?= htmlspecialchars($limiteVencimentoLabel) ?>.
                 </p>
             </div>
             <div class="col-lg-4 text-lg-end">
@@ -334,7 +335,7 @@ require '../../layout/header.php';
             <div class="card-body">
                 <div class="small text-muted">Saldo das contas</div>
                 <div class="h5 fw-bold <?= $saldoContasTotal < 0 ? 'text-danger' : 'text-success' ?> mb-1"><?= moedaGestao($saldoContasTotal) ?></div>
-                <div class="small text-muted">Ate <?= dataGestao($fimPeriodo) ?></div>
+                <div class="small text-muted">Saldo atual das contas</div>
             </div>
         </div>
     </div>
@@ -352,7 +353,7 @@ require '../../layout/header.php';
 <section class="card shadow-sm mb-4">
     <div class="card-header">
         <h2 class="h5 mb-0">Contas a Receber</h2>
-        <small class="text-muted">Vencimento entre <?= dataGestao($inicioPeriodo) ?> e <?= dataGestao($fimPeriodo) ?>, verificado = nao.</small>
+        <small class="text-muted">Titulos em aberto com vencimento ate <?= dataGestao($fimPeriodo) ?>, verificado = nao.</small>
     </div>
     <div class="table-responsive">
         <table class="table table-sm table-striped align-middle">
@@ -389,7 +390,7 @@ require '../../layout/header.php';
 <section class="card shadow-sm mb-4">
     <div class="card-header">
         <h2 class="h5 mb-0">Contas a Pagar</h2>
-        <small class="text-muted">Vencimento entre <?= dataGestao($inicioPeriodo) ?> e <?= dataGestao($fimPeriodo) ?>, verificado = nao.</small>
+        <small class="text-muted">Titulos em aberto com vencimento ate <?= dataGestao($fimPeriodo) ?>, verificado = nao.</small>
     </div>
     <div class="table-responsive">
         <table class="table table-sm table-striped align-middle">
@@ -428,7 +429,7 @@ require '../../layout/header.php';
 <section class="card shadow-sm mb-4">
     <div class="card-header">
         <h2 class="h5 mb-0">Saldo das Contas</h2>
-        <small class="text-muted">Contas nao bloqueadas, calculadas ate <?= dataGestao($fimPeriodo) ?>.</small>
+        <small class="text-muted">Contas nao bloqueadas com saldo atual calculado.</small>
     </div>
     <div class="table-responsive">
         <table class="table table-sm table-striped align-middle">

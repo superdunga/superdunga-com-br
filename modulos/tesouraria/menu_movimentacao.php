@@ -1,13 +1,17 @@
 <?php
 require '../../config/auth.php';
 require '../../config/conexao.php';
+require_once '../../config/modulos.php';
 require '../../layout/header.php';
+
+$empresaId = (int)($_SESSION['empresa_id'] ?? 0);
 
 $opcoes = [
     [
         'titulo' => 'Abertura de Caixa',
         'descricao' => 'Registra a retirada de dinheiro da tesouraria para abertura do caixa.',
         'href' => 'movimentar.php?fluxo=abertura',
+        'modulo' => 'tesouraria_movimentacao_abertura',
         'icone' => 'AC',
         'botao' => 'btn-danger',
     ],
@@ -15,6 +19,7 @@ $opcoes = [
         'titulo' => 'Fechamento de Caixa',
         'descricao' => 'Registra a entrada de dinheiro do fechamento do caixa na tesouraria.',
         'href' => 'movimentar.php?fluxo=fechamento',
+        'modulo' => 'tesouraria_movimentacao_fechamento',
         'icone' => 'FC',
         'botao' => 'btn-success',
     ],
@@ -22,10 +27,13 @@ $opcoes = [
         'titulo' => 'Movimentacao',
         'descricao' => 'Tela completa para credito, debito, troca e anexos.',
         'href' => 'movimentar.php',
+        'modulo' => 'tesouraria_movimentacao_completa',
         'icone' => '$',
         'botao' => 'btn-primary',
     ],
 ];
+
+$opcoes = filtrarOpcoesPorModulo($pdo_master, $empresaId, $opcoes);
 ?>
 
 <section class="mb-4">
@@ -61,6 +69,11 @@ $opcoes = [
                 </div>
             </div>
         <?php endforeach; ?>
+        <?php if (empty($opcoes)): ?>
+            <div class="col-12">
+                <div class="alert alert-info mb-0">Nenhuma rotina de movimentacao liberada para este usuario.</div>
+            </div>
+        <?php endif; ?>
     </div>
 </section>
 

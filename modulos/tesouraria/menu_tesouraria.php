@@ -12,6 +12,12 @@ $opcoes = [
         'descricao' => 'Abertura, fechamento e movimentacoes completas da tesouraria.',
         'href' => 'menu_movimentacao.php',
         'modulo' => 'tesouraria_movimentacao',
+        'modulos' => [
+            'tesouraria_movimentacao',
+            'tesouraria_movimentacao_abertura',
+            'tesouraria_movimentacao_fechamento',
+            'tesouraria_movimentacao_completa',
+        ],
         'icone' => '$',
         'botao' => 'btn-success',
     ],

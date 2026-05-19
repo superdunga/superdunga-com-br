@@ -132,9 +132,44 @@ function validarPermissaoModuloAtual(): void
         return;
     }
 
+    if ($caminho === 'modulos/tesouraria/menu_movimentacao.php') {
+        $modulosMovimentacao = [
+            'tesouraria_movimentacao',
+            'tesouraria_movimentacao_abertura',
+            'tesouraria_movimentacao_fechamento',
+            'tesouraria_movimentacao_completa',
+        ];
+
+        foreach ($modulosMovimentacao as $codigoMovimentacaoMenu) {
+            if (moduloPermitido($pdo, $empresaId, $codigoMovimentacaoMenu, $perfil)) {
+                return;
+            }
+        }
+
+        renderizarAcessoNegadoModulo();
+    }
+
+    if ($caminho === 'modulos/tesouraria/movimentar.php') {
+        $fluxoMovimentacao = $_GET['fluxo'] ?? '';
+
+        if (!empty($_GET['id'])) {
+            $codigoMovimentacao = 'tesouraria_movimentacao_completa';
+        } elseif ($fluxoMovimentacao === 'abertura') {
+            $codigoMovimentacao = 'tesouraria_movimentacao_abertura';
+        } elseif ($fluxoMovimentacao === 'fechamento') {
+            $codigoMovimentacao = 'tesouraria_movimentacao_fechamento';
+        } else {
+            $codigoMovimentacao = 'tesouraria_movimentacao_completa';
+        }
+
+        if (!moduloPermitido($pdo, $empresaId, $codigoMovimentacao, $perfil)) {
+            renderizarAcessoNegadoModulo();
+        }
+        return;
+    }
+
     $aliases = [
         'modulos/tesouraria/download.php' => 'tesouraria_extrato',
-        'modulos/tesouraria/menu_movimentacao.php' => 'tesouraria_movimentacao',
         'modulos/tesouraria/editar_movimentacao.php' => 'tesouraria_extrato',
         'modulos/tesouraria/inventario_resultado.php' => 'tesouraria_inventario',
         'modulos/fechamentodecaixa/importar_recebimentos.php' => 'fechamento_importar_recebimentos',

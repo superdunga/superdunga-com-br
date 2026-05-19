@@ -10,6 +10,9 @@ function sistemaModulosPadrao(): array
 {
     return [
         ['codigo' => 'tesouraria_movimentacao', 'grupo' => 'Tesouraria', 'nome' => 'Movimentacao', 'url' => 'modulos/tesouraria/menu_movimentacao.php', 'ordem' => 10],
+        ['codigo' => 'tesouraria_movimentacao_abertura', 'grupo' => 'Tesouraria', 'nome' => 'Abertura de Caixa', 'url' => 'modulos/tesouraria/movimentar.php?fluxo=abertura', 'ordem' => 11],
+        ['codigo' => 'tesouraria_movimentacao_fechamento', 'grupo' => 'Tesouraria', 'nome' => 'Fechamento de Caixa', 'url' => 'modulos/tesouraria/movimentar.php?fluxo=fechamento', 'ordem' => 12],
+        ['codigo' => 'tesouraria_movimentacao_completa', 'grupo' => 'Tesouraria', 'nome' => 'Movimentacao Completa', 'url' => 'modulos/tesouraria/movimentar.php', 'ordem' => 13],
         ['codigo' => 'tesouraria_extrato', 'grupo' => 'Tesouraria', 'nome' => 'Extrato', 'url' => 'modulos/tesouraria/extrato.php', 'ordem' => 20],
         ['codigo' => 'tesouraria_inventario', 'grupo' => 'Tesouraria', 'nome' => 'Inventario Fisico', 'url' => 'modulos/tesouraria/inventario.php', 'ordem' => 30],
         ['codigo' => 'tesouraria_inventarios', 'grupo' => 'Tesouraria', 'nome' => 'Historico de Inventarios', 'url' => 'modulos/tesouraria/inventarios.php', 'ordem' => 40],
@@ -430,6 +433,16 @@ function grupoPermitido(PDO $pdo, int $empresaId, string $grupo, ?string $perfil
 function filtrarOpcoesPorModulo(PDO $pdo, int $empresaId, array $opcoes): array
 {
     return array_values(array_filter($opcoes, function (array $opcao) use ($pdo, $empresaId): bool {
+        if (!empty($opcao['modulos']) && is_array($opcao['modulos'])) {
+            foreach ($opcao['modulos'] as $codigoPossivel) {
+                if (moduloPermitido($pdo, $empresaId, (string)$codigoPossivel)) {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
         $codigo = $opcao['modulo'] ?? '';
         return $codigo === '' || moduloPermitido($pdo, $empresaId, $codigo);
     }));
