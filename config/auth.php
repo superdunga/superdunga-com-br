@@ -29,6 +29,11 @@ function redirecionarPendenciasOperador(): void
         return;
     }
 
+    if (operadorPendenciasJaVerificadasHoje($hoje)) {
+        $_SESSION['operador_pendencias_liberado_data'] = $hoje;
+        return;
+    }
+
     $script = str_replace('\\', '/', $_SERVER['SCRIPT_NAME'] ?? '');
     $permitidos = [
         '/modulos/operador/pendencias.php',
@@ -52,6 +57,66 @@ function redirecionarPendenciasOperador(): void
     $base = appBaseUrl();
     header("Location: " . ($base ?: '') . "/modulos/operador/pendencias.php");
     exit;
+}
+
+function operadorPendenciasJaVerificadasHoje(string $hoje): bool
+{
+    global $pdo_master;
+
+    $usuarioId = (int)($_SESSION['usuario_id'] ?? 0);
+    $empresaId = (int)($_SESSION['empresa_id'] ?? 0);
+
+    if ($usuarioId <= 0 || $empresaId <= 0) {
+        return false;
+    }
+
+    try {
+        if (!isset($pdo_master)) {
+            $conexaoPath = __DIR__ . '/conexao.php';
+            if (file_exists($conexaoPath)) {
+                require $conexaoPath;
+            }
+        }
+
+        if (!isset($pdo_master) || !($pdo_master instanceof PDO)) {
+            return false;
+        }
+
+        $stmtTabela = $pdo_master->prepare("
+            SELECT COUNT(*)
+            FROM information_schema.TABLES
+            WHERE TABLE_SCHEMA = DATABASE()
+              AND TABLE_NAME = 'operador_pendencias_checks'
+        ");
+        $stmtTabela->execute();
+
+        if ((int)$stmtTabela->fetchColumn() === 0) {
+            return false;
+        }
+
+        $chavesObrigatorias = [
+            'tesouraria',
+            'dinheiro',
+            'vendas_prazo',
+            'itens_fora_padrao',
+            'validacao_cm',
+        ];
+
+        $placeholders = implode(',', array_fill(0, count($chavesObrigatorias), '?'));
+        $stmtChecks = $pdo_master->prepare("
+            SELECT COUNT(DISTINCT chave)
+            FROM operador_pendencias_checks
+            WHERE usuario_id = ?
+              AND empresa_id = ?
+              AND data_referencia = ?
+              AND chave IN ($placeholders)
+        ");
+        $stmtChecks->execute(array_merge([$usuarioId, $empresaId, $hoje], $chavesObrigatorias));
+
+        return (int)$stmtChecks->fetchColumn() === count($chavesObrigatorias);
+    } catch (Throwable $e) {
+        return false;
+    }
 }
 
 redirecionarPendenciasOperador();
