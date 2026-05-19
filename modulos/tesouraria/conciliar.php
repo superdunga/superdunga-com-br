@@ -6,6 +6,8 @@ exigirNivel('OPERADOR');
 
 $empresa_id = (int)$_SESSION['empresa_id'];
 $cbcontador_tesouraria = ($empresa_id === 4) ? 5 : 8;
+$filtro_movcontador_firebird = ($empresa_id === 4) ? 'AND f.MOVCONTADOR > 233704' : '';
+$filtro_movcontador_firebird_sem_alias = ($empresa_id === 4) ? 'AND MOVCONTADOR > 233704' : '';
 $linhas_afetadas = 0;
 $erro_conciliacao = '';
 $erro_manual = $_GET['erro_manual'] ?? '';
@@ -78,6 +80,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['acao'] ?? '') === 'concili
               AND t.conciliado = 'N'
               AND t.tipo_operacao <> 'T'
               AND f.CBCONTADOR = ?
+              $filtro_movcontador_firebird
               AND COALESCE(f.deletado, 'N') <> 'S'
               AND CAST(f.VALORMOV AS CHAR) REGEXP '^-?[0-9]+(\\\\.[0-9]+)?$'
               AND NOT EXISTS (
@@ -139,6 +142,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['acao'] ?? '') === 'marcar_
             FROM armazem_bnc001
             WHERE MOVCONTADOR = ?
               AND EMPRESA = ?
+              $filtro_movcontador_firebird_sem_alias
             LIMIT 1
         ");
         $stmtCheckDeletado->execute([$firebirdId, $empresa_id]);
@@ -189,6 +193,7 @@ try {
           AND t.tipo_operacao <> 'T'
           AND f.EMPRESA = ?
           AND f.CBCONTADOR = ?
+          $filtro_movcontador_firebird
           AND COALESCE(f.deletado, 'N') <> 'S'
           AND CAST(f.VALORMOV AS CHAR) REGEXP '^-?[0-9]+(\\\\.[0-9]+)?$'
           AND NOT EXISTS (
@@ -229,6 +234,7 @@ $stmtPendentes = $pdo_master->prepare("
               AND DATE(f.DTMOV) = DATE(t.data_mov)
               AND f.EMPRESA = ?
               AND f.CBCONTADOR = ?
+              $filtro_movcontador_firebird
               AND COALESCE(f.deletado, 'N') <> 'S'
               AND CAST(f.VALORMOV AS CHAR) REGEXP '^-?[0-9]+(\\\\.[0-9]+)?$'
               AND NOT EXISTS (
@@ -264,6 +270,7 @@ if (!empty($pendentes)) {
           AND DATE(f.DTMOV) = DATE(?)
           AND f.EMPRESA = ?
           AND f.CBCONTADOR = ?
+          $filtro_movcontador_firebird
           AND COALESCE(f.deletado, 'N') <> 'S'
           AND CAST(f.VALORMOV AS CHAR) REGEXP '^-?[0-9]+(\\\\.[0-9]+)?$'
           AND NOT EXISTS (
@@ -311,6 +318,7 @@ $stmtFirebirdNao = $pdo_master->prepare("
     FROM armazem_bnc001 f
     WHERE f.EMPRESA = ?
       AND f.CBCONTADOR = ?
+      $filtro_movcontador_firebird
       AND f.DTMOV > '2026-04-15'
       AND (
           COALESCE(f.deletado, 'N') <> 'S'
