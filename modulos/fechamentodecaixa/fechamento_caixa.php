@@ -20,6 +20,7 @@ WHERE DTLANC >= '$inicio'
   AND DTLANC <= '$fim'
   AND EMPRESA = $empresa_id
   AND CANCELADO = 'N'
+  AND COALESCE(excluido_firebird, 'N') <> 'S'
 GROUP BY DATE(DTLANC), USERLANC
 ORDER BY data DESC
 ";
@@ -95,6 +96,7 @@ $total_diferenca_geral = 0;
                   AND USERLANC = ?
                   AND EMPRESA = ?
                   AND CANCELADO = 'N'
+                  AND COALESCE(excluido_firebird, 'N') <> 'S'
                   $filtroVendaTotal
                 GROUP BY NUMDOC
             ) x
@@ -119,6 +121,7 @@ $total_diferenca_geral = 0;
                   AND USERLANC = ?
                   AND EMPRESA = ?
                   AND CANCELADO = 'N'
+                  AND COALESCE(excluido_firebird, 'N') <> 'S'
                   $filtroVendaTotal
             ) e ON e.VENDACONTADOR = b.NUMDOCORIGEM
             WHERE b.DTLANC BETWEEN ? AND ?
@@ -139,6 +142,7 @@ $total_diferenca_geral = 0;
                   AND USERLANC = ?
                   AND EMPRESA = ?
                   AND CANCELADO = 'N'
+                  AND COALESCE(excluido_firebird, 'N') <> 'S'
                   $filtroVendaTotal
             ) e ON e.VENDACONTADOR = c.NUMDOCORIGEM
             WHERE c.EMPRESA = ?
