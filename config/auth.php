@@ -219,6 +219,7 @@ function hierarquia() {
     return [
         'CONSULTA'   => 1,
         'OPERADOR'   => 2,
+        'CONFERENTE' => 2,
         'SUPERVISOR' => 3,
         'GERENTE'    => 4,
         'ADMIN'      => 5,

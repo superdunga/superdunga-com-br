@@ -126,12 +126,14 @@ require __DIR__ . '/../../layout/header.php';
                         <option value="GERENTE">GERENTE</option>
                         <option value="SUPERVISOR">SUPERVISOR</option>
                         <option value="OPERADOR">OPERADOR</option>
+                        <option value="CONFERENTE">CONFERENTE</option>
                         <option value="CONSULTA">CONSULTA</option>
 
                     <?php elseif ($_SESSION['nivel'] === 'ADMIN'): ?>
                         <option value="GERENTE">GERENTE</option>
                         <option value="SUPERVISOR">SUPERVISOR</option>
                         <option value="OPERADOR">OPERADOR</option>
+                        <option value="CONFERENTE">CONFERENTE</option>
                         <option value="CONSULTA">CONSULTA</option>
                     <?php endif; ?>
                 </select>

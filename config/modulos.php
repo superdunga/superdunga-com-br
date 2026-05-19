@@ -252,7 +252,7 @@ function moduloEmpresaPermitido(PDO $pdo, int $empresaId, string $codigo): bool
 
 function perfisSistema(): array
 {
-    return ['MASTER', 'ADMIN', 'OPERADOR'];
+    return ['MASTER', 'ADMIN', 'OPERADOR', 'CONFERENTE'];
 }
 
 function perfilTemConfiguracaoModulos(PDO $pdo, string $perfil): bool
@@ -366,6 +366,14 @@ function moduloPermitido(PDO $pdo, int $empresaId, string $codigo, ?string $perf
 
     if ($perfil === 'MASTER') {
         return true;
+    }
+
+    if ($codigo === 'tesouraria_movimentacao') {
+        foreach (['tesouraria_movimentacao_abertura', 'tesouraria_movimentacao_fechamento', 'tesouraria_movimentacao_completa'] as $codigoFilho) {
+            if (moduloPermitido($pdo, $empresaId, $codigoFilho, $perfil)) {
+                return true;
+            }
+        }
     }
 
     $permissaoUsuario = moduloUsuarioPermitido($pdo, (int)($_SESSION['usuario_id'] ?? 0), $codigo);
