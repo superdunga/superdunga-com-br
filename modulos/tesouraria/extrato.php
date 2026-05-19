@@ -232,6 +232,7 @@ if ($podeVerDetalhes) {
         FROM tesouraria_movimentacoes_detalhes d
         JOIN tesouraria_tipos_dinheiro t 
             ON t.id = d.tipo_dinheiro_id
+        ORDER BY d.movimentacao_id, CAST(t.valor AS DECIMAL(10,2)) ASC, d.tipo ASC, t.descricao ASC
     ";
 
     $dados = $pdo_master->query($sql)->fetchAll(PDO::FETCH_ASSOC);
@@ -421,6 +422,16 @@ require '../../layout/header.php';
 
                 <?php
                 $itens = $detalhesMov[$m['id']] ?? [];
+                usort($itens, function (array $a, array $b): int {
+                    $valorA = (float)str_replace(',', '.', (string)($a['valor'] ?? 0));
+                    $valorB = (float)str_replace(',', '.', (string)($b['valor'] ?? 0));
+
+                    if ($valorA === $valorB) {
+                        return strcmp((string)($a['descricao'] ?? ''), (string)($b['descricao'] ?? ''));
+                    }
+
+                    return $valorA <=> $valorB;
+                });
                 $entrada = 0;
                 $saida = 0;
                 ?>
