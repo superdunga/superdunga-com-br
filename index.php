@@ -54,6 +54,15 @@ $atalhos = [
         'visivel' => grupoPermitido($pdo_master, $empresaId, 'Estoque', $nivelUsuario),
     ],
     [
+        'titulo' => 'Gestão',
+        'descricao' => 'Central de acompanhamento gerencial e rotinas de controle.',
+        'href' => 'modulos/gestao/menu_gestao.php',
+        'classe' => 'border-primary',
+        'botao' => 'btn-primary',
+        'icone' => 'G',
+        'visivel' => grupoPermitido($pdo_master, $empresaId, 'Gestao', $nivelUsuario),
+    ],
+    [
         'titulo' => 'Sincronizar Dados',
         'descricao' => 'Atualize dados integrados antes das rotinas operacionais.',
         'href' => 'modulos/tesouraria/sincronizacao.php',

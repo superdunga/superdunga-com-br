@@ -122,6 +122,7 @@ function validarPermissaoModuloAtual(): void
         'modulos/auditoria/menu_auditoria.php' => 'Auditoria',
         'modulos/financeiro/menu_financeiro.php' => 'Financeiro',
         'modulos/estoque/menu_estoque.php' => 'Estoque',
+        'modulos/gestao/menu_gestao.php' => 'Gestao',
     ];
 
     if (isset($menusPorGrupo[$caminho])) {

@@ -30,6 +30,9 @@ function sistemaModulosPadrao(): array
         ['codigo' => 'estoque', 'grupo' => 'Estoque', 'nome' => 'Estoque', 'url' => 'modulos/estoque/menu_estoque.php', 'ordem' => 290],
         ['codigo' => 'estoque_posicao', 'grupo' => 'Estoque', 'nome' => 'Posicao de Estoque', 'url' => 'modulos/estoque/posicao_estoque.php', 'ordem' => 300],
 
+        ['codigo' => 'gestao', 'grupo' => 'Gestao', 'nome' => 'Gestao', 'url' => 'modulos/gestao/menu_gestao.php', 'ordem' => 305],
+        ['codigo' => 'gestao_dre', 'grupo' => 'Gestao', 'nome' => 'DRE', 'url' => 'modulos/gestao/dre.php', 'ordem' => 306],
+
         ['codigo' => 'whatsapp', 'grupo' => 'Administracao', 'nome' => 'Mensagens WhatsApp', 'url' => 'modulos/whatsapp/index.php', 'ordem' => 310],
         ['codigo' => 'usuarios', 'grupo' => 'Administracao', 'nome' => 'Gerenciar Usuarios', 'url' => 'modulos/usuarios/listar.php', 'ordem' => 320],
         ['codigo' => 'usuarios_permissoes', 'grupo' => 'Administracao', 'nome' => 'Permissoes por Perfil', 'url' => 'modulos/usuarios/permissoes.php', 'ordem' => 325],
@@ -71,7 +74,27 @@ function garantirTabelasModulos(PDO $pdo): void
         $stmtModulos->execute($codigosPadrao);
 
         if ((int)$stmtModulos->fetchColumn() === count($codigosPadrao)) {
-            return;
+            $stmtEmpresasSemModulo = $pdo->query("
+                SELECT COUNT(*)
+                FROM empresas e
+                CROSS JOIN sistema_modulos sm
+                WHERE sm.ativo = 'S'
+                  AND EXISTS (
+                      SELECT 1
+                      FROM empresa_modulos em_existente
+                      WHERE em_existente.empresa_id = e.id
+                  )
+                  AND NOT EXISTS (
+                      SELECT 1
+                      FROM empresa_modulos em
+                      WHERE em.empresa_id = e.id
+                        AND em.modulo_id = sm.id
+                  )
+            ");
+
+            if ((int)$stmtEmpresasSemModulo->fetchColumn() === 0) {
+                return;
+            }
         }
     }
 
@@ -158,6 +181,25 @@ function garantirTabelasModulos(PDO $pdo): void
             $modulo['ordem'],
         ]);
     }
+
+    $pdo->exec("
+        INSERT INTO empresa_modulos (empresa_id, modulo_id, ativo)
+        SELECT e.id, sm.id, 'S'
+        FROM empresas e
+        CROSS JOIN sistema_modulos sm
+        WHERE sm.ativo = 'S'
+          AND EXISTS (
+              SELECT 1
+              FROM empresa_modulos em_existente
+              WHERE em_existente.empresa_id = e.id
+          )
+          AND NOT EXISTS (
+              SELECT 1
+              FROM empresa_modulos em
+              WHERE em.empresa_id = e.id
+                AND em.modulo_id = sm.id
+          )
+    ");
 }
 
 function empresaTemConfiguracaoModulos(PDO $pdo, int $empresaId): bool

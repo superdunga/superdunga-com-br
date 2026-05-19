@@ -60,6 +60,7 @@ $stmt = $pdo_master->prepare("
       AND e.USERLANC = ?
       AND e.EMPRESA = ?
       AND e.CANCELADO = 'N'
+      AND COALESCE(e.excluido_firebird, 'N') <> 'S'
     ORDER BY e.DTLANC, e.VENDACONTADOR
 ");
 $stmt->execute([$data_inicio, $data_fim, $usuario, $empresa_id]);
@@ -200,6 +201,7 @@ $stmt = $pdo_master->prepare("
           AND USERLANC = ?
           AND EMPRESA = ?
           AND CANCELADO = 'N'
+          AND COALESCE(excluido_firebird, 'N') <> 'S'
     ) e ON e.VENDACONTADOR = b.NUMDOCORIGEM
     WHERE b.DTLANC BETWEEN ? AND ?
       AND b.EMPRESA = ?
@@ -255,6 +257,7 @@ $stmt = $pdo_master->prepare("
           AND USERLANC = ?
           AND EMPRESA = ?
           AND CANCELADO = 'N'
+          AND COALESCE(excluido_firebird, 'N') <> 'S'
     ) e ON e.VENDACONTADOR = c.NUMDOCORIGEM
     WHERE c.EMPRESA = ?
 ");
