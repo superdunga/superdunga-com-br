@@ -352,7 +352,9 @@ function gerarPdfContasPagar(string $titulo, array $metadados, array $colunas, a
         $idsPaginas[] = $paginaId;
     }
 
-    $objetos[2] = "<< /Type /Pages /Kids [" . implode(' ', array_map(static fn($id) => "{$id} 0 R", $idsPaginas)) . "] /Count " . count($idsPaginas) . " >>";
+    $objetos[2] = "<< /Type /Pages /Kids [" . implode(' ', array_map(static function ($id) {
+        return "{$id} 0 R";
+    }, $idsPaginas)) . "] /Count " . count($idsPaginas) . " >>";
     ksort($objetos);
 
     $pdf = "%PDF-1.4\n";
