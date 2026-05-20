@@ -18,7 +18,7 @@ $opcoes = [
     [
         'titulo' => 'Recebiveis',
         'descricao' => 'Titulos em aberto dos demais recebiveis, com CMCONTADOR diferente de 9.',
-        'href' => 'contas_receber_clientes.php?carteira=recebiveis&visao=sintetico',
+        'href' => 'contas_receber_clientes.php?carteira=recebiveis&visao=analitico',
         'modulo' => 'financeiro_contas_receber',
         'icone' => 'RC',
         'botao' => 'btn-success',

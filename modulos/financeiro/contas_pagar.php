@@ -210,6 +210,47 @@ $stmt = $pdo_master->prepare("
 $stmt->execute($params);
 $registros = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
+$itensPorCompra = [];
+$comprasIds = array_values(array_unique(array_filter(array_map(static function (array $registro): int {
+    return (int)($registro['NUMDOCORIGEM'] ?? 0);
+}, $registros))));
+
+if (!empty($comprasIds) && !in_array($exportar, ['excel', 'pdf'], true)) {
+    $placeholdersCompras = implode(',', array_fill(0, count($comprasIds), '?'));
+    $stmtItensCompra = $pdo_master->prepare("
+        SELECT
+            c.COMPRACONTADOR,
+            i.ITEMCOMPRACONTADOR,
+            i.COMPRACONTA,
+            i.PRODUTO,
+            i.QTDE,
+            i.TOTPRODCHEIO,
+            p.CODPRODUTO,
+            p.DESCPRODUTO,
+            p.PRECOFINAL,
+            p.PVENDA1ANT
+        FROM armazem_est005 c
+        INNER JOIN armazem_est006 i
+            ON i.EMPRESA = c.EMPRESA
+           AND i.ITEMCOMPRACONTADOR = c.COMPRACONTADOR
+        LEFT JOIN armazem_est004 p
+            ON p.EMPRESA = i.EMPRESA
+           AND p.CONTAPRODUTO = i.PRODUTO
+        WHERE c.EMPRESA = ?
+          AND c.COMPRACONTADOR IN ($placeholdersCompras)
+          AND COALESCE(c.excluido_firebird, 'N') <> 'S'
+          AND COALESCE(c.CANCELADO, 'N') <> 'S'
+          AND COALESCE(i.excluido_firebird, 'N') <> 'S'
+          AND COALESCE(i.CANCELADO, 'N') <> 'S'
+        ORDER BY c.COMPRACONTADOR, i.COMPRACONTA
+    ");
+    $stmtItensCompra->execute(array_merge([$empresaId], $comprasIds));
+
+    while ($itemCompra = $stmtItensCompra->fetch(PDO::FETCH_ASSOC)) {
+        $itensPorCompra[(int)$itemCompra['COMPRACONTADOR']][] = $itemCompra;
+    }
+}
+
 $stmtTiposDoc = $pdo_master->prepare("
     SELECT DISTINCT TIPODOCORIGEM
     FROM armazem_cp001
@@ -774,11 +815,17 @@ require '../../layout/header.php';
                         <th class="text-end col-money">Parcela</th>
                         <th class="text-end col-money">Restante</th>
                         <th class="col-date">Venc.</th>
+                        <th class="text-center col-action">Itens</th>
                         <th class="col-action">Verif.</th>
                     </tr>
                 </thead>
                 <tbody>
                     <?php foreach ($registros as $registro): ?>
+                        <?php
+                            $compraOrigem = (int)($registro['NUMDOCORIGEM'] ?? 0);
+                            $itensCompra = $compraOrigem > 0 ? ($itensPorCompra[$compraOrigem] ?? []) : [];
+                            $collapseItensId = 'itens-cp-' . (int)$registro['CPCONTADOR'];
+                        ?>
                         <tr>
                             <td data-label="Sel." class="text-center col-check">
                                 <input
@@ -802,6 +849,15 @@ require '../../layout/header.php';
                             <td data-label="Parcela" class="text-end fw-semibold col-money"><?= moedaContasPagar($registro['VLRPARCELA']) ?></td>
                             <td data-label="Restante" class="text-end col-money"><?= moedaContasPagar($registro['VLRRESTANTE']) ?></td>
                             <td data-label="Venc." class="col-date"><?= dataContasPagar($registro['DTVENC']) ?></td>
+                            <td data-label="Itens" class="text-center col-action">
+                                <button
+                                    type="button"
+                                    class="btn btn-sm btn-outline-primary"
+                                    data-bs-toggle="collapse"
+                                    data-bs-target="#<?= $collapseItensId ?>"
+                                    title="Ver itens da compra"
+                                >🔍</button>
+                            </td>
                             <td data-label="Verif." class="col-action">
                                 <?php $verificadoRegistro = ($registro['financeiro_verificado'] ?? 'N') === 'S'; ?>
                                 <form method="POST" class="d-inline">
@@ -814,10 +870,53 @@ require '../../layout/header.php';
                                 </form>
                             </td>
                         </tr>
+                        <tr class="collapse bg-light" id="<?= $collapseItensId ?>">
+                            <td colspan="13">
+                                <?php if (empty($itensCompra)): ?>
+                                    <div class="text-muted small py-2">
+                                        Nenhum item encontrado para a compra <?= htmlspecialchars((string)$compraOrigem) ?>.
+                                    </div>
+                                <?php else: ?>
+                                    <div class="table-responsive">
+                                        <table class="table table-sm table-bordered align-middle mb-0">
+                                            <thead class="table-light">
+                                                <tr>
+                                                    <th>Codigo</th>
+                                                    <th>Descricao</th>
+                                                    <th class="text-end">Qtd.</th>
+                                                    <th class="text-end">Total</th>
+                                                    <th class="text-end">Custo Unit.</th>
+                                                    <th class="text-end">Venda Dia</th>
+                                                    <th class="text-end">Margem</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                <?php foreach ($itensCompra as $itemCompra): ?>
+                                                    <?php
+                                                        $custoUnitario = (float)($itemCompra['PRECOFINAL'] ?? 0);
+                                                        $precoVenda = (float)($itemCompra['PVENDA1ANT'] ?? 0);
+                                                        $margem = $custoUnitario > 0 ? (($precoVenda / $custoUnitario) - 1) * 100 : null;
+                                                    ?>
+                                                    <tr>
+                                                        <td><?= htmlspecialchars((string)($itemCompra['CODPRODUTO'] ?? $itemCompra['PRODUTO'] ?? '')) ?></td>
+                                                        <td><?= htmlspecialchars((string)($itemCompra['DESCPRODUTO'] ?? '')) ?></td>
+                                                        <td class="text-end"><?= number_format((float)($itemCompra['QTDE'] ?? 0), 3, ',', '.') ?></td>
+                                                        <td class="text-end"><?= moedaContasPagar($itemCompra['TOTPRODCHEIO'] ?? 0) ?></td>
+                                                        <td class="text-end"><?= moedaContasPagar($custoUnitario) ?></td>
+                                                        <td class="text-end"><?= moedaContasPagar($precoVenda) ?></td>
+                                                        <td class="text-end"><?= $margem === null ? '-' : number_format($margem, 2, ',', '.') . '%' ?></td>
+                                                    </tr>
+                                                <?php endforeach; ?>
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                <?php endif; ?>
+                            </td>
+                        </tr>
                     <?php endforeach; ?>
                     <?php if (empty($registros)): ?>
                         <tr>
-                            <td colspan="12" class="text-center text-muted py-4">Nenhum titulo encontrado com os filtros informados.</td>
+                            <td colspan="13" class="text-center text-muted py-4">Nenhum titulo encontrado com os filtros informados.</td>
                         </tr>
                     <?php endif; ?>
                 </tbody>

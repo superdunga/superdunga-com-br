@@ -43,7 +43,7 @@ $cmFiltro = trim($_GET['cmcontador'] ?? '');
 $vencInicio = trim($_GET['venc_ini'] ?? '');
 $vencFim = trim($_GET['venc_fim'] ?? '');
 $verificado = trim($_GET['verificado'] ?? '');
-$visaoPadrao = $isRecebiveis ? 'sintetico' : 'analitico';
+$visaoPadrao = 'analitico';
 $visao = ($_GET['visao'] ?? $visaoPadrao) === 'sintetico' ? 'sintetico' : 'analitico';
 $exportar = $_GET['exportar'] ?? '';
 
@@ -201,6 +201,40 @@ if ($visao === 'sintetico') {
     ");
     $stmt->execute($params);
     $registros = $stmt->fetchAll(PDO::FETCH_ASSOC);
+}
+
+$itensPorVenda = [];
+$vendasIds = array_values(array_unique(array_filter(array_map(static function (array $registro): int {
+    return (int)($registro['NUMDOCORIGEM'] ?? 0);
+}, $registros))));
+
+if ($visao === 'analitico' && !empty($vendasIds) && !in_array($exportar, ['excel', 'pdf'], true)) {
+    $placeholdersVendas = implode(',', array_fill(0, count($vendasIds), '?'));
+    $stmtItensVenda = $pdo_master->prepare("
+        SELECT
+            i.ITEMVENDACONTADOR,
+            i.VENDACONTA,
+            i.PRODUTO,
+            i.QTDE,
+            i.VALOR,
+            i.TOTPROD,
+            p.CODPRODUTO,
+            p.DESCPRODUTO,
+            p.UNIDADE
+        FROM armazem_est008 i
+        LEFT JOIN armazem_est004 p
+            ON p.EMPRESA = i.EMPRESA
+           AND p.CONTAPRODUTO = i.PRODUTO
+        WHERE i.EMPRESA = ?
+          AND i.ITEMVENDACONTADOR IN ($placeholdersVendas)
+          AND COALESCE(i.CANCELADO, 'N') <> 'S'
+        ORDER BY i.ITEMVENDACONTADOR ASC, i.VENDACONTA ASC
+    ");
+    $stmtItensVenda->execute(array_merge([$empresaId], $vendasIds));
+
+    while ($itemVenda = $stmtItensVenda->fetch(PDO::FETCH_ASSOC)) {
+        $itensPorVenda[(int)$itemVenda['ITEMVENDACONTADOR']][] = $itemVenda;
+    }
 }
 
 function moedaFinanceiroClientes($valor): string
@@ -786,12 +820,18 @@ require '../../layout/header.php';
                         <th class="text-end col-money">Valor</th>
                         <th class="text-end col-money">Aberto</th>
                         <th class="col-status">Status</th>
+                        <th class="text-center col-action">Itens</th>
                         <th class="col-action">Verif.</th>
                     </tr>
                 </thead>
                 <tbody>
                     <?php foreach ($registros as $registro): ?>
-                        <?php $verificadoRegistro = ($registro['financeiro_verificado'] ?? 'N') === 'S'; ?>
+                        <?php
+                            $verificadoRegistro = ($registro['financeiro_verificado'] ?? 'N') === 'S';
+                            $vendaOrigem = (int)($registro['NUMDOCORIGEM'] ?? 0);
+                            $itensVenda = $vendaOrigem > 0 ? ($itensPorVenda[$vendaOrigem] ?? []) : [];
+                            $collapseItensId = 'itens-cr-' . (int)$registro['CRCONTADOR'];
+                        ?>
                         <tr>
                             <td data-label="Somar" class="text-center col-check">
                                 <input
@@ -814,6 +854,16 @@ require '../../layout/header.php';
                             <td data-label="Status" class="col-status">
                                 <span class="badge text-bg-warning"><?= htmlspecialchars($registro['STATUS'] ?: 'SEM STATUS') ?></span>
                             </td>
+                            <td data-label="Itens" class="text-center col-action">
+                                <button
+                                    type="button"
+                                    class="btn btn-sm btn-outline-primary"
+                                    data-itens-toggle="1"
+                                    data-bs-target="#<?= $collapseItensId ?>"
+                                    aria-expanded="false"
+                                    title="Ver itens da venda"
+                                >🔍</button>
+                            </td>
                             <td data-label="Verif." class="col-action">
                                 <form method="POST" class="d-inline">
                                     <input type="hidden" name="acao" value="verificar">
@@ -825,10 +875,46 @@ require '../../layout/header.php';
                                 </form>
                             </td>
                         </tr>
+                        <tr class="collapse bg-light" id="<?= $collapseItensId ?>">
+                            <td colspan="11">
+                                <?php if (empty($itensVenda)): ?>
+                                    <div class="text-muted small py-2">
+                                        Nenhum item encontrado para a venda <?= htmlspecialchars((string)$vendaOrigem) ?>.
+                                    </div>
+                                <?php else: ?>
+                                    <div class="table-responsive">
+                                        <table class="table table-sm table-bordered align-middle mb-0">
+                                            <thead class="table-light">
+                                                <tr>
+                                                    <th>Item</th>
+                                                    <th>Produto</th>
+                                                    <th>Descricao</th>
+                                                    <th class="text-end">Qtde</th>
+                                                    <th class="text-end">Unitario</th>
+                                                    <th class="text-end">Total</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                <?php foreach ($itensVenda as $itemVenda): ?>
+                                                    <tr>
+                                                        <td><?= htmlspecialchars((string)($itemVenda['VENDACONTA'] ?? '')) ?></td>
+                                                        <td><?= htmlspecialchars((string)($itemVenda['CODPRODUTO'] ?? $itemVenda['PRODUTO'] ?? '')) ?></td>
+                                                        <td><?= htmlspecialchars((string)($itemVenda['DESCPRODUTO'] ?? '')) ?></td>
+                                                        <td class="text-end"><?= number_format((float)($itemVenda['QTDE'] ?? 0), 3, ',', '.') ?> <?= htmlspecialchars((string)($itemVenda['UNIDADE'] ?? '')) ?></td>
+                                                        <td class="text-end"><?= moedaFinanceiroClientes($itemVenda['VALOR'] ?? 0) ?></td>
+                                                        <td class="text-end"><?= moedaFinanceiroClientes($itemVenda['TOTPROD'] ?? 0) ?></td>
+                                                    </tr>
+                                                <?php endforeach; ?>
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                <?php endif; ?>
+                            </td>
+                        </tr>
                     <?php endforeach; ?>
                     <?php if (empty($registros)): ?>
                         <tr>
-                            <td colspan="10" class="text-center text-muted py-4">Nenhum titulo encontrado com os filtros informados.</td>
+                            <td colspan="11" class="text-center text-muted py-4">Nenhum titulo encontrado com os filtros informados.</td>
                         </tr>
                     <?php endif; ?>
                 </tbody>
@@ -917,6 +1003,23 @@ document.addEventListener('DOMContentLoaded', function () {
             formVerificarLote.submit();
         });
     }
+
+    document.querySelectorAll('[data-itens-toggle]').forEach(function (botao) {
+        botao.addEventListener('click', function (event) {
+            event.preventDefault();
+
+            const alvoSeletor = botao.getAttribute('data-bs-target');
+            const alvo = alvoSeletor ? document.querySelector(alvoSeletor) : null;
+
+            if (!alvo) {
+                return;
+            }
+
+            alvo.classList.remove('collapsing');
+            alvo.classList.toggle('show');
+            botao.setAttribute('aria-expanded', alvo.classList.contains('show') ? 'true' : 'false');
+        });
+    });
 });
 </script>
 
