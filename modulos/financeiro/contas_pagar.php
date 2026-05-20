@@ -221,6 +221,23 @@ $stmtTiposDoc = $pdo_master->prepare("
 $stmtTiposDoc->execute([$empresaId]);
 $tiposDoc = $stmtTiposDoc->fetchAll(PDO::FETCH_COLUMN);
 
+$stmtTiposEs = $pdo_master->prepare("
+    SELECT
+        cp.TIPOES,
+        COALESCE(NULLIF(b.DESCES, ''), CONCAT('Tipo ', cp.TIPOES)) AS descricao,
+        COUNT(*) AS qtd
+    FROM armazem_cp001 cp
+    LEFT JOIN armazem_bnc005 b
+        ON b.EMPRESA = cp.EMPRESA
+       AND b.ESCONTADOR = cp.TIPOES
+    WHERE cp.EMPRESA = ?
+      AND cp.TIPOES IS NOT NULL
+    GROUP BY cp.TIPOES, b.DESCES
+    ORDER BY descricao ASC, cp.TIPOES ASC
+");
+$stmtTiposEs->execute([$empresaId]);
+$tiposEsOpcoes = $stmtTiposEs->fetchAll(PDO::FETCH_ASSOC);
+
 $stmtStatus = $pdo_master->prepare("
     SELECT DISTINCT STATUS
     FROM armazem_cp001
@@ -647,7 +664,19 @@ require '../../layout/header.php';
             </div>
             <div class="col-md-2">
                 <label class="form-label">TipoES</label>
-                <input type="number" name="tipoes" class="form-control" value="<?= htmlspecialchars($tipoes) ?>">
+                <select name="tipoes" class="form-select">
+                    <option value="">Todos</option>
+                    <?php foreach ($tiposEsOpcoes as $opcaoTipoEs): ?>
+                        <?php
+                            $codigoTipoEs = (string)$opcaoTipoEs['TIPOES'];
+                            $descricaoTipoEs = trim((string)$opcaoTipoEs['descricao']);
+                            $qtdTipoEs = (int)$opcaoTipoEs['qtd'];
+                        ?>
+                        <option value="<?= htmlspecialchars($codigoTipoEs) ?>" <?= $tipoes === $codigoTipoEs ? 'selected' : '' ?>>
+                            <?= htmlspecialchars($codigoTipoEs . ' - ' . $descricaoTipoEs . ' (' . $qtdTipoEs . ')') ?>
+                        </option>
+                    <?php endforeach; ?>
+                </select>
             </div>
             <div class="col-md-2">
                 <label class="form-label">Status</label>
