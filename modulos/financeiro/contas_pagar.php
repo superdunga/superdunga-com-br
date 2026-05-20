@@ -786,8 +786,8 @@ require '../../layout/header.php';
         </div>
         <div class="col-md-4">
             <div class="bg-white border rounded-2 shadow-sm p-3 h-100">
-                <div class="small text-muted">Total restante</div>
-                <div class="h5 fw-bold mb-0"><?= moedaContasPagar($resumo['total_restante']) ?></div>
+                <div class="small text-muted">Total dos marcados</div>
+                <div class="h5 fw-bold mb-0" id="totalMarcado">R$ 0,00</div>
             </div>
         </div>
     </div>
@@ -830,8 +830,9 @@ require '../../layout/header.php';
                             <td data-label="Sel." class="text-center col-check">
                                 <input
                                     type="checkbox"
-                                    class="form-check-input js-selecionar"
+                                    class="form-check-input js-somar"
                                     value="<?= (int)$registro['CPCONTADOR'] ?>"
+                                    data-valor="<?= htmlspecialchars((string)(float)$registro['VLRRESTANTE']) ?>"
                                 >
                             </td>
                             <td data-label="Compra" class="col-date"><?= dataContasPagar($registro['DTCOMPRA']) ?></td>
@@ -936,17 +937,40 @@ require '../../layout/header.php';
 
 <script>
 document.addEventListener('DOMContentLoaded', function () {
-    const checks = document.querySelectorAll('.js-selecionar');
+    const totalMarcado = document.getElementById('totalMarcado');
+    const checks = document.querySelectorAll('.js-somar');
     const marcarTodos = document.getElementById('marcarTodos');
     const desmarcarTodos = document.getElementById('desmarcarTodos');
     const marcarSelecionadosVerificados = document.getElementById('marcarSelecionadosVerificados');
     const formVerificarLote = document.getElementById('formVerificarLote');
+
+    function formatarMoeda(valor) {
+        return valor.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+    }
+
+    function atualizarTotal() {
+        let total = 0;
+        checks.forEach(function (check) {
+            if (check.checked) {
+                total += Number(check.dataset.valor || 0);
+            }
+        });
+
+        if (totalMarcado) {
+            totalMarcado.textContent = formatarMoeda(total);
+        }
+    }
+
+    checks.forEach(function (check) {
+        check.addEventListener('change', atualizarTotal);
+    });
 
     if (marcarTodos) {
         marcarTodos.addEventListener('click', function () {
             checks.forEach(function (check) {
                 check.checked = true;
             });
+            atualizarTotal();
         });
     }
 
@@ -955,6 +979,7 @@ document.addEventListener('DOMContentLoaded', function () {
             checks.forEach(function (check) {
                 check.checked = false;
             });
+            atualizarTotal();
         });
     }
 
