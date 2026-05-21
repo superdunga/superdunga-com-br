@@ -245,6 +245,7 @@ function validarPermissaoModuloAtual(): void
         'modulos/fechamentodecaixa/conciliar_manual.php' => 'fechamento_importar_recebimentos',
         'modulos/fechamentodecaixa/conciliar_exec.php' => 'fechamento_importar_recebimentos',
         'modulos/fechamentodecaixa/conciliar_auto.php' => 'fechamento_importar_recebimentos',
+        'modulos/fechamentodecaixa/desvincular_recebimentos.php' => 'fechamento_importar_recebimentos',
         'modulos/fechamentodecaixa/diagnostico_divergencia.php' => 'fechamento_resumo_prazo',
         'modulos/fechamentodecaixa/conciliacao_dinheiro_divergentes.php' => 'fechamento_dinheiro',
         'modulos/financeiro/contas_receber.php' => 'financeiro',

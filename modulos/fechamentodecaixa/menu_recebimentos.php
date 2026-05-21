@@ -33,6 +33,17 @@ $opcoes = [
     ],
 ];
 
+if (($_SESSION['nivel'] ?? '') === 'MASTER') {
+    $opcoes[] = [
+        'titulo' => 'Desvincular Matches',
+        'descricao' => 'Desfaca conciliacoes de recebiveis feitas por engano.',
+        'href' => 'desvincular_recebimentos.php',
+        'modulo' => 'fechamento_importar_recebimentos',
+        'icone' => 'DM',
+        'botao' => 'btn-danger',
+    ];
+}
+
 $opcoes = filtrarOpcoesPorModulo($pdo_master, $empresaId, $opcoes);
 ?>
 

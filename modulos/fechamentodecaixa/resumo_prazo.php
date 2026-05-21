@@ -106,6 +106,7 @@ $datas = $stmtDatas->fetchAll(PDO::FETCH_COLUMN);
                     FROM armazem_conciliacao_recebimentos r
                     WHERE r.data_venda BETWEEN ? AND ?
                       AND r.empresa_id = $empresa_id
+                      AND r.CRCONTADOR IS NULL
                       AND NOT EXISTS (
                           SELECT 1
                           FROM armazem_cr001 c

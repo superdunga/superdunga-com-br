@@ -76,6 +76,7 @@ if (!$modoLeveAuto) {
         FROM armazem_conciliacao_recebimentos r
         WHERE r.data_venda BETWEEN ? AND ?
           AND r.empresa_id = $empresa_id
+          AND r.CRCONTADOR IS NULL
           AND NOT EXISTS (
               SELECT 1
               FROM armazem_cr001 cx
@@ -150,6 +151,7 @@ if (!$modoLeveAuto) {
         FROM armazem_conciliacao_recebimentos r
         WHERE r.data_venda BETWEEN ? AND ?
           AND r.empresa_id = $empresa_id
+          AND r.CRCONTADOR IS NULL
           AND NOT EXISTS (
               SELECT 1
               FROM armazem_cr001 cx
@@ -226,6 +228,7 @@ if (!$modoLeveAuto) {
        AND DATE_FORMAT(r.data_venda, '%Y-%m-%d %H:%i') <> DATE_FORMAT(c.DTLANC, '%Y-%m-%d %H:%i')
     WHERE r.data_venda BETWEEN ? AND ?
       AND r.empresa_id = $empresa_id
+      AND r.CRCONTADOR IS NULL
       AND c.DTLANC BETWEEN ? AND ?
       AND c.EMPRESA = $empresa_id
       AND c.recebimento_id IS NULL
@@ -264,6 +267,7 @@ if (!$modoLeveAuto) {
         FROM armazem_conciliacao_recebimentos r
         WHERE r.data_venda BETWEEN ? AND ?
           AND r.empresa_id = $empresa_id
+          AND r.CRCONTADOR IS NULL
           AND NOT EXISTS (
               SELECT 1
               FROM armazem_cr001 cx
@@ -325,6 +329,7 @@ if (!$modoLeveAuto) {
     FROM armazem_conciliacao_recebimentos r
     WHERE r.data_venda BETWEEN ? AND ?
       AND r.empresa_id = $empresa_id
+      AND r.CRCONTADOR IS NULL
       AND NOT EXISTS (
           SELECT 1
           FROM armazem_cr001 cx
@@ -374,6 +379,7 @@ if (!$modoLeveAuto) {
           FROM armazem_conciliacao_recebimentos r
           WHERE ABS(r.valor_bruto) = ABS(c.VLRPARCELA)
             AND r.empresa_id = $empresa_id
+            AND r.CRCONTADOR IS NULL
             AND ABS(TIMESTAMPDIFF(MINUTE, r.data_venda, c.DTLANC)) <= 5
             AND r.data_venda BETWEEN ? AND ?
             AND NOT EXISTS (

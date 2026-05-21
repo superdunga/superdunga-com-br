@@ -14,6 +14,7 @@ $stmtPendSistema = $pdo_master->prepare("
     FROM armazem_conciliacao_recebimentos r
     WHERE r.data_venda BETWEEN ? AND ?
       AND r.empresa_id = ?
+      AND r.CRCONTADOR IS NULL
       AND NOT EXISTS (
           SELECT 1
           FROM armazem_cr001 c
@@ -53,6 +54,7 @@ $stmtPendCR = $pdo_master->prepare("
           FROM armazem_conciliacao_recebimentos r
           WHERE ABS(r.valor_bruto) = ABS(c.VLRPARCELA)
             AND r.empresa_id = ?
+            AND r.CRCONTADOR IS NULL
             AND ABS(TIMESTAMPDIFF(MINUTE, r.data_venda, c.DTLANC)) <= 5
             AND r.data_venda BETWEEN ? AND ?
             AND NOT EXISTS (
