@@ -11,6 +11,11 @@ error_reporting(E_ALL);
 $empresa_id = (int)$_SESSION['empresa_id'];
 $regraImportacao = buscarRegraImportacao($pdo_master, $empresa_id, 'granito_pix_comercial', []);
 $mensagens = [];
+$previewInterPix = [];
+$previewPeriodoInter = [
+    'data_ini' => $_POST['data_ini_inter'] ?? date('Y-m-d'),
+    'data_fim' => $_POST['data_fim_inter'] ?? date('Y-m-d'),
+];
 
 if (!$regraImportacao) {
     echo "<div class='alert alert-warning'>Nenhuma regra de importacao Granito PIX Comercial cadastrada para esta empresa.</div>";
@@ -234,6 +239,57 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['acao'] ?? '') === 'testar_
     }
 }
 
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['acao'] ?? '') === 'preview_inter_pix') {
+    $dataIniInter = $_POST['data_ini_inter'] ?? date('Y-m-d');
+    $dataFimInter = $_POST['data_fim_inter'] ?? date('Y-m-d');
+    $previewPeriodoInter = ['data_ini' => $dataIniInter, 'data_fim' => $dataFimInter];
+
+    try {
+        $listaPix = listarInterPix($pdo_master, $empresa_id, $dataIniInter, $dataFimInter);
+        $stmtDuplicadoIdentificador = $pdo_master->prepare("
+            SELECT id
+            FROM armazem_conciliacao_recebimentos
+            WHERE empresa_id = ?
+              AND identificador = ?
+            LIMIT 1
+        ");
+        $stmtPossivelDuplicado = $pdo_master->prepare("
+            SELECT id, origem, identificador, pagador
+            FROM armazem_conciliacao_recebimentos
+            WHERE empresa_id = ?
+              AND CMCONTADOR = ?
+              AND DATE(COALESCE(data_recebimento, data_venda)) = ?
+              AND ABS(valor_liquido) = ABS(?)
+            LIMIT 1
+        ");
+
+        foreach ($listaPix as $pixPreview) {
+            $stmtDuplicadoIdentificador->execute([$empresa_id, $pixPreview['identificador']]);
+            $duplicadoExato = $stmtDuplicadoIdentificador->fetch(PDO::FETCH_ASSOC);
+
+            $possivelDuplicado = null;
+            if (!$duplicadoExato) {
+                $stmtPossivelDuplicado->execute([
+                    $empresa_id,
+                    (int)$regraImportacao['cm_pix'],
+                    $pixPreview['data_recebimento'],
+                    (float)$pixPreview['valor'],
+                ]);
+                $possivelDuplicado = $stmtPossivelDuplicado->fetch(PDO::FETCH_ASSOC);
+            }
+
+            $pixPreview['status_preview'] = $duplicadoExato ? 'ja_importado' : ($possivelDuplicado ? 'possivel_duplicado' : 'novo');
+            $pixPreview['recebimento_id'] = $duplicadoExato['id'] ?? ($possivelDuplicado['id'] ?? null);
+            $pixPreview['recebimento_identificador'] = $possivelDuplicado['identificador'] ?? '';
+            $previewInterPix[] = $pixPreview;
+        }
+
+        $mensagens[] = ['tipo' => 'info', 'texto' => 'Previa Inter Pix carregada. Nenhum registro foi gravado. Total encontrado: ' . count($previewInterPix)];
+    } catch (Throwable $e) {
+        $mensagens[] = ['tipo' => 'danger', 'texto' => 'Erro na previa Inter Pix: ' . $e->getMessage()];
+    }
+}
+
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['acao'] ?? '') === 'consultar_inter_pix') {
     $dataIniInter = $_POST['data_ini_inter'] ?? date('Y-m-d');
     $dataFimInter = $_POST['data_fim_inter'] ?? date('Y-m-d');
@@ -424,20 +480,67 @@ $configInterPix = buscarConfigInterPix($pdo_master, $empresa_id) ?: [
         </div>
 
         <form method="POST" class="row g-3 mb-4">
-            <input type="hidden" name="acao" value="consultar_inter_pix">
             <input type="hidden" name="regra_id" value="<?= (int)$regraImportacao['id'] ?>">
             <div class="col-md-4">
                 <label class="form-label">Data inicial</label>
-                <input type="date" name="data_ini_inter" value="<?= htmlspecialchars($_POST['data_ini_inter'] ?? date('Y-m-d')) ?>" class="form-control" required>
+                <input type="date" name="data_ini_inter" value="<?= htmlspecialchars($previewPeriodoInter['data_ini']) ?>" class="form-control" required>
             </div>
             <div class="col-md-4">
                 <label class="form-label">Data final</label>
-                <input type="date" name="data_fim_inter" value="<?= htmlspecialchars($_POST['data_fim_inter'] ?? date('Y-m-d')) ?>" class="form-control" required>
+                <input type="date" name="data_fim_inter" value="<?= htmlspecialchars($previewPeriodoInter['data_fim']) ?>" class="form-control" required>
             </div>
-            <div class="col-md-4 d-flex align-items-end">
-                <button type="submit" class="btn btn-primary w-100">Consultar e importar Pix</button>
+            <div class="col-md-4 d-flex align-items-end gap-2">
+                <button type="submit" name="acao" value="preview_inter_pix" class="btn btn-outline-primary w-50">Consultar previa</button>
+                <button type="submit" name="acao" value="consultar_inter_pix" class="btn btn-primary w-50" onclick="return confirm('Esta acao grava os Pix ainda nao importados na tabela de recebiveis. Continuar?')">Importar Pix</button>
             </div>
         </form>
+
+        <?php if (!empty($previewInterPix)): ?>
+            <div class="border rounded mb-4">
+                <div class="p-3 border-bottom bg-light d-flex flex-wrap justify-content-between gap-2">
+                    <h6 class="fw-bold mb-0">Previa dos Pix retornados pela API</h6>
+                    <span class="text-muted small">Nenhum registro foi gravado nesta consulta.</span>
+                </div>
+                <div class="table-responsive">
+                    <table class="table table-sm table-hover align-middle mb-0">
+                        <thead class="table-primary">
+                            <tr>
+                                <th>Data/Hora</th>
+                                <th>Valor</th>
+                                <th>Pagador</th>
+                                <th>Documento</th>
+                                <th>EndToEndId</th>
+                                <th>Status</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <?php foreach ($previewInterPix as $pixPreview): ?>
+                                <?php
+                                    $statusPreview = $pixPreview['status_preview'] ?? 'novo';
+                                    $badge = 'success';
+                                    $textoStatus = 'Novo';
+                                    if ($statusPreview === 'ja_importado') {
+                                        $badge = 'secondary';
+                                        $textoStatus = 'Ja importado #' . (int)$pixPreview['recebimento_id'];
+                                    } elseif ($statusPreview === 'possivel_duplicado') {
+                                        $badge = 'warning';
+                                        $textoStatus = 'Possivel duplicado #' . (int)$pixPreview['recebimento_id'];
+                                    }
+                                ?>
+                                <tr>
+                                    <td><?= htmlspecialchars(date('d/m/Y H:i:s', strtotime($pixPreview['data_venda']))) ?></td>
+                                    <td class="text-end">R$ <?= number_format((float)$pixPreview['valor'], 2, ',', '.') ?></td>
+                                    <td><?= htmlspecialchars($pixPreview['pagador']) ?></td>
+                                    <td><?= htmlspecialchars($pixPreview['documento']) ?></td>
+                                    <td><code><?= htmlspecialchars($pixPreview['endToEndId']) ?></code></td>
+                                    <td><span class="badge text-bg-<?= $badge ?>"><?= htmlspecialchars($textoStatus) ?></span></td>
+                                </tr>
+                            <?php endforeach; ?>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        <?php endif; ?>
 
         <div class="border rounded p-3 bg-light">
             <h6 class="fw-bold mb-3">Configuracao da API Inter</h6>

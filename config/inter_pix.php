@@ -268,7 +268,7 @@ function interPixDataHoraMysql(string $valor): ?string
     }
 }
 
-function consultarInterPix(PDO $pdo, int $empresaId, array $regraImportacao, string $dataIni, string $dataFim): array
+function listarInterPix(PDO $pdo, int $empresaId, string $dataIni, string $dataFim): array
 {
     $config = buscarConfigInterPix($pdo, $empresaId);
     if (!$config || ($config['ativo'] ?? 'N') !== 'S') {
@@ -284,10 +284,7 @@ function consultarInterPix(PDO $pdo, int $empresaId, array $regraImportacao, str
 
     $token = obterTokenInterPix($pdo, $empresaId, $config);
     $pagina = 0;
-    $importados = 0;
-    $atualizados = 0;
-    $ignorados = 0;
-    $totalLidos = 0;
+    $pixNormalizados = [];
 
     do {
         $params = [
@@ -310,7 +307,6 @@ function consultarInterPix(PDO $pdo, int $empresaId, array $regraImportacao, str
 
         $retorno = interPixHttp($config, 'GET', $url, $headers);
         $listaPix = $retorno['pix'] ?? [];
-        $totalLidos += count($listaPix);
 
         foreach ($listaPix as $pix) {
             $e2e = trim((string)($pix['endToEndId'] ?? ''));
@@ -318,7 +314,6 @@ function consultarInterPix(PDO $pdo, int $empresaId, array $regraImportacao, str
             $dataVenda = interPixDataHoraMysql((string)($pix['horario'] ?? ''));
 
             if ($e2e === '' || $valor <= 0 || $dataVenda === null) {
-                $ignorados++;
                 continue;
             }
 
@@ -336,6 +331,50 @@ function consultarInterPix(PDO $pdo, int $empresaId, array $regraImportacao, str
             if ($descricao === '') {
                 $descricao = 'PIX - INTER';
             }
+
+            $pixNormalizados[] = [
+                'endToEndId' => $e2e,
+                'identificador' => $identificador,
+                'data_venda' => $dataVenda,
+                'data_recebimento' => substr($dataVenda, 0, 10),
+                'valor' => $valor,
+                'pagador' => $pagador,
+                'documento' => $documento,
+                'descricao' => $descricao,
+                'conta_corrente' => $contaCorrente,
+                'raw' => $pix,
+            ];
+        }
+
+        $paginacao = $retorno['parametros']['paginacao'] ?? [];
+        $quantidadePaginas = (int)($paginacao['quantidadeDePaginas'] ?? 1);
+        $pagina++;
+    } while ($pagina < $quantidadePaginas);
+
+    return $pixNormalizados;
+}
+
+function consultarInterPix(PDO $pdo, int $empresaId, array $regraImportacao, string $dataIni, string $dataFim): array
+{
+    $listaPix = listarInterPix($pdo, $empresaId, $dataIni, $dataFim);
+    $importados = 0;
+    $atualizados = 0;
+    $ignorados = 0;
+
+    foreach ($listaPix as $pixNormalizado) {
+        $e2e = $pixNormalizado['endToEndId'];
+        $valor = (float)$pixNormalizado['valor'];
+        $dataVenda = $pixNormalizado['data_venda'];
+        $dataRecebimento = $pixNormalizado['data_recebimento'];
+        $pagador = $pixNormalizado['pagador'];
+        $descricao = $pixNormalizado['descricao'];
+        $identificador = $pixNormalizado['identificador'];
+        $contaCorrente = $pixNormalizado['conta_corrente'];
+
+        if ($e2e === '' || $valor <= 0 || $dataVenda === null) {
+            $ignorados++;
+            continue;
+        }
 
             $check = $pdo->prepare("
                 SELECT id
@@ -375,8 +414,8 @@ function consultarInterPix(PDO $pdo, int $empresaId, array $regraImportacao, str
                 $empresaId,
                 $regraImportacao['origem'],
                 $dataVenda,
-                substr($dataVenda, 0, 10),
-                substr($dataVenda, 0, 10),
+                $dataRecebimento,
+                $dataRecebimento,
                 $valor,
                 $valor,
                 $identificador,
@@ -388,15 +427,10 @@ function consultarInterPix(PDO $pdo, int $empresaId, array $regraImportacao, str
             ]);
 
             $importados++;
-        }
-
-        $paginacao = $retorno['parametros']['paginacao'] ?? [];
-        $quantidadePaginas = (int)($paginacao['quantidadeDePaginas'] ?? 1);
-        $pagina++;
-    } while ($pagina < $quantidadePaginas);
+    }
 
     return [
-        'lidos' => $totalLidos,
+        'lidos' => count($listaPix),
         'importados' => $importados,
         'atualizados' => $atualizados,
         'ignorados' => $ignorados,
