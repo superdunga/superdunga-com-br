@@ -62,20 +62,25 @@ function granitoPixCampo(array $dados, array $cabecalho, array $nomes): string {
 
 function pastaInterPixEmpresa(int $empresaId): string
 {
-    $base = dirname(__DIR__, 2) . DIRECTORY_SEPARATOR . 'storage' . DIRECTORY_SEPARATOR . 'inter_pix';
+    $base = dirname(__DIR__, 2) . DIRECTORY_SEPARATOR . 'uploads' . DIRECTORY_SEPARATOR . 'inter_pix_config';
     $pasta = $base . DIRECTORY_SEPARATOR . 'empresa_' . $empresaId;
 
     if (!is_dir($base)) {
         mkdir($base, 0755, true);
     }
 
-    $htaccess = $base . DIRECTORY_SEPARATOR . '.htaccess';
-    if (!is_file($htaccess)) {
-        file_put_contents($htaccess, "Deny from all\n");
+    $index = $base . DIRECTORY_SEPARATOR . 'index.php';
+    if (!is_file($index)) {
+        file_put_contents($index, "<?php\nhttp_response_code(403);\nexit;\n");
     }
 
     if (!is_dir($pasta)) {
         mkdir($pasta, 0755, true);
+    }
+
+    $indexEmpresa = $pasta . DIRECTORY_SEPARATOR . 'index.php';
+    if (!is_file($indexEmpresa)) {
+        file_put_contents($indexEmpresa, "<?php\nhttp_response_code(403);\nexit;\n");
     }
 
     return $pasta;
