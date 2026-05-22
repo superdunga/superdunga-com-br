@@ -29,6 +29,7 @@ function sistemaModulosPadrao(): array
 
         ['codigo' => 'financeiro', 'grupo' => 'Financeiro', 'nome' => 'Financeiro', 'url' => 'modulos/financeiro/menu_financeiro.php', 'ordem' => 260],
         ['codigo' => 'financeiro_contas_receber', 'grupo' => 'Financeiro', 'nome' => 'Contas a Receber - Clientes', 'url' => 'modulos/financeiro/contas_receber_clientes.php', 'ordem' => 270],
+        ['codigo' => 'financeiro_conciliacao_extratos', 'grupo' => 'Financeiro', 'nome' => 'Conciliacao de Extratos', 'url' => 'modulos/financeiro/conciliacao_extratos.php', 'ordem' => 285],
 
         ['codigo' => 'estoque', 'grupo' => 'Estoque', 'nome' => 'Estoque', 'url' => 'modulos/estoque/menu_estoque.php', 'ordem' => 290],
         ['codigo' => 'estoque_posicao', 'grupo' => 'Estoque', 'nome' => 'Posicao de Estoque', 'url' => 'modulos/estoque/posicao_estoque.php', 'ordem' => 300],

@@ -35,7 +35,7 @@ $opcoes = [
         'titulo' => 'Conciliacao de Extratos',
         'descricao' => 'Importe extratos bancarios e compare com os lancamentos das contas do sistema.',
         'href' => 'conciliacao_extratos.php',
-        'modulo' => 'financeiro',
+        'modulo' => 'financeiro_conciliacao_extratos',
         'icone' => 'EX',
         'botao' => 'btn-warning',
     ],
