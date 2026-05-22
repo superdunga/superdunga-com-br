@@ -252,6 +252,7 @@ function validarPermissaoModuloAtual(): void
         'modulos/financeiro/contas_receber_clientes.php' => 'financeiro_contas_receber',
         'modulos/financeiro/contas_pagar.php' => 'financeiro',
         'modulos/financeiro/contas.php' => 'financeiro',
+        'modulos/financeiro/conciliacao_extratos.php' => 'financeiro',
         'modulos/estoque/posicao_estoque.php' => 'estoque_posicao',
     ];
 

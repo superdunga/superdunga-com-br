@@ -31,6 +31,14 @@ $opcoes = [
         'icone' => 'BC',
         'botao' => 'btn-info',
     ],
+    [
+        'titulo' => 'Conciliacao de Extratos',
+        'descricao' => 'Importe extratos bancarios e compare com os lancamentos das contas do sistema.',
+        'href' => 'conciliacao_extratos.php',
+        'modulo' => 'financeiro',
+        'icone' => 'EX',
+        'botao' => 'btn-warning',
+    ],
 ];
 
 $opcoes = filtrarOpcoesPorModulo($pdo_master, $empresaId, $opcoes);
