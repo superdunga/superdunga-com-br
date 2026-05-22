@@ -81,6 +81,45 @@ function garantirTabelasConciliacaoExtratos(PDO $pdo): void
             INDEX idx_fin_ext_log_mov (movcontador)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
     ");
+
+    garantirIndiceConciliacaoExtratos($pdo, 'financeiro_extrato_bancario', 'idx_fin_ext_mov_empresa', "
+        CREATE INDEX idx_fin_ext_mov_empresa
+        ON financeiro_extrato_bancario (empresa_id, cbcontador, bnc001_movcontador, conciliado)
+    ");
+
+    garantirIndiceConciliacaoExtratos($pdo, 'armazem_bnc001', 'idx_bnc001_conta_data', "
+        CREATE INDEX idx_bnc001_conta_data
+        ON armazem_bnc001 (EMPRESA, CBCONTADOR, DTMOV, MOVCONTADOR)
+    ");
+
+    garantirIndiceConciliacaoExtratos($pdo, 'armazem_bnc001', 'idx_bnc001_match_extrato', "
+        CREATE INDEX idx_bnc001_match_extrato
+        ON armazem_bnc001 (EMPRESA, CBCONTADOR, TIPOMOV, VALORMOV, DTMOV, MOVCONTADOR)
+    ");
+}
+
+function garantirIndiceConciliacaoExtratos(PDO $pdo, string $tabela, string $indice, string $sql): void
+{
+    static $cache = [];
+    $chave = $tabela . '.' . $indice;
+    if (isset($cache[$chave])) {
+        return;
+    }
+
+    $stmt = $pdo->prepare("
+        SELECT COUNT(*)
+        FROM information_schema.statistics
+        WHERE table_schema = DATABASE()
+          AND table_name = ?
+          AND index_name = ?
+    ");
+    $stmt->execute([$tabela, $indice]);
+
+    if ((int)$stmt->fetchColumn() === 0) {
+        $pdo->exec($sql);
+    }
+
+    $cache[$chave] = true;
 }
 
 garantirTabelasConciliacaoExtratos($pdo_master);
@@ -918,13 +957,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['acao'] ?? '') === 'concili
                     COUNT(*) OVER (PARTITION BY e.id) AS qtd_extrato,
                     COUNT(*) OVER (PARTITION BY b.MOVCONTADOR) AS qtd_sistema
                 FROM financeiro_extrato_bancario e
-                INNER JOIN armazem_bnc001 b
-                    ON b.EMPRESA = e.empresa_id
+                STRAIGHT_JOIN armazem_bnc001 b FORCE INDEX (idx_bnc001_match_extrato)
+                   ON b.EMPRESA = e.empresa_id
                    AND b.CBCONTADOR = e.cbcontador
                    AND b.TIPOMOV = e.tipo
-                   AND ABS(b.VALORMOV) = ABS(e.valor)
-                   AND DATE(b.DTMOV) = DATE(e.data_movimento)
-                   AND COALESCE(b.deletado, 'N') <> 'S'
+                   AND b.VALORMOV = e.valor
+                   AND b.DTMOV >= e.data_movimento
+                   AND b.DTMOV < DATE_ADD(e.data_movimento, INTERVAL 1 DAY)
+                   AND (b.deletado IS NULL OR b.deletado <> 'S')
                 WHERE e.empresa_id = ?
                   AND e.cbcontador = ?
                   AND e.conciliado = 'N'
@@ -1188,7 +1228,7 @@ $extratosPendentes = $stmtExtrato->fetchAll(PDO::FETCH_ASSOC);
 $paramsBnc = [$empresaId];
 $whereBnc = [
     'b.EMPRESA = ?',
-    "COALESCE(b.deletado, 'N') <> 'S'",
+    "(b.deletado IS NULL OR b.deletado <> 'S')",
 ];
 if ($cbcontador > 0) {
     $whereBnc[] = 'b.CBCONTADOR = ?';
@@ -1257,16 +1297,16 @@ if ($cbcontador > 0 && $dataIni !== '' && $dataFim !== '') {
                 COUNT(*) OVER (PARTITION BY e.id) AS qtd_por_extrato,
                 COUNT(*) OVER (PARTITION BY b.MOVCONTADOR) AS qtd_por_sistema
             FROM financeiro_extrato_bancario e
-            INNER JOIN armazem_bnc001 b
+            STRAIGHT_JOIN armazem_bnc001 b FORCE INDEX (idx_bnc001_match_extrato)
                 ON b.EMPRESA = e.empresa_id
                AND b.CBCONTADOR = e.cbcontador
-               AND ABS(b.VALORMOV) = ABS(e.valor)
+               AND b.VALORMOV = e.valor
                AND b.TIPOMOV = e.tipo
+               AND b.DTMOV >= DATE_SUB(e.data_movimento, INTERVAL 2 DAY)
+               AND b.DTMOV < DATE_ADD(e.data_movimento, INTERVAL 3 DAY)
                AND b.DTMOV >= ?
                AND b.DTMOV < ?
-               AND DATE(b.DTMOV) BETWEEN DATE_SUB(DATE(e.data_movimento), INTERVAL 2 DAY)
-                                    AND DATE_ADD(DATE(e.data_movimento), INTERVAL 2 DAY)
-               AND COALESCE(b.deletado, 'N') <> 'S'
+               AND (b.deletado IS NULL OR b.deletado <> 'S')
             WHERE e.empresa_id = ?
               AND e.cbcontador = ?
               AND e.conciliado = 'N'
