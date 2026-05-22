@@ -16,6 +16,8 @@ $previewDiagnosticoInter = [];
 $previewPeriodoInter = [
     'data_ini' => $_POST['data_ini_inter'] ?? date('Y-m-d'),
     'data_fim' => $_POST['data_fim_inter'] ?? date('Y-m-d'),
+    'formato_periodo' => $_POST['formato_periodo_inter'] ?? 'utc_convertido',
+    'enviar_conta_corrente' => $_POST['enviar_conta_corrente_inter'] ?? 'S',
 ];
 
 if (!$regraImportacao) {
@@ -243,10 +245,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['acao'] ?? '') === 'testar_
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['acao'] ?? '') === 'preview_inter_pix') {
     $dataIniInter = $_POST['data_ini_inter'] ?? date('Y-m-d');
     $dataFimInter = $_POST['data_fim_inter'] ?? date('Y-m-d');
-    $previewPeriodoInter = ['data_ini' => $dataIniInter, 'data_fim' => $dataFimInter];
+    $formatoPeriodoInter = $_POST['formato_periodo_inter'] ?? 'utc_convertido';
+    $enviarContaCorrenteInter = ($_POST['enviar_conta_corrente_inter'] ?? 'S') === 'S';
+    $previewPeriodoInter = [
+        'data_ini' => $dataIniInter,
+        'data_fim' => $dataFimInter,
+        'formato_periodo' => $formatoPeriodoInter,
+        'enviar_conta_corrente' => $enviarContaCorrenteInter ? 'S' : 'N',
+    ];
 
     try {
-        $listaPix = listarInterPix($pdo_master, $empresa_id, $dataIniInter, $dataFimInter, $previewDiagnosticoInter);
+        $listaPix = listarInterPix($pdo_master, $empresa_id, $dataIniInter, $dataFimInter, $previewDiagnosticoInter, [
+            'formato_periodo' => $formatoPeriodoInter,
+            'enviar_conta_corrente' => $enviarContaCorrenteInter,
+        ]);
         $stmtDuplicadoIdentificador = $pdo_master->prepare("
             SELECT id
             FROM armazem_conciliacao_recebimentos
@@ -499,7 +511,23 @@ $configInterPix = buscarConfigInterPix($pdo_master, $empresa_id) ?: [
                 <label class="form-label">Data final</label>
                 <input type="date" name="data_fim_inter" value="<?= htmlspecialchars($previewPeriodoInter['data_fim']) ?>" class="form-control" required>
             </div>
-            <div class="col-md-4 d-flex align-items-end gap-2">
+            <div class="col-md-3">
+                <label class="form-label">Formato de data</label>
+                <select name="formato_periodo_inter" class="form-select">
+                    <option value="utc_convertido" <?= ($previewPeriodoInter['formato_periodo'] ?? '') === 'utc_convertido' ? 'selected' : '' ?>>UTC convertido</option>
+                    <option value="utc_meia_noite" <?= ($previewPeriodoInter['formato_periodo'] ?? '') === 'utc_meia_noite' ? 'selected' : '' ?>>UTC meia-noite</option>
+                    <option value="offset_brasil" <?= ($previewPeriodoInter['formato_periodo'] ?? '') === 'offset_brasil' ? 'selected' : '' ?>>Offset Brasil</option>
+                    <option value="sem_timezone" <?= ($previewPeriodoInter['formato_periodo'] ?? '') === 'sem_timezone' ? 'selected' : '' ?>>Sem timezone</option>
+                </select>
+            </div>
+            <div class="col-md-3">
+                <label class="form-label">Enviar conta no header</label>
+                <select name="enviar_conta_corrente_inter" class="form-select">
+                    <option value="S" <?= ($previewPeriodoInter['enviar_conta_corrente'] ?? 'S') === 'S' ? 'selected' : '' ?>>Sim</option>
+                    <option value="N" <?= ($previewPeriodoInter['enviar_conta_corrente'] ?? 'S') === 'N' ? 'selected' : '' ?>>Nao</option>
+                </select>
+            </div>
+            <div class="col-md-2 d-flex align-items-end gap-2">
                 <button type="submit" name="acao" value="preview_inter_pix" class="btn btn-outline-primary w-50">Consultar previa</button>
                 <button type="submit" name="acao" value="consultar_inter_pix" class="btn btn-primary w-50" onclick="return confirm('Esta acao grava os Pix ainda nao importados na tabela de recebiveis. Continuar?')">Importar Pix</button>
             </div>
@@ -560,7 +588,15 @@ $configInterPix = buscarConfigInterPix($pdo_master, $empresa_id) ?: [
                 Paginas lidas: <?= (int)($previewDiagnosticoInter['paginas_lidas'] ?? 0) ?>.
                 Pix brutos: <?= (int)($previewDiagnosticoInter['total_bruto'] ?? 0) ?>.
                 Pix exibidos: <?= (int)($previewDiagnosticoInter['total_normalizado'] ?? 0) ?>.
+                Formato: <?= htmlspecialchars($previewDiagnosticoInter['formato_periodo'] ?? '') ?>.
+                Conta no header: <?= !empty($previewDiagnosticoInter['enviou_conta_corrente']) ? 'sim' : 'nao' ?>.
                 Chaves da resposta: <?= htmlspecialchars(implode(', ', $previewDiagnosticoInter['chaves_primeira_resposta'] ?? [])) ?>.
+                <?php if (!empty($previewDiagnosticoInter['url_primeira_consulta'])): ?>
+                    <div class="mt-2 text-break">
+                        <strong>URL consultada:</strong>
+                        <code><?= htmlspecialchars($previewDiagnosticoInter['url_primeira_consulta']) ?></code>
+                    </div>
+                <?php endif; ?>
             </div>
         <?php endif; ?>
 

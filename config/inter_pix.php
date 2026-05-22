@@ -268,19 +268,53 @@ function interPixDataHoraMysql(string $valor): ?string
     }
 }
 
-function listarInterPix(PDO $pdo, int $empresaId, string $dataIni, string $dataFim, ?array &$diagnostico = null): array
+function interPixMontarPeriodo(string $dataIni, string $dataFim, string $formatoPeriodo = 'utc_convertido'): array
+{
+    $formatoPeriodo = in_array($formatoPeriodo, ['utc_convertido', 'utc_meia_noite', 'offset_brasil', 'sem_timezone'], true)
+        ? $formatoPeriodo
+        : 'utc_convertido';
+
+    if ($formatoPeriodo === 'utc_meia_noite') {
+        return [
+            $dataIni . 'T00:00:00Z',
+            $dataFim . 'T23:59:59Z',
+        ];
+    }
+
+    if ($formatoPeriodo === 'offset_brasil') {
+        return [
+            $dataIni . 'T00:00:00-03:00',
+            $dataFim . 'T23:59:59-03:00',
+        ];
+    }
+
+    if ($formatoPeriodo === 'sem_timezone') {
+        return [
+            $dataIni . 'T00:00:00',
+            $dataFim . 'T23:59:59',
+        ];
+    }
+
+    return [
+        (new DateTime($dataIni . ' 00:00:00', new DateTimeZone('America/Sao_Paulo')))
+            ->setTimezone(new DateTimeZone('UTC'))
+            ->format('Y-m-d\TH:i:s\Z'),
+        (new DateTime($dataFim . ' 23:59:59', new DateTimeZone('America/Sao_Paulo')))
+            ->setTimezone(new DateTimeZone('UTC'))
+            ->format('Y-m-d\TH:i:s\Z'),
+    ];
+}
+
+function listarInterPix(PDO $pdo, int $empresaId, string $dataIni, string $dataFim, ?array &$diagnostico = null, array $opcoes = []): array
 {
     $config = buscarConfigInterPix($pdo, $empresaId);
     if (!$config || ($config['ativo'] ?? 'N') !== 'S') {
         throw new RuntimeException('Configuracao da API Inter Pix nao cadastrada ou inativa.');
     }
 
-    $inicio = (new DateTime($dataIni . ' 00:00:00', new DateTimeZone('America/Sao_Paulo')))
-        ->setTimezone(new DateTimeZone('UTC'))
-        ->format('Y-m-d\TH:i:s\Z');
-    $fim = (new DateTime($dataFim . ' 23:59:59', new DateTimeZone('America/Sao_Paulo')))
-        ->setTimezone(new DateTimeZone('UTC'))
-        ->format('Y-m-d\TH:i:s\Z');
+    $formatoPeriodo = (string)($opcoes['formato_periodo'] ?? 'utc_convertido');
+    [$inicio, $fim] = interPixMontarPeriodo($dataIni, $dataFim, $formatoPeriodo);
+    $enviarContaCorrente = (bool)($opcoes['enviar_conta_corrente'] ?? true);
 
     $token = obterTokenInterPix($pdo, $empresaId, $config);
     $pagina = 0;
@@ -293,6 +327,9 @@ function listarInterPix(PDO $pdo, int $empresaId, string $dataIni, string $dataF
         'total_normalizado' => 0,
         'chaves_primeira_resposta' => [],
         'paginacao' => [],
+        'formato_periodo' => $formatoPeriodo,
+        'enviou_conta_corrente' => false,
+        'url_primeira_consulta' => '',
     ];
 
     do {
@@ -310,8 +347,13 @@ function listarInterPix(PDO $pdo, int $empresaId, string $dataIni, string $dataF
         ];
 
         $contaCorrente = preg_replace('/\D+/', '', (string)($config['conta_corrente'] ?? ''));
-        if ($contaCorrente !== '') {
+        if ($enviarContaCorrente && $contaCorrente !== '') {
             $headers[] = 'x-conta-corrente: ' . $contaCorrente;
+            $diagnostico['enviou_conta_corrente'] = true;
+        }
+
+        if ($pagina === 0) {
+            $diagnostico['url_primeira_consulta'] = $url;
         }
 
         $retorno = interPixHttp($config, 'GET', $url, $headers);
