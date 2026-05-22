@@ -12,6 +12,7 @@ $empresa_id = (int)$_SESSION['empresa_id'];
 $regraImportacao = buscarRegraImportacao($pdo_master, $empresa_id, 'granito_pix_comercial', []);
 $mensagens = [];
 $previewInterPix = [];
+$previewDiagnosticoInter = [];
 $previewPeriodoInter = [
     'data_ini' => $_POST['data_ini_inter'] ?? date('Y-m-d'),
     'data_fim' => $_POST['data_fim_inter'] ?? date('Y-m-d'),
@@ -245,7 +246,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['acao'] ?? '') === 'preview
     $previewPeriodoInter = ['data_ini' => $dataIniInter, 'data_fim' => $dataFimInter];
 
     try {
-        $listaPix = listarInterPix($pdo_master, $empresa_id, $dataIniInter, $dataFimInter);
+        $listaPix = listarInterPix($pdo_master, $empresa_id, $dataIniInter, $dataFimInter, $previewDiagnosticoInter);
         $stmtDuplicadoIdentificador = $pdo_master->prepare("
             SELECT id
             FROM armazem_conciliacao_recebimentos
@@ -285,6 +286,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['acao'] ?? '') === 'preview
         }
 
         $mensagens[] = ['tipo' => 'info', 'texto' => 'Previa Inter Pix carregada. Nenhum registro foi gravado. Total encontrado: ' . count($previewInterPix)];
+        if (count($previewInterPix) === 0) {
+            $mensagens[] = [
+                'tipo' => 'warning',
+                'texto' => 'A API respondeu sem Pix normalizado para o periodo. Paginas lidas: '
+                    . (int)($previewDiagnosticoInter['paginas_lidas'] ?? 0)
+                    . ' | Pix brutos: ' . (int)($previewDiagnosticoInter['total_bruto'] ?? 0)
+                    . ' | Chaves: ' . implode(', ', $previewDiagnosticoInter['chaves_primeira_resposta'] ?? []),
+            ];
+        }
     } catch (Throwable $e) {
         $mensagens[] = ['tipo' => 'danger', 'texto' => 'Erro na previa Inter Pix: ' . $e->getMessage()];
     }
@@ -539,6 +549,18 @@ $configInterPix = buscarConfigInterPix($pdo_master, $empresa_id) ?: [
                         </tbody>
                     </table>
                 </div>
+            </div>
+        <?php endif; ?>
+
+        <?php if (!empty($previewDiagnosticoInter)): ?>
+            <div class="alert alert-light border small">
+                <strong>Diagnostico da ultima previa:</strong>
+                Periodo UTC <?= htmlspecialchars($previewDiagnosticoInter['inicio_utc'] ?? '') ?>
+                ate <?= htmlspecialchars($previewDiagnosticoInter['fim_utc'] ?? '') ?>.
+                Paginas lidas: <?= (int)($previewDiagnosticoInter['paginas_lidas'] ?? 0) ?>.
+                Pix brutos: <?= (int)($previewDiagnosticoInter['total_bruto'] ?? 0) ?>.
+                Pix exibidos: <?= (int)($previewDiagnosticoInter['total_normalizado'] ?? 0) ?>.
+                Chaves da resposta: <?= htmlspecialchars(implode(', ', $previewDiagnosticoInter['chaves_primeira_resposta'] ?? [])) ?>.
             </div>
         <?php endif; ?>
 

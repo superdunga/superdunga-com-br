@@ -268,7 +268,7 @@ function interPixDataHoraMysql(string $valor): ?string
     }
 }
 
-function listarInterPix(PDO $pdo, int $empresaId, string $dataIni, string $dataFim): array
+function listarInterPix(PDO $pdo, int $empresaId, string $dataIni, string $dataFim, ?array &$diagnostico = null): array
 {
     $config = buscarConfigInterPix($pdo, $empresaId);
     if (!$config || ($config['ativo'] ?? 'N') !== 'S') {
@@ -285,6 +285,15 @@ function listarInterPix(PDO $pdo, int $empresaId, string $dataIni, string $dataF
     $token = obterTokenInterPix($pdo, $empresaId, $config);
     $pagina = 0;
     $pixNormalizados = [];
+    $diagnostico = [
+        'inicio_utc' => $inicio,
+        'fim_utc' => $fim,
+        'paginas_lidas' => 0,
+        'total_bruto' => 0,
+        'total_normalizado' => 0,
+        'chaves_primeira_resposta' => [],
+        'paginacao' => [],
+    ];
 
     do {
         $params = [
@@ -306,7 +315,21 @@ function listarInterPix(PDO $pdo, int $empresaId, string $dataIni, string $dataF
         }
 
         $retorno = interPixHttp($config, 'GET', $url, $headers);
-        $listaPix = $retorno['pix'] ?? [];
+        if ($pagina === 0) {
+            $diagnostico['chaves_primeira_resposta'] = array_keys($retorno);
+        }
+
+        $listaPix = [];
+        if (isset($retorno['pix']) && is_array($retorno['pix'])) {
+            $listaPix = $retorno['pix'];
+        } elseif (isset($retorno['data']) && is_array($retorno['data'])) {
+            $listaPix = $retorno['data'];
+        } elseif (isset($retorno['content']) && is_array($retorno['content'])) {
+            $listaPix = $retorno['content'];
+        }
+
+        $diagnostico['paginas_lidas']++;
+        $diagnostico['total_bruto'] += count($listaPix);
 
         foreach ($listaPix as $pix) {
             $e2e = trim((string)($pix['endToEndId'] ?? ''));
@@ -347,9 +370,17 @@ function listarInterPix(PDO $pdo, int $empresaId, string $dataIni, string $dataF
         }
 
         $paginacao = $retorno['parametros']['paginacao'] ?? [];
-        $quantidadePaginas = (int)($paginacao['quantidadeDePaginas'] ?? 1);
+        if (empty($paginacao) && isset($retorno['paginacao']) && is_array($retorno['paginacao'])) {
+            $paginacao = $retorno['paginacao'];
+        }
+
+        $diagnostico['paginacao'] = $paginacao;
+
+        $quantidadePaginas = (int)($paginacao['quantidadeDePaginas'] ?? $paginacao['totalPages'] ?? 1);
         $pagina++;
     } while ($pagina < $quantidadePaginas);
+
+    $diagnostico['total_normalizado'] = count($pixNormalizados);
 
     return $pixNormalizados;
 }
