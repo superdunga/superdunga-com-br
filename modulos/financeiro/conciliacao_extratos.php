@@ -1,6 +1,7 @@
 <?php
 require '../../config/auth.php';
 require '../../config/conexao.php';
+require_once '../../config/inter_extrato.php';
 
 $empresaId = (int)($_SESSION['empresa_id'] ?? 0);
 $usuarioId = (int)($_SESSION['usuario_id'] ?? 0);
@@ -83,6 +84,7 @@ function garantirTabelasConciliacaoExtratos(PDO $pdo): void
 }
 
 garantirTabelasConciliacaoExtratos($pdo_master);
+garantirTabelaInterExtrato($pdo_master);
 
 function moedaExtratoBanco($valor): string
 {
@@ -286,6 +288,231 @@ function lerOfxExtrato(string $arquivo): array
     return $linhas;
 }
 
+function pastaInterExtratoEmpresa(int $empresaId): string
+{
+    $base = dirname(__DIR__, 2) . DIRECTORY_SEPARATOR . 'uploads' . DIRECTORY_SEPARATOR . 'inter_extrato_config';
+    $pasta = $base . DIRECTORY_SEPARATOR . 'empresa_' . $empresaId;
+
+    if (!is_dir($base)) {
+        mkdir($base, 0755, true);
+    }
+
+    $index = $base . DIRECTORY_SEPARATOR . 'index.php';
+    if (!is_file($index)) {
+        file_put_contents($index, "<?php\nhttp_response_code(403);\nexit;\n");
+    }
+
+    if (!is_dir($pasta)) {
+        mkdir($pasta, 0755, true);
+    }
+
+    $indexEmpresa = $pasta . DIRECTORY_SEPARATOR . 'index.php';
+    if (!is_file($indexEmpresa)) {
+        file_put_contents($indexEmpresa, "<?php\nhttp_response_code(403);\nexit;\n");
+    }
+
+    return $pasta;
+}
+
+function nomeSeguroInterExtrato(string $nome): string
+{
+    $nome = preg_replace('/[^a-zA-Z0-9._-]+/', '_', basename($nome));
+    return trim($nome, '._') ?: ('arquivo_' . date('YmdHis'));
+}
+
+function salvarUploadInterExtrato(array $arquivo, int $empresaId, string $prefixo): ?string
+{
+    if (($arquivo['error'] ?? UPLOAD_ERR_NO_FILE) === UPLOAD_ERR_NO_FILE) {
+        return null;
+    }
+
+    if (($arquivo['error'] ?? UPLOAD_ERR_OK) !== UPLOAD_ERR_OK) {
+        throw new RuntimeException('Erro ao receber arquivo ' . $prefixo . '.');
+    }
+
+    $extensao = strtolower(pathinfo((string)$arquivo['name'], PATHINFO_EXTENSION));
+    if (!in_array($extensao, ['crt', 'pem', 'cer', 'key', 'p12', 'pfx'], true)) {
+        throw new RuntimeException('Arquivo ' . $prefixo . ' invalido. Use crt, pem, cer, key, p12 ou pfx.');
+    }
+
+    $destino = pastaInterExtratoEmpresa($empresaId) . DIRECTORY_SEPARATOR . $prefixo . '_' . date('YmdHis') . '_' . nomeSeguroInterExtrato((string)$arquivo['name']);
+    if (!move_uploaded_file((string)$arquivo['tmp_name'], $destino)) {
+        throw new RuntimeException('Nao foi possivel salvar arquivo ' . $prefixo . '.');
+    }
+
+    return $destino;
+}
+
+function salvarZipInterExtrato(array $arquivo, int $empresaId): array
+{
+    if (($arquivo['error'] ?? UPLOAD_ERR_NO_FILE) === UPLOAD_ERR_NO_FILE) {
+        return [];
+    }
+
+    if (($arquivo['error'] ?? UPLOAD_ERR_OK) !== UPLOAD_ERR_OK) {
+        throw new RuntimeException('Erro ao receber ZIP do Inter Extrato.');
+    }
+
+    if (strtolower(pathinfo((string)$arquivo['name'], PATHINFO_EXTENSION)) !== 'zip') {
+        throw new RuntimeException('O pacote do Inter precisa ser um arquivo .zip.');
+    }
+
+    if (!class_exists('ZipArchive')) {
+        throw new RuntimeException('Extensao ZipArchive nao esta habilitada no PHP. Envie certificado e chave separadamente.');
+    }
+
+    $resultado = [];
+    $zip = new ZipArchive();
+    if ($zip->open((string)$arquivo['tmp_name']) !== true) {
+        throw new RuntimeException('Nao foi possivel abrir o ZIP do Inter Extrato.');
+    }
+
+    $pasta = pastaInterExtratoEmpresa($empresaId);
+    for ($i = 0; $i < $zip->numFiles; $i++) {
+        $nome = $zip->getNameIndex($i);
+        $ext = strtolower(pathinfo($nome, PATHINFO_EXTENSION));
+        if (!in_array($ext, ['crt', 'pem', 'cer', 'key', 'p12', 'pfx'], true)) {
+            continue;
+        }
+
+        $conteudo = $zip->getFromIndex($i);
+        if ($conteudo === false || $conteudo === '') {
+            continue;
+        }
+
+        $prefixo = $ext === 'key' ? 'key' : 'cert';
+        $destino = $pasta . DIRECTORY_SEPARATOR . $prefixo . '_' . date('YmdHis') . '_' . nomeSeguroInterExtrato($nome);
+        file_put_contents($destino, $conteudo);
+
+        if ($prefixo === 'key') {
+            $resultado['key_path'] = $destino;
+        } else {
+            $resultado['cert_path'] = $destino;
+        }
+    }
+
+    $zip->close();
+
+    if (empty($resultado['cert_path'])) {
+        throw new RuntimeException('Nenhum certificado foi encontrado dentro do ZIP do Inter Extrato.');
+    }
+
+    return $resultado;
+}
+
+function importarLinhasExtratoBanco(PDO $pdo, int $empresaId, int $usuarioId, int $cbcontador, array $linhas, string $origem, ?string $arquivoSalvo = null): array
+{
+    if ($cbcontador <= 0) {
+        throw new RuntimeException('Selecione a conta antes de importar o extrato.');
+    }
+
+    $stmtImp = $pdo->prepare("
+        INSERT INTO financeiro_extratos_importacoes
+            (empresa_id, cbcontador, nome_arquivo, arquivo_salvo, formato, total_linhas, usuario_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+    ");
+    $stmtImp->execute([$empresaId, $cbcontador, $origem, $arquivoSalvo, $origem, count($linhas), $usuarioId]);
+    $importacaoId = (int)$pdo->lastInsertId();
+
+    $registrosImportacao = [];
+    foreach ($linhas as $linha) {
+        if (empty($linha['data_movimento']) || (float)$linha['valor'] == 0.0) {
+            continue;
+        }
+
+        $valor = abs((float)$linha['valor']);
+        $tipo = in_array($linha['tipo'], ['C', 'D'], true)
+            ? $linha['tipo']
+            : (((float)$linha['valor'] >= 0) ? 'C' : 'D');
+        $historicoLinha = (string)$linha['historico'];
+        $documentoLinha = (string)$linha['documento'];
+        $identificador = gerarIdentificadorExtrato(
+            $empresaId,
+            $cbcontador,
+            (string)$linha['data_movimento'],
+            $valor,
+            $tipo,
+            $historicoLinha,
+            $documentoLinha,
+            (string)$linha['identificador']
+        );
+
+        $registrosImportacao[$identificador] = [
+            $empresaId,
+            $cbcontador,
+            $importacaoId,
+            $linha['data_movimento'],
+            mb_substr($historicoLinha, 0, 500),
+            mb_substr($documentoLinha, 0, 120),
+            $tipo,
+            $valor,
+            $identificador,
+        ];
+    }
+
+    $identificadoresExistentes = [];
+    foreach (array_chunk(array_keys($registrosImportacao), 500) as $loteIdentificadores) {
+        if (empty($loteIdentificadores)) {
+            continue;
+        }
+
+        $placeholders = implode(',', array_fill(0, count($loteIdentificadores), '?'));
+        $stmtExistentes = $pdo->prepare("
+            SELECT identificador_banco
+            FROM financeiro_extrato_bancario
+            WHERE empresa_id = ?
+              AND cbcontador = ?
+              AND identificador_banco IN ({$placeholders})
+        ");
+        $stmtExistentes->execute(array_merge([$empresaId, $cbcontador], $loteIdentificadores));
+
+        foreach ($stmtExistentes->fetchAll(PDO::FETCH_COLUMN) as $identificadorExistente) {
+            $identificadoresExistentes[(string)$identificadorExistente] = true;
+        }
+    }
+
+    $registrosNovos = [];
+    foreach ($registrosImportacao as $identificador => $registroImportacao) {
+        if (!isset($identificadoresExistentes[$identificador])) {
+            $registrosNovos[] = $registroImportacao;
+        }
+    }
+
+    $importados = 0;
+    foreach (array_chunk($registrosNovos, 300) as $loteRegistros) {
+        if (empty($loteRegistros)) {
+            continue;
+        }
+
+        $placeholders = implode(',', array_fill(0, count($loteRegistros), '(?, ?, ?, ?, ?, ?, ?, ?, ?)'));
+        $valoresInsert = [];
+        foreach ($loteRegistros as $registroNovo) {
+            array_push($valoresInsert, ...$registroNovo);
+        }
+
+        $stmtIns = $pdo->prepare("
+            INSERT IGNORE INTO financeiro_extrato_bancario
+                (empresa_id, cbcontador, importacao_id, data_movimento, historico, documento, tipo, valor, identificador_banco)
+            VALUES {$placeholders}
+        ");
+        $stmtIns->execute($valoresInsert);
+        $importados += $stmtIns->rowCount();
+    }
+
+    $duplicados = count($registrosImportacao) - $importados;
+    $pdo->prepare("
+        UPDATE financeiro_extratos_importacoes
+        SET total_importado = ?, total_duplicado = ?
+        WHERE id = ?
+    ")->execute([$importados, $duplicados, $importacaoId]);
+
+    return [
+        'importados' => $importados,
+        'duplicados' => $duplicados,
+        'lidos' => count($registrosImportacao),
+    ];
+}
+
 function conciliarExtratoComMovimento(PDO $pdo, int $empresaId, int $usuarioId, int $extratoId, int $movcontador, string $tipoMatch = 'manual'): int
 {
     if ($extratoId <= 0 || $movcontador <= 0) {
@@ -412,6 +639,103 @@ $dataIniSql = $dataIni !== '' ? $dataIni . ' 00:00:00' : '';
 $dataFimExclusivoSql = $dataFim !== '' ? date('Y-m-d 00:00:00', strtotime($dataFim . ' +1 day')) : '';
 $dataIniSugestaoSql = $dataIni !== '' ? date('Y-m-d 00:00:00', strtotime($dataIni . ' -2 days')) : '';
 $dataFimSugestaoSql = $dataFim !== '' ? date('Y-m-d 00:00:00', strtotime($dataFim . ' +3 days')) : '';
+$configInterExtrato = buscarConfigInterExtrato($pdo_master, $empresaId) ?: [];
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['acao'] ?? '') === 'salvar_inter_extrato') {
+    $certPath = trim((string)($_POST['cert_path'] ?? ($configInterExtrato['cert_path'] ?? '')));
+    $keyPath = trim((string)($_POST['key_path'] ?? ($configInterExtrato['key_path'] ?? '')));
+
+    $dadosConfig = [
+        'ambiente' => in_array(($_POST['ambiente'] ?? ''), ['producao', 'sandbox'], true) ? $_POST['ambiente'] : 'producao',
+        'client_id' => trim((string)($_POST['client_id'] ?? '')),
+        'client_secret' => trim((string)($_POST['client_secret'] ?? '')),
+        'conta_corrente' => trim((string)($_POST['conta_corrente'] ?? '')),
+        'cert_path' => $certPath,
+        'key_path' => $keyPath,
+        'cert_password' => trim((string)($_POST['cert_password'] ?? '')),
+        'ativo' => ($_POST['ativo'] ?? 'S') === 'S' ? 'S' : 'N',
+    ];
+
+    try {
+        if (isset($_FILES['pacote_inter_extrato'])) {
+            $dadosConfig = array_merge($dadosConfig, salvarZipInterExtrato($_FILES['pacote_inter_extrato'], $empresaId));
+        }
+        if (isset($_FILES['certificado_inter_extrato'])) {
+            $novoCert = salvarUploadInterExtrato($_FILES['certificado_inter_extrato'], $empresaId, 'cert');
+            if ($novoCert !== null) {
+                $dadosConfig['cert_path'] = $novoCert;
+            }
+        }
+        if (isset($_FILES['chave_inter_extrato'])) {
+            $novaKey = salvarUploadInterExtrato($_FILES['chave_inter_extrato'], $empresaId, 'key');
+            if ($novaKey !== null) {
+                $dadosConfig['key_path'] = $novaKey;
+            }
+        }
+
+        salvarConfigInterExtrato($pdo_master, $empresaId, $dadosConfig);
+        $configInterExtrato = buscarConfigInterExtrato($pdo_master, $empresaId) ?: [];
+        $mensagemOk = 'Configuracao da API Inter Extrato salva com sucesso.';
+    } catch (Throwable $e) {
+        $mensagemErro = 'Erro ao salvar configuracao Inter Extrato: ' . $e->getMessage();
+    }
+}
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['acao'] ?? '') === 'testar_inter_extrato') {
+    try {
+        $configTeste = buscarConfigInterExtrato($pdo_master, $empresaId);
+        if (!$configTeste || ($configTeste['ativo'] ?? 'N') !== 'S') {
+            throw new RuntimeException('Configuracao da API Inter Extrato nao cadastrada ou inativa.');
+        }
+        obterTokenInterExtrato($pdo_master, $empresaId, $configTeste);
+        $mensagemOk = 'Conexao com a API Inter Extrato realizada com sucesso.';
+    } catch (Throwable $e) {
+        $mensagemErro = 'Erro no teste da API Inter Extrato: ' . $e->getMessage();
+    }
+}
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['acao'] ?? '') === 'consultar_inter_extrato') {
+    $cbcontadorPost = (int)($_POST['cbcontador'] ?? 0);
+    $dataIniPost = trim((string)($_POST['data_ini'] ?? $dataIni));
+    $dataFimPost = trim((string)($_POST['data_fim'] ?? $dataFim));
+
+    try {
+        if ($cbcontadorPost <= 0) {
+            throw new RuntimeException('Selecione a conta antes de consultar a API Inter Extrato.');
+        }
+        if ($dataIniPost === '' || $dataFimPost === '') {
+            throw new RuntimeException('Informe data inicial e final para consultar a API Inter Extrato.');
+        }
+        if ((strtotime($dataFimPost) - strtotime($dataIniPost)) > 90 * 86400) {
+            throw new RuntimeException('A API de extrato do Inter permite no maximo 90 dias por consulta.');
+        }
+
+        $diagnosticoInterExtrato = [];
+        $linhasInter = listarInterExtrato($pdo_master, $empresaId, $dataIniPost, $dataFimPost, $diagnosticoInterExtrato);
+        $resultadoInter = importarLinhasExtratoBanco(
+            $pdo_master,
+            $empresaId,
+            $usuarioId,
+            $cbcontadorPost,
+            $linhasInter,
+            'API_INTER_EXTRATO',
+            null
+        );
+
+        header('Location: conciliacao_extratos.php?' . http_build_query([
+            'cbcontador' => $cbcontadorPost,
+            'data_ini' => $dataIniPost,
+            'data_fim' => $dataFimPost,
+            'ok' => '1',
+            'importados' => $resultadoInter['importados'],
+            'duplicados' => $resultadoInter['duplicados'],
+            'inter_lidos' => $resultadoInter['lidos'],
+        ]));
+        exit;
+    } catch (Throwable $e) {
+        $mensagemErro = 'Erro na consulta Inter Extrato: ' . $e->getMessage();
+    }
+}
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['acao'] ?? '') === 'conciliar_manual') {
     $extratoId = (int)($_POST['extrato_id'] ?? 0);
@@ -1080,6 +1404,108 @@ require '../../layout/header.php';
             </div>
             <div class="col-lg-3">
                 <button type="submit" class="btn btn-success w-100">Importar</button>
+            </div>
+        </form>
+    </div>
+</section>
+
+<section class="mb-4">
+    <div class="bg-white border rounded-2 shadow-sm p-3">
+        <div class="d-flex flex-column flex-lg-row justify-content-between gap-2 mb-3">
+            <div>
+                <h2 class="h6 fw-bold mb-1">API Inter Extrato</h2>
+                <div class="text-muted small">Consulta o extrato bancario do Inter e grava os lancamentos na mesma base usada pelo upload.</div>
+            </div>
+            <form method="POST" class="d-inline">
+                <input type="hidden" name="acao" value="testar_inter_extrato">
+                <button type="submit" class="btn btn-outline-primary btn-sm">Testar conexao</button>
+            </form>
+        </div>
+
+        <form method="POST" enctype="multipart/form-data" class="row g-3 align-items-end mb-3">
+            <input type="hidden" name="acao" value="salvar_inter_extrato">
+            <input type="hidden" name="cert_path" value="<?= htmlspecialchars((string)($configInterExtrato['cert_path'] ?? '')) ?>">
+            <input type="hidden" name="key_path" value="<?= htmlspecialchars((string)($configInterExtrato['key_path'] ?? '')) ?>">
+
+            <div class="col-md-3 col-lg-2">
+                <label class="form-label">Ambiente</label>
+                <select name="ambiente" class="form-select">
+                    <option value="producao" <?= (($configInterExtrato['ambiente'] ?? 'producao') === 'producao') ? 'selected' : '' ?>>Producao</option>
+                    <option value="sandbox" <?= (($configInterExtrato['ambiente'] ?? '') === 'sandbox') ? 'selected' : '' ?>>Sandbox</option>
+                </select>
+            </div>
+            <div class="col-md-5 col-lg-3">
+                <label class="form-label">Client ID</label>
+                <input type="text" name="client_id" class="form-control" value="<?= htmlspecialchars((string)($configInterExtrato['client_id'] ?? '')) ?>">
+            </div>
+            <div class="col-md-4 col-lg-3">
+                <label class="form-label">Client Secret</label>
+                <input type="password" name="client_secret" class="form-control" placeholder="<?= !empty($configInterExtrato['client_secret']) ? 'Preenchido - informe apenas para trocar' : '' ?>">
+            </div>
+            <div class="col-md-4 col-lg-2">
+                <label class="form-label">Conta corrente</label>
+                <input type="text" name="conta_corrente" class="form-control" value="<?= htmlspecialchars((string)($configInterExtrato['conta_corrente'] ?? '')) ?>">
+            </div>
+            <div class="col-md-4 col-lg-2">
+                <label class="form-label">Ativo</label>
+                <select name="ativo" class="form-select">
+                    <option value="S" <?= (($configInterExtrato['ativo'] ?? 'S') === 'S') ? 'selected' : '' ?>>Sim</option>
+                    <option value="N" <?= (($configInterExtrato['ativo'] ?? '') === 'N') ? 'selected' : '' ?>>Nao</option>
+                </select>
+            </div>
+
+            <div class="col-md-4">
+                <label class="form-label">ZIP chave/certificado</label>
+                <input type="file" name="pacote_inter_extrato" class="form-control" accept=".zip">
+            </div>
+            <div class="col-md-4">
+                <label class="form-label">Certificado separado</label>
+                <input type="file" name="certificado_inter_extrato" class="form-control" accept=".crt,.pem,.cer,.p12,.pfx">
+            </div>
+            <div class="col-md-4">
+                <label class="form-label">Chave separada</label>
+                <input type="file" name="chave_inter_extrato" class="form-control" accept=".key,.pem">
+            </div>
+            <div class="col-md-4">
+                <label class="form-label">Senha do certificado</label>
+                <input type="password" name="cert_password" class="form-control" placeholder="<?= !empty($configInterExtrato['cert_password']) ? 'Preenchida - informe apenas para trocar' : '' ?>">
+            </div>
+            <div class="col-md-8">
+                <div class="small text-muted">
+                    Certificado: <?= !empty($configInterExtrato['cert_path']) ? 'configurado' : 'nao configurado' ?> |
+                    Chave: <?= !empty($configInterExtrato['key_path']) ? 'configurada' : 'nao configurada' ?>
+                </div>
+            </div>
+            <div class="col-12">
+                <button type="submit" class="btn btn-secondary">Salvar configuracao Inter Extrato</button>
+            </div>
+        </form>
+
+        <form method="POST" class="row g-3 align-items-end">
+            <input type="hidden" name="acao" value="consultar_inter_extrato">
+            <div class="col-lg-4">
+                <label class="form-label">Conta do extrato</label>
+                <select name="cbcontador" class="form-select" required>
+                    <option value="">Selecione</option>
+                    <?php foreach ($contas as $conta): ?>
+                        <option value="<?= (int)$conta['CBCONTADOR'] ?>" <?= $cbcontador === (int)$conta['CBCONTADOR'] ? 'selected' : '' ?>>
+                            <?= (int)$conta['CBCONTADOR'] ?> - <?= htmlspecialchars($conta['nome_conta']) ?>
+                        </option>
+                    <?php endforeach; ?>
+                </select>
+            </div>
+            <div class="col-md-3 col-lg-2">
+                <label class="form-label">Data inicial</label>
+                <input type="date" name="data_ini" class="form-control" value="<?= htmlspecialchars($dataIni) ?>" required>
+            </div>
+            <div class="col-md-3 col-lg-2">
+                <label class="form-label">Data final</label>
+                <input type="date" name="data_fim" class="form-control" value="<?= htmlspecialchars($dataFim) ?>" required>
+            </div>
+            <div class="col-md-6 col-lg-4">
+                <button type="submit" class="btn btn-success w-100" onclick="return confirm('Consultar o extrato no Inter e gravar novos lancamentos?')">
+                    Consultar e importar pela API
+                </button>
             </div>
         </form>
     </div>
