@@ -60,25 +60,172 @@ function granitoPixCampo(array $dados, array $cabecalho, array $nomes): string {
     return '';
 }
 
+function pastaInterPixEmpresa(int $empresaId): string
+{
+    $base = dirname(__DIR__, 2) . DIRECTORY_SEPARATOR . 'storage' . DIRECTORY_SEPARATOR . 'inter_pix';
+    $pasta = $base . DIRECTORY_SEPARATOR . 'empresa_' . $empresaId;
+
+    if (!is_dir($base)) {
+        mkdir($base, 0755, true);
+    }
+
+    $htaccess = $base . DIRECTORY_SEPARATOR . '.htaccess';
+    if (!is_file($htaccess)) {
+        file_put_contents($htaccess, "Deny from all\n");
+    }
+
+    if (!is_dir($pasta)) {
+        mkdir($pasta, 0755, true);
+    }
+
+    return $pasta;
+}
+
+function nomeSeguroInterPix(string $nome): string
+{
+    $nome = preg_replace('/[^a-zA-Z0-9._-]+/', '_', basename($nome));
+    return trim($nome, '._') ?: ('arquivo_' . date('YmdHis'));
+}
+
+function salvarUploadInterPix(array $arquivo, int $empresaId, string $prefixo): ?string
+{
+    if (($arquivo['error'] ?? UPLOAD_ERR_NO_FILE) === UPLOAD_ERR_NO_FILE) {
+        return null;
+    }
+
+    if (($arquivo['error'] ?? UPLOAD_ERR_OK) !== UPLOAD_ERR_OK) {
+        throw new RuntimeException('Erro ao receber arquivo ' . $prefixo . '.');
+    }
+
+    $extensao = strtolower(pathinfo((string)$arquivo['name'], PATHINFO_EXTENSION));
+    $permitidas = ['crt', 'pem', 'cer', 'key', 'p12', 'pfx'];
+    if (!in_array($extensao, $permitidas, true)) {
+        throw new RuntimeException('Arquivo ' . $prefixo . ' invalido. Use crt, pem, cer, key, p12 ou pfx.');
+    }
+
+    $pasta = pastaInterPixEmpresa($empresaId);
+    $destino = $pasta . DIRECTORY_SEPARATOR . $prefixo . '_' . date('YmdHis') . '_' . nomeSeguroInterPix((string)$arquivo['name']);
+
+    if (!move_uploaded_file((string)$arquivo['tmp_name'], $destino)) {
+        throw new RuntimeException('Nao foi possivel salvar arquivo ' . $prefixo . '.');
+    }
+
+    return $destino;
+}
+
+function salvarZipInterPix(array $arquivo, int $empresaId): array
+{
+    if (($arquivo['error'] ?? UPLOAD_ERR_NO_FILE) === UPLOAD_ERR_NO_FILE) {
+        return [];
+    }
+
+    if (($arquivo['error'] ?? UPLOAD_ERR_OK) !== UPLOAD_ERR_OK) {
+        throw new RuntimeException('Erro ao receber ZIP do Inter.');
+    }
+
+    if (strtolower(pathinfo((string)$arquivo['name'], PATHINFO_EXTENSION)) !== 'zip') {
+        throw new RuntimeException('O pacote do Inter precisa ser um arquivo .zip.');
+    }
+
+    if (!class_exists('ZipArchive')) {
+        throw new RuntimeException('Extensao ZipArchive nao esta habilitada no PHP. Envie certificado e chave separadamente.');
+    }
+
+    $pasta = pastaInterPixEmpresa($empresaId);
+    $resultado = [];
+    $zip = new ZipArchive();
+    if ($zip->open((string)$arquivo['tmp_name']) !== true) {
+        throw new RuntimeException('Nao foi possivel abrir o ZIP do Inter.');
+    }
+
+    for ($i = 0; $i < $zip->numFiles; $i++) {
+        $nome = $zip->getNameIndex($i);
+        $ext = strtolower(pathinfo($nome, PATHINFO_EXTENSION));
+        if (!in_array($ext, ['crt', 'pem', 'cer', 'key', 'p12', 'pfx'], true)) {
+            continue;
+        }
+
+        $conteudo = $zip->getFromIndex($i);
+        if ($conteudo === false || $conteudo === '') {
+            continue;
+        }
+
+        $prefixo = in_array($ext, ['key'], true) ? 'key' : 'cert';
+        $destino = $pasta . DIRECTORY_SEPARATOR . $prefixo . '_' . date('YmdHis') . '_' . nomeSeguroInterPix($nome);
+        file_put_contents($destino, $conteudo);
+
+        if ($prefixo === 'key') {
+            $resultado['key_path'] = $destino;
+        } else {
+            $resultado['cert_path'] = $destino;
+        }
+    }
+
+    $zip->close();
+
+    if (empty($resultado['cert_path'])) {
+        throw new RuntimeException('Nenhum certificado foi encontrado dentro do ZIP do Inter.');
+    }
+
+    return $resultado;
+}
+
 garantirTabelaInterPix($pdo_master);
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['acao'] ?? '') === 'salvar_inter_pix') {
+    $configAtual = buscarConfigInterPix($pdo_master, $empresa_id) ?: [];
+    $certPath = trim((string)($_POST['cert_path'] ?? ($configAtual['cert_path'] ?? '')));
+    $keyPath = trim((string)($_POST['key_path'] ?? ($configAtual['key_path'] ?? '')));
+
     $dadosConfig = [
         'ambiente' => in_array(($_POST['ambiente'] ?? ''), ['producao', 'sandbox'], true) ? $_POST['ambiente'] : 'producao',
         'client_id' => trim((string)($_POST['client_id'] ?? '')),
         'client_secret' => trim((string)($_POST['client_secret'] ?? '')),
         'conta_corrente' => trim((string)($_POST['conta_corrente'] ?? '')),
-        'cert_path' => trim((string)($_POST['cert_path'] ?? '')),
-        'key_path' => trim((string)($_POST['key_path'] ?? '')),
+        'cert_path' => $certPath,
+        'key_path' => $keyPath,
         'cert_password' => trim((string)($_POST['cert_password'] ?? '')),
         'ativo' => ($_POST['ativo'] ?? 'S') === 'S' ? 'S' : 'N',
     ];
 
     try {
+        if (isset($_FILES['pacote_inter'])) {
+            $arquivosZip = salvarZipInterPix($_FILES['pacote_inter'], $empresa_id);
+            $dadosConfig = array_merge($dadosConfig, $arquivosZip);
+        }
+
+        if (isset($_FILES['certificado_inter'])) {
+            $certUpload = salvarUploadInterPix($_FILES['certificado_inter'], $empresa_id, 'cert');
+            if ($certUpload !== null) {
+                $dadosConfig['cert_path'] = $certUpload;
+            }
+        }
+
+        if (isset($_FILES['chave_inter'])) {
+            $keyUpload = salvarUploadInterPix($_FILES['chave_inter'], $empresa_id, 'key');
+            if ($keyUpload !== null) {
+                $dadosConfig['key_path'] = $keyUpload;
+            }
+        }
+
         salvarConfigInterPix($pdo_master, $empresa_id, $dadosConfig);
         $mensagens[] = ['tipo' => 'success', 'texto' => 'Configuracao da API Inter Pix salva com sucesso.'];
     } catch (Throwable $e) {
         $mensagens[] = ['tipo' => 'danger', 'texto' => 'Erro ao salvar configuracao Inter Pix: ' . $e->getMessage()];
+    }
+}
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['acao'] ?? '') === 'testar_inter_pix') {
+    try {
+        $configTeste = buscarConfigInterPix($pdo_master, $empresa_id);
+        if (!$configTeste || ($configTeste['ativo'] ?? 'N') !== 'S') {
+            throw new RuntimeException('Configuracao da API Inter Pix nao cadastrada ou inativa.');
+        }
+
+        obterTokenInterPix($pdo_master, $empresa_id, $configTeste);
+        $mensagens[] = ['tipo' => 'success', 'texto' => 'Conexao com Banco Inter validada com sucesso. Token OAuth obtido.'];
+    } catch (Throwable $e) {
+        $mensagens[] = ['tipo' => 'danger', 'texto' => 'Erro no teste da API Inter Pix: ' . $e->getMessage()];
     }
 }
 
@@ -289,7 +436,7 @@ $configInterPix = buscarConfigInterPix($pdo_master, $empresa_id) ?: [
 
         <div class="border rounded p-3 bg-light">
             <h6 class="fw-bold mb-3">Configuracao da API Inter</h6>
-            <form method="POST" class="row g-3">
+            <form method="POST" enctype="multipart/form-data" class="row g-3">
                 <input type="hidden" name="acao" value="salvar_inter_pix">
                 <input type="hidden" name="regra_id" value="<?= (int)$regraImportacao['id'] ?>">
                 <div class="col-md-3">
@@ -322,22 +469,40 @@ $configInterPix = buscarConfigInterPix($pdo_master, $empresa_id) ?: [
                     <label class="form-label">Senha do certificado</label>
                     <input type="password" name="cert_password" value="" class="form-control" placeholder="<?= !empty($configInterPix['cert_password']) ? 'Preenchida - informe apenas para alterar' : '' ?>">
                 </div>
+                <div class="col-md-4">
+                    <label class="form-label">Pacote do Inter (.zip)</label>
+                    <input type="file" name="pacote_inter" class="form-control" accept=".zip">
+                    <div class="form-text">Use o ZIP baixado em "Download chave e certificado".</div>
+                </div>
+                <div class="col-md-4">
+                    <label class="form-label">Certificado separado</label>
+                    <input type="file" name="certificado_inter" class="form-control" accept=".crt,.pem,.cer,.p12,.pfx">
+                </div>
+                <div class="col-md-4">
+                    <label class="form-label">Chave privada separada</label>
+                    <input type="file" name="chave_inter" class="form-control" accept=".key,.pem">
+                </div>
                 <div class="col-md-6">
-                    <label class="form-label">Caminho do certificado (.crt/.pem/.pfx/.p12)</label>
+                    <label class="form-label">Caminho do certificado salvo</label>
                     <input type="text" name="cert_path" value="<?= htmlspecialchars($configInterPix['cert_path'] ?? '') ?>" class="form-control" placeholder="/home/usuario/certs/inter.crt">
                 </div>
                 <div class="col-md-6">
-                    <label class="form-label">Caminho da chave privada (.key) se houver</label>
+                    <label class="form-label">Caminho da chave privada salva</label>
                     <input type="text" name="key_path" value="<?= htmlspecialchars($configInterPix['key_path'] ?? '') ?>" class="form-control" placeholder="/home/usuario/certs/inter.key">
                 </div>
                 <div class="col-12">
                     <div class="small text-muted">
-                        Para certificado PFX/P12, informe apenas o caminho do certificado e a senha. Para certificado PEM/CRT, informe tambem a chave privada.
+                        Para PFX/P12, informe apenas certificado e senha. Para PEM/CRT/CER, informe tambem a chave privada. Os caminhos sao preenchidos automaticamente quando os arquivos sao enviados por upload.
                     </div>
                 </div>
                 <div class="col-md-3">
                     <button type="submit" class="btn btn-outline-primary w-100">Salvar configuracao</button>
                 </div>
+            </form>
+            <form method="POST" class="mt-3">
+                <input type="hidden" name="acao" value="testar_inter_pix">
+                <input type="hidden" name="regra_id" value="<?= (int)$regraImportacao['id'] ?>">
+                <button type="submit" class="btn btn-outline-success">Testar conexao Inter</button>
             </form>
         </div>
     </div>
