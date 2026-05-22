@@ -122,8 +122,8 @@ function normalizarDecimalExtrato(string $valor): float
         return 0.0;
     }
 
-    $temVirgula = str_contains($valor, ',');
-    $temPonto = str_contains($valor, '.');
+    $temVirgula = strpos($valor, ',') !== false;
+    $temPonto = strpos($valor, '.') !== false;
 
     if ($temVirgula && $temPonto) {
         $valor = str_replace('.', '', $valor);
@@ -217,7 +217,9 @@ function lerCsvExtrato(string $arquivo): array
     $linhas = [];
 
     while (($dados = fgetcsv($handle, 0, $delimitador)) !== false) {
-        if (count(array_filter($dados, static fn($v) => trim((string)$v) !== '')) === 0) {
+        if (count(array_filter($dados, static function ($v) {
+            return trim((string)$v) !== '';
+        })) === 0) {
             continue;
         }
 
