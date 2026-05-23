@@ -962,8 +962,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['acao'] ?? '') === 'concili
                    AND b.CBCONTADOR = e.cbcontador
                    AND b.TIPOMOV = e.tipo
                    AND b.VALORMOV = e.valor
-                   AND b.DTMOV >= e.data_movimento
-                   AND b.DTMOV < DATE_ADD(e.data_movimento, INTERVAL 1 DAY)
+                   AND b.DTMOV >= DATE(e.data_movimento)
+                   AND b.DTMOV < DATE_ADD(DATE(e.data_movimento), INTERVAL 1 DAY)
                    AND (b.deletado IS NULL OR b.deletado <> 'S')
                 WHERE e.empresa_id = ?
                   AND e.cbcontador = ?
