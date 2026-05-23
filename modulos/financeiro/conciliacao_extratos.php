@@ -185,7 +185,7 @@ function normalizarDataExtrato(string $valor): ?string
 
     $formatos = ['Y-m-d H:i:s', 'Y-m-d H:i', 'Y-m-d', 'd/m/Y H:i:s', 'd/m/Y H:i', 'd/m/Y', 'd-m-Y'];
     foreach ($formatos as $formato) {
-        $dt = DateTime::createFromFormat($formato, $valor);
+        $dt = DateTime::createFromFormat('!' . $formato, $valor);
         if ($dt instanceof DateTime) {
             return $dt->format('Y-m-d H:i:s');
         }
@@ -202,6 +202,17 @@ function gerarIdentificadorExtrato(int $empresaId, int $cbcontador, string $data
         : implode('|', [$empresaId, $cbcontador, date('Y-m-d H:i:s', strtotime($data)), number_format($valor, 4, '.', ''), $tipo, mb_strtolower($historico), mb_strtolower($documento)]);
 
     return sha1($base);
+}
+
+function gerarChaveNaturalExtrato(string $data, float $valor, string $tipo, string $historico, string $documento): string
+{
+    return implode('|', [
+        date('Y-m-d', strtotime($data)),
+        $tipo,
+        number_format($valor, 4, '.', ''),
+        mb_strtolower(trim($historico)),
+        mb_strtolower(trim($documento)),
+    ]);
 }
 
 function detectarDelimitadorCsv(string $linha): string
@@ -275,7 +286,7 @@ function lerCsvExtrato(string $arquivo): array
             'documento' => normalizarTextoExtrato(buscarCampoExtrato($linha, ['documento', 'doc', 'numero_documento', 'numdoc', 'identificador'])),
             'valor' => normalizarDecimalExtrato(buscarCampoExtrato($linha, ['valor', 'valor_movimento', 'valormov', 'amount'])),
             'tipo' => strtoupper(substr(normalizarTextoExtrato(buscarCampoExtrato($linha, ['tipo', 'd_c', 'dc', 'debito_credito', 'entrada_saida'])), 0, 1)),
-            'identificador' => normalizarTextoExtrato(buscarCampoExtrato($linha, ['id', 'identificador', 'nsu', 'fitid', 'codigo_transacao'])),
+            'identificador' => normalizarTextoExtrato(buscarCampoExtrato($linha, ['id', 'identificador', 'nsu', 'fitid', 'codigo_da_transacao', 'codigo_transacao', 'codigo'])),
         ];
     }
 
@@ -454,6 +465,8 @@ function importarLinhasExtratoBanco(PDO $pdo, int $empresaId, int $usuarioId, in
     $importacaoId = (int)$pdo->lastInsertId();
 
     $registrosImportacao = [];
+    $identificadoresConsulta = [];
+    $datasImportacao = [];
     foreach ($linhas as $linha) {
         if (empty($linha['data_movimento']) || (float)$linha['valor'] == 0.0) {
             continue;
@@ -465,6 +478,9 @@ function importarLinhasExtratoBanco(PDO $pdo, int $empresaId, int $usuarioId, in
             : (((float)$linha['valor'] >= 0) ? 'C' : 'D');
         $historicoLinha = (string)$linha['historico'];
         $documentoLinha = (string)$linha['documento'];
+        $chaveNatural = gerarChaveNaturalExtrato((string)$linha['data_movimento'], $valor, $tipo, $historicoLinha, $documentoLinha);
+        $datasImportacao[date('Y-m-d', strtotime((string)$linha['data_movimento']))] = true;
+        $identificadorOriginal = (string)$linha['identificador'];
         $identificador = gerarIdentificadorExtrato(
             $empresaId,
             $cbcontador,
@@ -473,24 +489,43 @@ function importarLinhasExtratoBanco(PDO $pdo, int $empresaId, int $usuarioId, in
             $tipo,
             $historicoLinha,
             $documentoLinha,
-            (string)$linha['identificador']
+            $identificadorOriginal
         );
+        $identificadoresLinha = [$identificador];
+        if ($identificadorOriginal !== '') {
+            $identificadoresLinha[] = gerarIdentificadorExtrato(
+                $empresaId,
+                $cbcontador,
+                (string)$linha['data_movimento'],
+                $valor,
+                $tipo,
+                $historicoLinha,
+                $documentoLinha
+            );
+        }
 
         $registrosImportacao[$identificador] = [
-            $empresaId,
-            $cbcontador,
-            $importacaoId,
-            $linha['data_movimento'],
-            mb_substr($historicoLinha, 0, 500),
-            mb_substr($documentoLinha, 0, 120),
-            $tipo,
-            $valor,
-            $identificador,
+            'dados' => [
+                $empresaId,
+                $cbcontador,
+                $importacaoId,
+                $linha['data_movimento'],
+                mb_substr($historicoLinha, 0, 500),
+                mb_substr($documentoLinha, 0, 120),
+                $tipo,
+                $valor,
+                $identificador,
+            ],
+            'identificadores' => $identificadoresLinha,
+            'chave_natural' => $chaveNatural,
         ];
+        foreach ($identificadoresLinha as $identificadorConsulta) {
+            $identificadoresConsulta[$identificadorConsulta] = true;
+        }
     }
 
     $identificadoresExistentes = [];
-    foreach (array_chunk(array_keys($registrosImportacao), 500) as $loteIdentificadores) {
+    foreach (array_chunk(array_keys($identificadoresConsulta), 500) as $loteIdentificadores) {
         if (empty($loteIdentificadores)) {
             continue;
         }
@@ -510,10 +545,44 @@ function importarLinhasExtratoBanco(PDO $pdo, int $empresaId, int $usuarioId, in
         }
     }
 
+    $chavesNaturaisExistentes = [];
+    if (!empty($datasImportacao)) {
+        $datas = array_keys($datasImportacao);
+        sort($datas);
+        $dataInicial = $datas[0] . ' 00:00:00';
+        $dataFinal = end($datas) . ' 23:59:59';
+        $stmtNaturais = $pdo->prepare("
+            SELECT data_movimento, tipo, valor, historico, documento
+            FROM financeiro_extrato_bancario
+            WHERE empresa_id = ?
+              AND cbcontador = ?
+              AND data_movimento BETWEEN ? AND ?
+        ");
+        $stmtNaturais->execute([$empresaId, $cbcontador, $dataInicial, $dataFinal]);
+
+        foreach ($stmtNaturais->fetchAll(PDO::FETCH_ASSOC) as $registroExistente) {
+            $chavesNaturaisExistentes[gerarChaveNaturalExtrato(
+                (string)$registroExistente['data_movimento'],
+                (float)$registroExistente['valor'],
+                (string)$registroExistente['tipo'],
+                (string)$registroExistente['historico'],
+                (string)$registroExistente['documento']
+            )] = true;
+        }
+    }
+
     $registrosNovos = [];
     foreach ($registrosImportacao as $identificador => $registroImportacao) {
-        if (!isset($identificadoresExistentes[$identificador])) {
-            $registrosNovos[] = $registroImportacao;
+        $existe = false;
+        foreach ($registroImportacao['identificadores'] as $identificadorConsulta) {
+            if (isset($identificadoresExistentes[$identificadorConsulta])) {
+                $existe = true;
+                break;
+            }
+        }
+
+        if (!$existe && !isset($chavesNaturaisExistentes[$registroImportacao['chave_natural']])) {
+            $registrosNovos[] = $registroImportacao['dados'];
         }
     }
 
@@ -1068,6 +1137,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['acao'] ?? '') === 'importa
                 $importacaoId = (int)$pdo_master->lastInsertId();
 
                 $registrosImportacao = [];
+                $identificadoresConsulta = [];
+                $datasImportacao = [];
                 foreach ($linhas as $linha) {
                     if (empty($linha['data_movimento']) || (float)$linha['valor'] == 0.0) {
                         continue;
@@ -1079,6 +1150,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['acao'] ?? '') === 'importa
                         : (((float)$linha['valor'] >= 0) ? 'C' : 'D');
                     $historicoLinha = (string)$linha['historico'];
                     $documentoLinha = (string)$linha['documento'];
+                    $chaveNatural = gerarChaveNaturalExtrato((string)$linha['data_movimento'], $valor, $tipo, $historicoLinha, $documentoLinha);
+                    $datasImportacao[date('Y-m-d', strtotime((string)$linha['data_movimento']))] = true;
+                    $identificadorOriginal = (string)$linha['identificador'];
                     $identificador = gerarIdentificadorExtrato(
                         $empresaId,
                         $cbcontadorPost,
@@ -1087,24 +1161,43 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['acao'] ?? '') === 'importa
                         $tipo,
                         $historicoLinha,
                         $documentoLinha,
-                        (string)$linha['identificador']
+                        $identificadorOriginal
                     );
+                    $identificadoresLinha = [$identificador];
+                    if ($identificadorOriginal !== '') {
+                        $identificadoresLinha[] = gerarIdentificadorExtrato(
+                            $empresaId,
+                            $cbcontadorPost,
+                            (string)$linha['data_movimento'],
+                            $valor,
+                            $tipo,
+                            $historicoLinha,
+                            $documentoLinha
+                        );
+                    }
 
                     $registrosImportacao[$identificador] = [
-                        $empresaId,
-                        $cbcontadorPost,
-                        $importacaoId,
-                        $linha['data_movimento'],
-                        mb_substr($historicoLinha, 0, 500),
-                        mb_substr($documentoLinha, 0, 120),
-                        $tipo,
-                        $valor,
-                        $identificador,
+                        'dados' => [
+                            $empresaId,
+                            $cbcontadorPost,
+                            $importacaoId,
+                            $linha['data_movimento'],
+                            mb_substr($historicoLinha, 0, 500),
+                            mb_substr($documentoLinha, 0, 120),
+                            $tipo,
+                            $valor,
+                            $identificador,
+                        ],
+                        'identificadores' => $identificadoresLinha,
+                        'chave_natural' => $chaveNatural,
                     ];
+                    foreach ($identificadoresLinha as $identificadorConsulta) {
+                        $identificadoresConsulta[$identificadorConsulta] = true;
+                    }
                 }
 
                 $identificadoresExistentes = [];
-                foreach (array_chunk(array_keys($registrosImportacao), 500) as $loteIdentificadores) {
+                foreach (array_chunk(array_keys($identificadoresConsulta), 500) as $loteIdentificadores) {
                     if (empty($loteIdentificadores)) {
                         continue;
                     }
@@ -1124,10 +1217,44 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['acao'] ?? '') === 'importa
                     }
                 }
 
+                $chavesNaturaisExistentes = [];
+                if (!empty($datasImportacao)) {
+                    $datas = array_keys($datasImportacao);
+                    sort($datas);
+                    $dataInicial = $datas[0] . ' 00:00:00';
+                    $dataFinal = end($datas) . ' 23:59:59';
+                    $stmtNaturais = $pdo_master->prepare("
+                        SELECT data_movimento, tipo, valor, historico, documento
+                        FROM financeiro_extrato_bancario
+                        WHERE empresa_id = ?
+                          AND cbcontador = ?
+                          AND data_movimento BETWEEN ? AND ?
+                    ");
+                    $stmtNaturais->execute([$empresaId, $cbcontadorPost, $dataInicial, $dataFinal]);
+
+                    foreach ($stmtNaturais->fetchAll(PDO::FETCH_ASSOC) as $registroExistente) {
+                        $chavesNaturaisExistentes[gerarChaveNaturalExtrato(
+                            (string)$registroExistente['data_movimento'],
+                            (float)$registroExistente['valor'],
+                            (string)$registroExistente['tipo'],
+                            (string)$registroExistente['historico'],
+                            (string)$registroExistente['documento']
+                        )] = true;
+                    }
+                }
+
                 $registrosNovos = [];
                 foreach ($registrosImportacao as $identificador => $registroImportacao) {
-                    if (!isset($identificadoresExistentes[$identificador])) {
-                        $registrosNovos[] = $registroImportacao;
+                    $existe = false;
+                    foreach ($registroImportacao['identificadores'] as $identificadorConsulta) {
+                        if (isset($identificadoresExistentes[$identificadorConsulta])) {
+                            $existe = true;
+                            break;
+                        }
+                    }
+
+                    if (!$existe && !isset($chavesNaturaisExistentes[$registroImportacao['chave_natural']])) {
+                        $registrosNovos[] = $registroImportacao['dados'];
                     }
                 }
 
