@@ -204,6 +204,22 @@ function gerarIdentificadorExtrato(int $empresaId, int $cbcontador, string $data
     return sha1($base);
 }
 
+function gerarIdentificadorLinhaExtrato(int $empresaId, int $cbcontador, string $data, float $valor, string $tipo, string $historico, string $documento, string $identificadorOriginal = ''): string
+{
+    if ($identificadorOriginal !== '') {
+        return sha1(implode('|', [
+            $identificadorOriginal,
+            date('Y-m-d H:i:s', strtotime($data)),
+            $tipo,
+            number_format($valor, 4, '.', ''),
+            mb_strtolower(trim($historico)),
+            mb_strtolower(trim($documento)),
+        ]));
+    }
+
+    return gerarIdentificadorExtrato($empresaId, $cbcontador, $data, $valor, $tipo, $historico, $documento);
+}
+
 function gerarChaveNaturalExtrato(string $data, float $valor, string $tipo, string $historico, string $documento): string
 {
     return implode('|', [
@@ -280,12 +296,19 @@ function lerCsvExtrato(string $arquivo): array
             $linha[$cabecalho] = $dados[$idx] ?? '';
         }
 
+        $tipoTexto = normalizarTextoExtrato(buscarCampoExtrato($linha, ['tipo', 'd_c', 'dc', 'debito_credito', 'entrada_saida']));
+        $descricaoTexto = normalizarTextoExtrato(buscarCampoExtrato($linha, ['historico', 'descricao', 'descricao_lancamento', 'memo', 'titulo']));
+        $historicoTexto = $descricaoTexto;
+        if ($tipoTexto !== '' && !in_array(strtoupper(substr($tipoTexto, 0, 1)), ['C', 'D'], true)) {
+            $historicoTexto = trim($tipoTexto . ($descricaoTexto !== '' ? ' - ' . $descricaoTexto : ''));
+        }
+
         $linhas[] = [
             'data_movimento' => normalizarDataExtrato(buscarCampoExtrato($linha, ['data', 'data_movimento', 'dtmov', 'lancamento', 'data_lancamento'])),
-            'historico' => normalizarTextoExtrato(buscarCampoExtrato($linha, ['historico', 'descricao', 'descricao_lancamento', 'memo', 'titulo'])),
+            'historico' => $historicoTexto,
             'documento' => normalizarTextoExtrato(buscarCampoExtrato($linha, ['documento', 'doc', 'numero_documento', 'numdoc', 'identificador'])),
             'valor' => normalizarDecimalExtrato(buscarCampoExtrato($linha, ['valor', 'valor_movimento', 'valormov', 'amount'])),
-            'tipo' => strtoupper(substr(normalizarTextoExtrato(buscarCampoExtrato($linha, ['tipo', 'd_c', 'dc', 'debito_credito', 'entrada_saida'])), 0, 1)),
+            'tipo' => strtoupper(substr($tipoTexto, 0, 1)),
             'identificador' => normalizarTextoExtrato(buscarCampoExtrato($linha, ['id', 'identificador', 'nsu', 'fitid', 'codigo_da_transacao', 'codigo_transacao', 'codigo'])),
         ];
     }
@@ -481,7 +504,7 @@ function importarLinhasExtratoBanco(PDO $pdo, int $empresaId, int $usuarioId, in
         $chaveNatural = gerarChaveNaturalExtrato((string)$linha['data_movimento'], $valor, $tipo, $historicoLinha, $documentoLinha);
         $datasImportacao[date('Y-m-d', strtotime((string)$linha['data_movimento']))] = true;
         $identificadorOriginal = (string)$linha['identificador'];
-        $identificador = gerarIdentificadorExtrato(
+        $identificador = gerarIdentificadorLinhaExtrato(
             $empresaId,
             $cbcontador,
             (string)$linha['data_movimento'],
@@ -1153,7 +1176,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['acao'] ?? '') === 'importa
                     $chaveNatural = gerarChaveNaturalExtrato((string)$linha['data_movimento'], $valor, $tipo, $historicoLinha, $documentoLinha);
                     $datasImportacao[date('Y-m-d', strtotime((string)$linha['data_movimento']))] = true;
                     $identificadorOriginal = (string)$linha['identificador'];
-                    $identificador = gerarIdentificadorExtrato(
+                    $identificador = gerarIdentificadorLinhaExtrato(
                         $empresaId,
                         $cbcontadorPost,
                         (string)$linha['data_movimento'],
