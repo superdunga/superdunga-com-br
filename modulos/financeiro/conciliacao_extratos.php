@@ -541,6 +541,7 @@ function importarLinhasExtratoBanco(PDO $pdo, int $empresaId, int $usuarioId, in
             ],
             'identificadores' => $identificadoresLinha,
             'chave_natural' => $chaveNatural,
+            'tem_identificador_externo' => $identificadorOriginal !== '',
         ];
         foreach ($identificadoresLinha as $identificadorConsulta) {
             $identificadoresConsulta[$identificadorConsulta] = true;
@@ -604,7 +605,10 @@ function importarLinhasExtratoBanco(PDO $pdo, int $empresaId, int $usuarioId, in
             }
         }
 
-        if (!$existe && !isset($chavesNaturaisExistentes[$registroImportacao['chave_natural']])) {
+        $existePorChaveNatural = !$registroImportacao['tem_identificador_externo']
+            && isset($chavesNaturaisExistentes[$registroImportacao['chave_natural']]);
+
+        if (!$existe && !$existePorChaveNatural) {
             $registrosNovos[] = $registroImportacao['dados'];
         }
     }
@@ -1213,6 +1217,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['acao'] ?? '') === 'importa
                         ],
                         'identificadores' => $identificadoresLinha,
                         'chave_natural' => $chaveNatural,
+                        'tem_identificador_externo' => $identificadorOriginal !== '',
                     ];
                     foreach ($identificadoresLinha as $identificadorConsulta) {
                         $identificadoresConsulta[$identificadorConsulta] = true;
@@ -1276,7 +1281,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['acao'] ?? '') === 'importa
                         }
                     }
 
-                    if (!$existe && !isset($chavesNaturaisExistentes[$registroImportacao['chave_natural']])) {
+                    $existePorChaveNatural = !$registroImportacao['tem_identificador_externo']
+                        && isset($chavesNaturaisExistentes[$registroImportacao['chave_natural']]);
+
+                    if (!$existe && !$existePorChaveNatural) {
                         $registrosNovos[] = $registroImportacao['dados'];
                     }
                 }
