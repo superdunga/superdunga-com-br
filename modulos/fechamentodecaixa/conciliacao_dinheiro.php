@@ -4,6 +4,7 @@ require '../../config/conexao.php';
 
 $empresa_id = (int)$_SESSION['empresa_id'];
 $usuario_id = (int)($_SESSION['usuario_id'] ?? 0);
+$isMaster = (($_SESSION['nivel'] ?? '') === 'MASTER');
 
 function garantirTabelaCaixasFinalizados(PDO $pdo): void
 {
@@ -27,6 +28,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $acao = $_POST['acao'] ?? '';
     $dataPost = $_POST['data_operacional'] ?? '';
     $caixaPost = (int)($_POST['cbcontador'] ?? 0);
+
+    if (in_array($acao, ['finalizar_caixa', 'reabrir_caixa'], true) && !$isMaster) {
+        http_response_code(403);
+        exit('Acesso negado.');
+    }
 
     if ($dataPost !== '' && $caixaPost > 0) {
         if ($acao === 'finalizar_caixa') {
@@ -271,7 +277,7 @@ require '../../layout/header.php';
                                         Ver
                                     </a>
 
-                                    <?php if ($finalizado): ?>
+                                    <?php if ($isMaster && $finalizado): ?>
                                         <form method="POST" class="d-inline">
                                             <input type="hidden" name="acao" value="reabrir_caixa">
                                             <input type="hidden" name="mes" value="<?= htmlspecialchars($mes) ?>">
@@ -280,7 +286,7 @@ require '../../layout/header.php';
                                             <input type="hidden" name="cbcontador" value="<?= (int)$r['CBCONTADOR'] ?>">
                                             <button class="btn btn-sm btn-outline-secondary" onclick="return confirm('Reabrir este caixa?')">Reabrir</button>
                                         </form>
-                                    <?php elseif ($dataOp !== $hoje): ?>
+                                    <?php elseif ($isMaster && $dataOp !== $hoje): ?>
                                         <form method="POST" class="d-inline">
                                             <input type="hidden" name="acao" value="finalizar_caixa">
                                             <input type="hidden" name="mes" value="<?= htmlspecialchars($mes) ?>">
