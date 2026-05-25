@@ -50,13 +50,36 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
     }
 
-    header('Location: conciliacao_dinheiro.php?mes=' . urlencode($_POST['mes'] ?? date('Y-m')));
+    $queryRedirect = http_build_query([
+        'mes' => $_POST['mes'] ?? date('Y-m'),
+        'finalizado' => $_POST['finalizado'] ?? 'todos',
+    ]);
+    header('Location: conciliacao_dinheiro.php?' . $queryRedirect);
     exit;
 }
 
 $mes = $_GET['mes'] ?? date('Y-m');
+if (!preg_match('/^\d{4}-\d{2}$/', $mes)) {
+    $mes = date('Y-m');
+}
+
+$filtroFinalizado = $_GET['finalizado'] ?? 'todos';
+if (!in_array($filtroFinalizado, ['todos', 'finalizado', 'nao_finalizado'], true)) {
+    $filtroFinalizado = 'todos';
+}
+
 $inicio = $mes . '-01 07:00:00';
-$fim = date('Y-m-d H:i:s');
+$fim = date('Y-m-d 03:00:00', strtotime($mes . '-01 +1 month'));
+if ($mes === date('Y-m')) {
+    $fim = date('Y-m-d H:i:s');
+}
+
+$whereFinalizado = '';
+if ($filtroFinalizado === 'finalizado') {
+    $whereFinalizado = ' AND f.id IS NOT NULL';
+} elseif ($filtroFinalizado === 'nao_finalizado') {
+    $whereFinalizado = ' AND f.id IS NULL';
+}
 
 $sql = "
 SELECT
@@ -84,6 +107,7 @@ LEFT JOIN fechamento_caixas_finalizados f
 WHERE b.DTLANC BETWEEN ? AND ?
   AND b.EMPRESA = ?
   AND COALESCE(b.deletado, 'N') <> 'S'
+  $whereFinalizado
 GROUP BY
     DATE(DATE_SUB(b.DTLANC, INTERVAL 7 HOUR)),
     b.CBCONTADOR,
@@ -161,12 +185,17 @@ require '../../layout/header.php';
     <div class="card-header d-flex justify-content-between align-items-center">
         <h5 class="mb-0">Conciliacao de Dinheiro (Caixas validos)</h5>
 
-        <div class="d-flex gap-2">
+        <div class="d-flex gap-2 flex-wrap">
             <a href="menu_fechamento.php" class="btn btn-secondary">Voltar</a>
             <a href="resumo_prazo.php?mes=<?= urlencode($mes) ?>" class="btn btn-outline-primary">Resumo a Prazo</a>
 
-            <form method="GET" class="d-flex">
+            <form method="GET" class="d-flex gap-2">
                 <input type="month" name="mes" value="<?= htmlspecialchars($mes) ?>" class="form-control me-2">
+                <select name="finalizado" class="form-select">
+                    <option value="todos" <?= $filtroFinalizado === 'todos' ? 'selected' : '' ?>>Todos</option>
+                    <option value="nao_finalizado" <?= $filtroFinalizado === 'nao_finalizado' ? 'selected' : '' ?>>Nao finalizados</option>
+                    <option value="finalizado" <?= $filtroFinalizado === 'finalizado' ? 'selected' : '' ?>>Finalizados</option>
+                </select>
                 <button class="btn btn-primary">Filtrar</button>
             </form>
         </div>
@@ -246,6 +275,7 @@ require '../../layout/header.php';
                                         <form method="POST" class="d-inline">
                                             <input type="hidden" name="acao" value="reabrir_caixa">
                                             <input type="hidden" name="mes" value="<?= htmlspecialchars($mes) ?>">
+                                            <input type="hidden" name="finalizado" value="<?= htmlspecialchars($filtroFinalizado) ?>">
                                             <input type="hidden" name="data_operacional" value="<?= htmlspecialchars($dataOp) ?>">
                                             <input type="hidden" name="cbcontador" value="<?= (int)$r['CBCONTADOR'] ?>">
                                             <button class="btn btn-sm btn-outline-secondary" onclick="return confirm('Reabrir este caixa?')">Reabrir</button>
@@ -254,6 +284,7 @@ require '../../layout/header.php';
                                         <form method="POST" class="d-inline">
                                             <input type="hidden" name="acao" value="finalizar_caixa">
                                             <input type="hidden" name="mes" value="<?= htmlspecialchars($mes) ?>">
+                                            <input type="hidden" name="finalizado" value="<?= htmlspecialchars($filtroFinalizado) ?>">
                                             <input type="hidden" name="data_operacional" value="<?= htmlspecialchars($dataOp) ?>">
                                             <input type="hidden" name="cbcontador" value="<?= (int)$r['CBCONTADOR'] ?>">
                                             <button class="btn btn-sm btn-success" onclick="return confirm('Marcar este caixa como finalizado?')">Finalizar</button>
