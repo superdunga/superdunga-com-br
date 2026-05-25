@@ -29,9 +29,36 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $dataPost = $_POST['data_operacional'] ?? '';
     $caixaPost = (int)($_POST['cbcontador'] ?? 0);
 
-    if (in_array($acao, ['finalizar_caixa', 'reabrir_caixa'], true) && !$isMaster) {
+    if (in_array($acao, ['finalizar_caixa', 'reabrir_caixa', 'finalizar_marcados'], true) && !$isMaster) {
         http_response_code(403);
         exit('Acesso negado.');
+    }
+
+    if ($acao === 'finalizar_marcados') {
+        $marcados = $_POST['caixas'] ?? [];
+        if (!is_array($marcados)) {
+            $marcados = [];
+        }
+
+        $stmtFinalizarMarcado = $pdo_master->prepare("
+            INSERT INTO fechamento_caixas_finalizados
+                (empresa_id, data_operacional, cbcontador, usuario_id, finalizado_em)
+            VALUES (?, ?, ?, ?, NOW())
+            ON DUPLICATE KEY UPDATE
+                usuario_id = VALUES(usuario_id),
+                finalizado_em = NOW()
+        ");
+
+        foreach ($marcados as $marcado) {
+            [$dataMarcada, $caixaMarcado] = array_pad(explode('|', (string)$marcado, 2), 2, '');
+            $caixaMarcado = (int)$caixaMarcado;
+
+            if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $dataMarcada) || $caixaMarcado <= 0 || $dataMarcada === date('Y-m-d')) {
+                continue;
+            }
+
+            $stmtFinalizarMarcado->execute([$empresa_id, $dataMarcada, $caixaMarcado, $usuario_id ?: null]);
+        }
     }
 
     if ($dataPost !== '' && $caixaPost > 0) {
@@ -208,9 +235,24 @@ require '../../layout/header.php';
     </div>
 
     <div class="card-body table-responsive">
+        <?php if ($isMaster && count($resultados) > 0): ?>
+            <form method="POST" id="form-finalizar-marcados" class="d-flex gap-2 align-items-center mb-3">
+                <input type="hidden" name="acao" value="finalizar_marcados">
+                <input type="hidden" name="mes" value="<?= htmlspecialchars($mes) ?>">
+                <input type="hidden" name="finalizado" value="<?= htmlspecialchars($filtroFinalizado) ?>">
+                <button class="btn btn-success btn-sm" onclick="return confirm('Finalizar todos os caixas marcados?')">Finalizar marcados</button>
+                <span class="text-muted small">Marque os caixas desejados na tabela.</span>
+            </form>
+        <?php endif; ?>
+
         <table class="table table-sm table-bordered text-center align-middle">
             <thead class="table-dark">
                 <tr>
+                    <?php if ($isMaster): ?>
+                        <th style="width: 42px;">
+                            <input type="checkbox" id="marcar-todos-caixas" title="Marcar todos">
+                        </th>
+                    <?php endif; ?>
                     <th>Data</th>
                     <th>Caixa</th>
                     <th>Dif. Dinheiro</th>
@@ -224,7 +266,7 @@ require '../../layout/header.php';
             <tbody>
                 <?php if (count($resultados) === 0): ?>
                     <tr>
-                        <td colspan="8" class="text-muted">Nenhum registro encontrado</td>
+                        <td colspan="<?= $isMaster ? 9 : 8 ?>" class="text-muted">Nenhum registro encontrado</td>
                     </tr>
                 <?php else: ?>
                     <?php foreach ($resultados as $r): ?>
@@ -253,6 +295,19 @@ require '../../layout/header.php';
                             }
                         ?>
                         <tr>
+                            <?php if ($isMaster): ?>
+                                <td>
+                                    <?php if (!$finalizado && $dataOp !== $hoje): ?>
+                                        <input
+                                            type="checkbox"
+                                            class="form-check-input caixa-finalizar-check"
+                                            name="caixas[]"
+                                            value="<?= htmlspecialchars($dataOp . '|' . (string)$r['CBCONTADOR']) ?>"
+                                            form="form-finalizar-marcados"
+                                        >
+                                    <?php endif; ?>
+                                </td>
+                            <?php endif; ?>
                             <td><?= date('d/m/Y', strtotime($dataOp)) ?></td>
                             <td><?= htmlspecialchars((string)$r['CBCONTADOR']) ?></td>
                             <td class="fw-bold text-<?= $classe ?>">
@@ -323,5 +378,20 @@ require '../../layout/header.php';
         <?php endif; ?>
     </div>
 </div>
+
+<script>
+document.addEventListener('DOMContentLoaded', function () {
+    var marcarTodos = document.getElementById('marcar-todos-caixas');
+    if (!marcarTodos) {
+        return;
+    }
+
+    marcarTodos.addEventListener('change', function () {
+        document.querySelectorAll('.caixa-finalizar-check').forEach(function (checkbox) {
+            checkbox.checked = marcarTodos.checked;
+        });
+    });
+});
+</script>
 
 <?php require '../../layout/footer.php'; ?>
