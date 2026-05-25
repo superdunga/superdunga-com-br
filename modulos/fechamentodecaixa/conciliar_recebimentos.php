@@ -577,6 +577,7 @@ function renderizarItensVendaRecebimentos(array $itens): void
                 <tr class="table-light">
                     <th colspan="4">Recebível</th>
                     <th colspan="4">CR001</th>
+                    <th rowspan="2">Ação</th>
                 </tr>
                 <tr>
                     <th>ID</th>
@@ -729,7 +730,7 @@ function renderizarItensVendaRecebimentos(array $itens): void
             <tbody>
                 <?php if (empty($matchAproximado)): ?>
                     <tr>
-                        <td colspan="8" class="text-center text-muted">Nenhum match aproximado nesta data.</td>
+                        <td colspan="9" class="text-center text-muted">Nenhum match aproximado nesta data.</td>
                     </tr>
                 <?php else: ?>
                     <?php foreach ($matchAproximado as $m): ?>
@@ -742,6 +743,11 @@ function renderizarItensVendaRecebimentos(array $itens): void
                             <td><?= !empty($m['DTLANC']) ? date('d/m/Y H:i', strtotime($m['DTLANC'])) : '-' ?></td>
                             <td>R$ <?= number_format((float)$m['VLRPARCELA'], 2, ',', '.') ?></td>
                             <td><?= $m['CM_CR'] ?></td>
+                            <td>
+                                <a href="conciliar_manual.php?rec=<?= $m['rec_id'] ?>&data=<?= urlencode($data) ?>" class="btn btn-sm btn-primary">
+                                    Escolher
+                                </a>
+                            </td>
                         </tr>
                     <?php endforeach; ?>
                 <?php endif; ?>

@@ -3,9 +3,23 @@ require '../../config/auth.php';
 require '../../config/conexao.php';
 require '../../layout/header.php';
 
+$empresa_id = (int)$_SESSION['empresa_id'];
 $mes = $_GET['mes'] ?? date('Y-m');
 $inicio = $mes . '-01 07:00:00';
 $fim = date('Y-m-d H:i:s');
+
+$pdo_master->exec("
+    CREATE TABLE IF NOT EXISTS fechamento_caixas_finalizados (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        empresa_id INT NOT NULL,
+        data_operacional DATE NOT NULL,
+        cbcontador INT NOT NULL,
+        usuario_id INT NULL,
+        finalizado_em DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE KEY uniq_caixa_finalizado (empresa_id, data_operacional, cbcontador),
+        INDEX idx_caixa_finalizado_data (empresa_id, data_operacional)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+");
 
 $stmt = $pdo_master->prepare("
     SELECT *
@@ -25,16 +39,23 @@ $stmt = $pdo_master->prepare("
             SELECT DISTINCT CODCX
             FROM armazem_zconfig005
             WHERE CODCX IS NOT NULL
+              AND EMPRESA = ?
         ) z ON z.CODCX = b.CBCONTADOR
+        LEFT JOIN fechamento_caixas_finalizados f
+            ON f.empresa_id = b.EMPRESA
+           AND f.data_operacional = DATE(DATE_SUB(b.DTLANC, INTERVAL 7 HOUR))
+           AND f.cbcontador = b.CBCONTADOR
         WHERE b.DTLANC BETWEEN ? AND ?
+          AND b.EMPRESA = ?
           AND COALESCE(b.deletado, 'N') <> 'S'
+          AND f.id IS NULL
         GROUP BY DATE(DATE_SUB(b.DTLANC, INTERVAL 7 HOUR)), b.CBCONTADOR
     ) x
     WHERE x.data_operacional <> CURDATE()
-      AND ABS(x.saldo_final) >= 0.01
+      AND ABS(x.saldo_final) > 0.01
     ORDER BY x.data_operacional DESC, x.CBCONTADOR
 ");
-$stmt->execute([$inicio, $fim]);
+$stmt->execute([$empresa_id, $inicio, $fim, $empresa_id]);
 $resultados = $stmt->fetchAll(PDO::FETCH_ASSOC);
 ?>
 

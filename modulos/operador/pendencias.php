@@ -105,6 +105,19 @@ function contarDinheiroDivergente(PDO $pdo, string $mes, int $empresaId): array
     $inicio = $mes . '-01 07:00:00';
     $fim = date('Y-m-d H:i:s');
 
+    $pdo->exec("
+        CREATE TABLE IF NOT EXISTS fechamento_caixas_finalizados (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            empresa_id INT NOT NULL,
+            data_operacional DATE NOT NULL,
+            cbcontador INT NOT NULL,
+            usuario_id INT NULL,
+            finalizado_em DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE KEY uniq_caixa_finalizado (empresa_id, data_operacional, cbcontador),
+            INDEX idx_caixa_finalizado_data (empresa_id, data_operacional)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    ");
+
     $stmt = $pdo->prepare("
         SELECT COUNT(*) AS qtd, COALESCE(SUM(ABS(x.saldo_final)), 0) AS total
         FROM (
@@ -125,13 +138,18 @@ function contarDinheiroDivergente(PDO $pdo, string $mes, int $empresaId): array
                 WHERE CODCX IS NOT NULL
                   AND EMPRESA = ?
             ) z ON z.CODCX = b.CBCONTADOR
+            LEFT JOIN fechamento_caixas_finalizados f
+                ON f.empresa_id = b.EMPRESA
+               AND f.data_operacional = DATE(DATE_SUB(b.DTLANC, INTERVAL 7 HOUR))
+               AND f.cbcontador = b.CBCONTADOR
             WHERE b.DTLANC BETWEEN ? AND ?
               AND b.EMPRESA = ?
               AND COALESCE(b.deletado, 'N') <> 'S'
+              AND f.id IS NULL
             GROUP BY DATE(DATE_SUB(b.DTLANC, INTERVAL 7 HOUR)), b.CBCONTADOR
         ) x
         WHERE x.data_operacional <> CURDATE()
-          AND ABS(x.saldo_final) >= 0.01
+          AND ABS(x.saldo_final) > 0.01
     ");
     $stmt->execute([$empresaId, $inicio, $fim, $empresaId]);
     $row = $stmt->fetch(PDO::FETCH_ASSOC) ?: ['qtd' => 0, 'total' => 0];

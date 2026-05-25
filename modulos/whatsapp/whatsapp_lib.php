@@ -307,6 +307,12 @@ function whatsappGeradoresSistema(): array
             'arquivo' => 'modulos/whatsapp/whatsapp_lib.php',
             'funcao' => 'whatsappMensagemApresentacaoCaixa',
         ],
+        'conferencia_caixa_detalhada' => [
+            'nome' => 'Conferencia detalhada do caixa',
+            'descricao' => 'Mostra dinheiro informado, diferenca do dinheiro, recebiveis pendentes e diferenca final do caixa.',
+            'arquivo' => 'modulos/whatsapp/whatsapp_lib.php',
+            'funcao' => 'whatsappMensagemConferenciaCaixaDetalhada',
+        ],
         'apresentacao_caixa_1' => [
             'nome' => 'Apresentacao do Caixa',
             'descricao' => 'Mostra a diferenca do dinheiro de todos os operadores do dia, das 07:00 ate 03:00.',
@@ -566,6 +572,10 @@ function whatsappMensagemRotina(PDO $pdo, array $rotina): array
 
         if ($gerador === 'apresentacao_caixa' || $gerador === 'apresentacao_caixa_1') {
             return [whatsappMensagemApresentacaoCaixa($pdo, null, $empresaId), null];
+        }
+
+        if ($gerador === 'conferencia_caixa_detalhada') {
+            return [whatsappMensagemConferenciaCaixaDetalhada($pdo, null, $empresaId), null];
         }
 
         throw new Exception('Gerador de mensagem do sistema nao encontrado.');
@@ -989,6 +999,189 @@ function whatsappMensagemApresentacaoCaixa(PDO $pdo, ?DateTime $base = null, int
 function whatsappMensagemApresentacaoCaixa1(PDO $pdo, ?DateTime $base = null, int $empresaId = 1): string
 {
     return whatsappMensagemApresentacaoCaixa($pdo, $base, $empresaId);
+}
+
+function whatsappMensagemConferenciaCaixaDetalhada(PDO $pdo, ?DateTime $base = null, int $empresaId = 1): string
+{
+    date_default_timezone_set('America/Sao_Paulo');
+
+    $pdo->exec("
+        CREATE TABLE IF NOT EXISTS fechamento_caixas_finalizados (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            empresa_id INT NOT NULL,
+            data_operacional DATE NOT NULL,
+            cbcontador INT NOT NULL,
+            usuario_id INT NULL,
+            finalizado_em DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE KEY uniq_caixa_finalizado (empresa_id, data_operacional, cbcontador),
+            INDEX idx_caixa_finalizado_data (empresa_id, data_operacional)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    ");
+
+    $base = $base ?: new DateTime('now');
+    if ((int)$base->format('H') < 7) {
+        $base = (clone $base)->modify('-1 day');
+    }
+
+    $data = $base->format('Y-m-d');
+    $inicio = $data . ' 07:00:00';
+    $fim = date('Y-m-d 03:00:00', strtotime($data . ' +1 day'));
+
+    $stmt = $pdo->prepare("
+        SELECT
+            b.CBCONTADOR,
+            COALESCE(NULLIF(z.NOMEUSER, ''), CONCAT('Caixa ', b.CBCONTADOR)) AS operador,
+            MIN(b.DTLANC) AS primeiro_movimento,
+            SUM(
+                CASE
+                    WHEN b.TIPOMOV = 'C' THEN b.VALORMOV
+                    WHEN b.TIPOMOV = 'D' THEN -b.VALORMOV
+                    ELSE 0
+                END
+            ) AS diferenca_dinheiro,
+            (
+                SELECT bf.VALORMOV
+                FROM armazem_bnc001 bf
+                WHERE bf.EMPRESA = b.EMPRESA
+                  AND bf.CBCONTADOR = b.CBCONTADOR
+                  AND bf.DTLANC BETWEEN ? AND ?
+                  AND COALESCE(bf.deletado, 'N') <> 'S'
+                  AND bf.HISTMOV LIKE 'FECHAMENTO%'
+                ORDER BY bf.DTLANC DESC, bf.MOVCONTADOR DESC
+                LIMIT 1
+            ) AS valor_fechamento
+        FROM armazem_bnc001 b
+        INNER JOIN (
+            SELECT CODCX, MIN(NULLIF(NOMEUSER, '')) AS NOMEUSER
+            FROM armazem_zconfig005
+            WHERE CODCX IS NOT NULL
+              AND EMPRESA = ?
+              AND COALESCE(DESATIVADO, 'N') <> 'S'
+            GROUP BY CODCX
+        ) z ON z.CODCX = b.CBCONTADOR
+        LEFT JOIN fechamento_caixas_finalizados f
+            ON f.empresa_id = b.EMPRESA
+           AND f.data_operacional = ?
+           AND f.cbcontador = b.CBCONTADOR
+        WHERE b.EMPRESA = ?
+          AND b.DTLANC BETWEEN ? AND ?
+          AND COALESCE(b.deletado, 'N') <> 'S'
+          AND f.id IS NULL
+        GROUP BY b.CBCONTADOR, operador
+        ORDER BY primeiro_movimento ASC, b.CBCONTADOR ASC
+    ");
+    $stmt->execute([$inicio, $fim, $empresaId, $data, $empresaId, $inicio, $fim]);
+    $caixas = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+    $stmt = $pdo->prepare("
+        SELECT
+            r.id,
+            r.data_venda,
+            r.valor_bruto,
+            r.CMCONTADOR,
+            COALESCE(NULLIF(r.pagador, ''), r.origem, 'Recebivel') AS pagador
+        FROM armazem_conciliacao_recebimentos r
+        WHERE r.data_venda BETWEEN ? AND ?
+          AND r.empresa_id = ?
+          AND r.CRCONTADOR IS NULL
+          AND NOT EXISTS (
+              SELECT 1
+              FROM armazem_cr001 c
+              WHERE c.recebimento_id = r.id
+                AND c.EMPRESA = ?
+                AND COALESCE(c.STATUS, '') <> 'QT'
+                AND COALESCE(c.excluido_firebird, 'N') = 'N'
+          )
+        ORDER BY r.data_venda ASC, r.id ASC
+    ");
+    $stmt->execute([$inicio, $fim, $empresaId, $empresaId]);
+    $recebiveisPendentes = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+    $stmt = $pdo->prepare("
+        SELECT
+            c.CRCONTADOR,
+            c.NUMDOCORIGEM,
+            c.DTLANC,
+            c.VLRPARCELA,
+            c.CMCONTADOR
+        FROM armazem_cr001 c
+        WHERE c.DTLANC BETWEEN ? AND ?
+          AND c.EMPRESA = ?
+          AND c.CMCONTADOR <> 9
+          AND c.recebimento_id IS NULL
+          AND COALESCE(c.STATUS, '') <> 'QT'
+          AND COALESCE(c.excluido_firebird, 'N') = 'N'
+        ORDER BY c.DTLANC ASC, c.CRCONTADOR ASC
+    ");
+    $stmt->execute([$inicio, $fim, $empresaId]);
+    $crPendentes = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+    $totalDiferencaDinheiro = 0.0;
+    $totalRecebiveisPendentes = 0.0;
+    $totalCrPendentes = 0.0;
+
+    foreach ($caixas as $caixa) {
+        $diferencaCaixa = (float)($caixa['diferenca_dinheiro'] ?? 0);
+        $totalDiferencaDinheiro += abs($diferencaCaixa) <= 0.01 ? 0.0 : $diferencaCaixa;
+    }
+    foreach ($recebiveisPendentes as $recebivel) {
+        $totalRecebiveisPendentes += (float)($recebivel['valor_bruto'] ?? 0);
+    }
+    foreach ($crPendentes as $cr) {
+        $totalCrPendentes += (float)($cr['VLRPARCELA'] ?? 0);
+    }
+
+    $diferencaRecebiveis = $totalRecebiveisPendentes - $totalCrPendentes;
+    $diferencaFinal = $totalDiferencaDinheiro + $diferencaRecebiveis;
+
+    $msg = "*Detalhamento da Conferencia caixa do dia " . $base->format('d/m/Y') . "*\n\n";
+    $msg .= "Caixas pendentes de finalizacao\n\n";
+
+    if (empty($caixas)) {
+        $msg .= "Nenhum caixa pendente encontrado no periodo.\n\n";
+    } else {
+        foreach ($caixas as $caixa) {
+            $diferencaCaixa = (float)($caixa['diferenca_dinheiro'] ?? 0);
+            $diferencaMensagem = abs($diferencaCaixa) <= 0.01 ? 0.0 : $diferencaCaixa;
+            $msg .= "Operador: " . $caixa['operador'] . "\n";
+            $msg .= "Valor em dinheiro informado: R$ " . number_format((float)($caixa['valor_fechamento'] ?? 0), 2, ',', '.') . "\n";
+            $msg .= "Valor da diferenca no dinheiro: R$ " . number_format($diferencaMensagem, 2, ',', '.') . "\n\n";
+        }
+    }
+
+    $msg .= "*Diferencas nos recebiveis*\n";
+    $msg .= "Recebiveis sem CR001: " . count($recebiveisPendentes) . " | R$ " . number_format($totalRecebiveisPendentes, 2, ',', '.') . "\n";
+    if (empty($recebiveisPendentes)) {
+        $msg .= "- Nenhum\n";
+    } else {
+        foreach (array_slice($recebiveisPendentes, 0, 12) as $recebivel) {
+            $msg .= "- #" . (int)$recebivel['id'] . " | " . date('H:i', strtotime($recebivel['data_venda'])) . " | CM " . (int)$recebivel['CMCONTADOR'] . " | R$ " . number_format((float)$recebivel['valor_bruto'], 2, ',', '.') . " | " . trim((string)$recebivel['pagador']) . "\n";
+        }
+        if (count($recebiveisPendentes) > 12) {
+            $msg .= "- ... +" . (count($recebiveisPendentes) - 12) . " registro(s)\n";
+        }
+    }
+
+    $msg .= "\nCR001 sem recebivel: " . count($crPendentes) . " | R$ " . number_format($totalCrPendentes, 2, ',', '.') . "\n";
+    if (empty($crPendentes)) {
+        $msg .= "- Nenhum\n";
+    } else {
+        foreach (array_slice($crPendentes, 0, 12) as $cr) {
+            $doc = !empty($cr['NUMDOCORIGEM']) ? " | Doc " . $cr['NUMDOCORIGEM'] : "";
+            $msg .= "- #" . (int)$cr['CRCONTADOR'] . " | " . date('H:i', strtotime($cr['DTLANC'])) . " | CM " . (int)$cr['CMCONTADOR'] . " | R$ " . number_format((float)$cr['VLRPARCELA'], 2, ',', '.') . $doc . "\n";
+        }
+        if (count($crPendentes) > 12) {
+            $msg .= "- ... +" . (count($crPendentes) - 12) . " registro(s)\n";
+        }
+    }
+
+    $msg .= "\nDiferenca recebiveis: R$ " . number_format($diferencaRecebiveis, 2, ',', '.') . "\n";
+    $msg .= "Diferenca final do caixa: R$ " . number_format($diferencaFinal, 2, ',', '.') . "\n\n";
+    $msg .= empty($caixas) && abs($diferencaFinal) <= 0.01 && empty($recebiveisPendentes) && empty($crPendentes)
+        ? "Todos os caixas do periodo estao finalizados"
+        : "Caixa com pendencias para conferencia/finalizacao";
+
+    return trim($msg);
 }
 
 function whatsappMensagemClientesVencidos(PDO $pdo, ?DateTime $base = null, int $empresaId = 1): string

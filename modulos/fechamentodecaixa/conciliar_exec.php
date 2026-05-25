@@ -60,7 +60,6 @@ try {
     $stmt = $pdo_master->prepare("
         UPDATE armazem_cr001
         SET
-            CMCONTADOR = ?,
             recebimento_id = ?
         WHERE CRCONTADOR = ?
           AND EMPRESA = ?
@@ -69,7 +68,6 @@ try {
           AND COALESCE(STATUS, '') <> 'QT'
     ");
     $stmt->execute([
-        $rec['CMCONTADOR'],
         $rec_id,
         $cr_id,
         $empresa_id
