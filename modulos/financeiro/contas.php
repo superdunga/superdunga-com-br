@@ -21,11 +21,73 @@ function garantirTabelaSaldosContas(PDO $pdo): void
     ");
 }
 
+function garantirTabelasAcertosExtrato(PDO $pdo): void
+{
+    $pdo->exec("
+        CREATE TABLE IF NOT EXISTS financeiro_acertos_extrato (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            empresa_id INT NOT NULL,
+            cbcontador INT NOT NULL,
+            data_acerto DATETIME NOT NULL,
+            descricao VARCHAR(255) NOT NULL,
+            total_debitos DECIMAL(15,4) NOT NULL DEFAULT 0,
+            total_creditos DECIMAL(15,4) NOT NULL DEFAULT 0,
+            diferenca DECIMAL(15,4) NOT NULL DEFAULT 0,
+            status VARCHAR(20) NOT NULL DEFAULT 'ATIVO',
+            usuario_id INT NULL,
+            criado_em DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            cancelado_por INT NULL,
+            cancelado_em DATETIME NULL,
+            INDEX idx_fin_acerto_empresa_conta (empresa_id, cbcontador, status, data_acerto)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    ");
+
+    $pdo->exec("
+        CREATE TABLE IF NOT EXISTS financeiro_acertos_extrato_itens (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            acerto_id INT NOT NULL,
+            empresa_id INT NOT NULL,
+            movcontador INT NOT NULL,
+            tipo_mov CHAR(1) NOT NULL,
+            valor DECIMAL(15,4) NOT NULL DEFAULT 0,
+            criado_em DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE KEY uniq_fin_acerto_item_ativo (empresa_id, movcontador, acerto_id),
+            INDEX idx_fin_acerto_item_mov (empresa_id, movcontador),
+            INDEX idx_fin_acerto_item_acerto (acerto_id)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    ");
+}
+
 garantirTabelaSaldosContas($pdo_master);
+garantirTabelasAcertosExtrato($pdo_master);
 
 function moedaContasBanco($valor): string
 {
     return 'R$ ' . number_format((float)$valor, 2, ',', '.');
+}
+
+function saldoContasBancoTexto($valor): string
+{
+    $valor = (float)$valor;
+    if (abs($valor) < 0.01) {
+        return 'R$ 0,00';
+    }
+
+    return 'R$ ' . number_format(abs($valor), 2, ',', '.') . ' ' . ($valor < 0 ? 'D' : 'C');
+}
+
+function saldoContasBancoHtml($valor): string
+{
+    $valor = (float)$valor;
+    if (abs($valor) < 0.01) {
+        return '<span class="fw-bold">R$ 0,00</span>';
+    }
+
+    $sinal = $valor < 0 ? 'D' : 'C';
+    $classe = $valor < 0 ? 'text-danger border-danger' : 'text-success border-success';
+
+    return 'R$ ' . number_format(abs($valor), 2, ',', '.') .
+        ' <span class="badge bg-white border ' . $classe . '">' . $sinal . '</span>';
 }
 
 function dataContasBanco($valor): string
@@ -99,6 +161,159 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['acao'] ?? '') === 'salvar_
 
     $query = $_GET ? '?' . http_build_query($_GET) : '';
     header('Location: contas.php' . $query);
+    exit;
+}
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['acao'] ?? '') === 'criar_acerto') {
+    $movs = $_POST['movcontadores'] ?? [];
+    $descricaoAcerto = trim((string)($_POST['descricao_acerto'] ?? ''));
+    $redirectQuery = trim((string)($_POST['redirect_query'] ?? ''));
+    $redirectBase = 'contas.php' . ($redirectQuery !== '' ? '?' . $redirectQuery : '');
+
+    if (!is_array($movs)) {
+        $movs = [];
+    }
+
+    $movs = array_map('intval', $movs);
+    $movs = array_values(array_unique(array_filter($movs, static function ($mov): bool {
+        return $mov > 0;
+    })));
+
+    if (count($movs) < 2) {
+        header('Location: ' . $redirectBase . (strpos($redirectBase, '?') === false ? '?' : '&') . 'erro_acerto=selecione');
+        exit;
+    }
+
+    if ($descricaoAcerto === '') {
+        $descricaoAcerto = 'Acerto de extrato';
+    }
+
+    $placeholdersMov = implode(',', array_fill(0, count($movs), '?'));
+    $stmtMovsAcerto = $pdo_master->prepare("
+        SELECT
+            b.MOVCONTADOR,
+            b.EMPRESA,
+            b.CBCONTADOR,
+            b.DTMOV,
+            b.TIPOMOV,
+            ABS(b.VALORMOV) AS VALORMOV
+        FROM armazem_bnc001 b
+        WHERE b.EMPRESA = ?
+          AND b.MOVCONTADOR IN ($placeholdersMov)
+          AND COALESCE(b.deletado, 'N') <> 'S'
+          AND NOT EXISTS (
+              SELECT 1
+              FROM financeiro_acertos_extrato_itens ai
+              INNER JOIN financeiro_acertos_extrato a
+                  ON a.id = ai.acerto_id
+                 AND a.status = 'ATIVO'
+              WHERE ai.empresa_id = b.EMPRESA
+                AND ai.movcontador = b.MOVCONTADOR
+          )
+        ORDER BY b.DTMOV, b.MOVCONTADOR
+    ");
+    $stmtMovsAcerto->execute(array_merge([$empresaId], $movs));
+    $movimentosAcerto = $stmtMovsAcerto->fetchAll(PDO::FETCH_ASSOC);
+
+    $contasAcerto = array_unique(array_map(static function ($item): int {
+        return (int)$item['CBCONTADOR'];
+    }, $movimentosAcerto));
+
+    if (count($movimentosAcerto) !== count($movs) || count($contasAcerto) !== 1) {
+        header('Location: ' . $redirectBase . (strpos($redirectBase, '?') === false ? '?' : '&') . 'erro_acerto=invalidos');
+        exit;
+    }
+
+    $totalDebitos = 0.0;
+    $totalCreditos = 0.0;
+    $dataAcerto = null;
+
+    foreach ($movimentosAcerto as $movAcerto) {
+        $valorMov = abs((float)$movAcerto['VALORMOV']);
+        if (strtoupper((string)$movAcerto['TIPOMOV']) === 'C') {
+            $totalCreditos += $valorMov;
+        } else {
+            $totalDebitos += $valorMov;
+        }
+
+        if ($dataAcerto === null || strtotime((string)$movAcerto['DTMOV']) > strtotime($dataAcerto)) {
+            $dataAcerto = (string)$movAcerto['DTMOV'];
+        }
+    }
+
+    $diferencaAcerto = round($totalCreditos - $totalDebitos, 2);
+
+    if (abs($diferencaAcerto) > 0.01) {
+        header('Location: ' . $redirectBase . (strpos($redirectBase, '?') === false ? '?' : '&') . 'erro_acerto=diferenca');
+        exit;
+    }
+
+    $pdo_master->beginTransaction();
+
+    try {
+        $stmtAcerto = $pdo_master->prepare("
+            INSERT INTO financeiro_acertos_extrato (
+                empresa_id, cbcontador, data_acerto, descricao,
+                total_debitos, total_creditos, diferenca, status, usuario_id, criado_em
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, 'ATIVO', ?, NOW())
+        ");
+        $stmtAcerto->execute([
+            $empresaId,
+            (int)$contasAcerto[0],
+            $dataAcerto,
+            $descricaoAcerto,
+            $totalDebitos,
+            $totalCreditos,
+            $diferencaAcerto,
+            $usuarioId ?: null,
+        ]);
+        $acertoId = (int)$pdo_master->lastInsertId();
+
+        $stmtItemAcerto = $pdo_master->prepare("
+            INSERT INTO financeiro_acertos_extrato_itens (
+                acerto_id, empresa_id, movcontador, tipo_mov, valor, criado_em
+            ) VALUES (?, ?, ?, ?, ?, NOW())
+        ");
+
+        foreach ($movimentosAcerto as $movAcerto) {
+            $stmtItemAcerto->execute([
+                $acertoId,
+                $empresaId,
+                (int)$movAcerto['MOVCONTADOR'],
+                strtoupper((string)$movAcerto['TIPOMOV']),
+                abs((float)$movAcerto['VALORMOV']),
+            ]);
+        }
+
+        $pdo_master->commit();
+    } catch (Throwable $e) {
+        $pdo_master->rollBack();
+        throw $e;
+    }
+
+    header('Location: ' . $redirectBase . (strpos($redirectBase, '?') === false ? '?' : '&') . 'ok_acerto=' . $acertoId);
+    exit;
+}
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['acao'] ?? '') === 'desfazer_acerto') {
+    $acertoId = (int)($_POST['acerto_id'] ?? 0);
+    $redirectQuery = trim((string)($_POST['redirect_query'] ?? ''));
+    $redirectBase = 'contas.php' . ($redirectQuery !== '' ? '?' . $redirectQuery : '');
+
+    if ($acertoId > 0) {
+        $stmtDesfazer = $pdo_master->prepare("
+            UPDATE financeiro_acertos_extrato
+            SET status = 'CANCELADO',
+                cancelado_por = ?,
+                cancelado_em = NOW()
+            WHERE id = ?
+              AND empresa_id = ?
+              AND status = 'ATIVO'
+        ");
+        $stmtDesfazer->execute([$usuarioId ?: null, $acertoId, $empresaId]);
+    }
+
+    header('Location: ' . $redirectBase);
     exit;
 }
 
@@ -178,6 +393,15 @@ $saldoInicial = $contaSelecionada > 0 ? ($saldosIniciaisPorConta[$contaSeleciona
 $where = [
     'b.EMPRESA = ?',
     "COALESCE(b.deletado, 'N') <> 'S'",
+    "NOT EXISTS (
+        SELECT 1
+        FROM financeiro_acertos_extrato_itens ai
+        INNER JOIN financeiro_acertos_extrato a
+            ON a.id = ai.acerto_id
+           AND a.status = 'ATIVO'
+        WHERE ai.empresa_id = b.EMPRESA
+          AND ai.movcontador = b.MOVCONTADOR
+    )",
 ];
 $params = [$empresaId];
 
@@ -346,6 +570,120 @@ $stmt = $pdo_master->prepare("
 $stmt->execute($params);
 $registros = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
+$acertosExtrato = [];
+$itensAcertos = [];
+
+if ($visao === 'extrato' && $tipoes === '' && $documento === '' && $dc === '') {
+    $whereAcertos = [
+        'a.empresa_id = ?',
+        "a.status = 'ATIVO'",
+    ];
+    $paramsAcertos = [$empresaId];
+
+    if (!empty($contasSelecionadas)) {
+        $whereAcertos[] = 'a.cbcontador IN (' . implode(',', array_fill(0, count($contasSelecionadas), '?')) . ')';
+        foreach ($contasSelecionadas as $contaFiltroAcerto) {
+            $paramsAcertos[] = $contaFiltroAcerto;
+        }
+    }
+
+    if ($dataIni !== '') {
+        $whereAcertos[] = 'DATE(a.data_acerto) >= ?';
+        $paramsAcertos[] = $dataIni;
+    }
+
+    if ($dataFim !== '') {
+        $whereAcertos[] = 'DATE(a.data_acerto) <= ?';
+        $paramsAcertos[] = $dataFim;
+    }
+
+    if ($historico !== '') {
+        $whereAcertos[] = 'a.descricao LIKE ?';
+        $paramsAcertos[] = '%' . $historico . '%';
+    }
+
+    $stmtAcertosLista = $pdo_master->prepare("
+        SELECT
+            a.id,
+            a.cbcontador,
+            a.data_acerto,
+            a.descricao,
+            a.total_debitos,
+            a.total_creditos,
+            a.diferenca,
+            COALESCE(c.TITULAR, CONCAT('Conta ', a.cbcontador)) AS conta_nome
+        FROM financeiro_acertos_extrato a
+        LEFT JOIN armazem_bnc002 c
+            ON c.EMPRESA = a.empresa_id
+           AND c.CBCONTADOR = a.cbcontador
+        WHERE " . implode("\n          AND ", $whereAcertos) . "
+        ORDER BY a.data_acerto ASC, a.id ASC
+    ");
+    $stmtAcertosLista->execute($paramsAcertos);
+    $acertosExtrato = $stmtAcertosLista->fetchAll(PDO::FETCH_ASSOC);
+
+    if (!empty($acertosExtrato)) {
+        $idsAcertos = array_map(static function ($acerto): int {
+            return (int)$acerto['id'];
+        }, $acertosExtrato);
+        $stmtItensAcertos = $pdo_master->prepare("
+            SELECT
+                ai.acerto_id,
+                ai.movcontador,
+                ai.tipo_mov,
+                ai.valor,
+                b.DTMOV,
+                b.TIPOES,
+                b.HISTMOV,
+                b.NUMDOC,
+                b.NUMDOCORIGEM,
+                b.NUMCONTROLE
+            FROM financeiro_acertos_extrato_itens ai
+            LEFT JOIN armazem_bnc001 b
+                ON b.EMPRESA = ai.empresa_id
+               AND b.MOVCONTADOR = ai.movcontador
+            WHERE ai.acerto_id IN (" . implode(',', array_fill(0, count($idsAcertos), '?')) . ")
+            ORDER BY ai.acerto_id, b.DTMOV, ai.movcontador
+        ");
+        $stmtItensAcertos->execute($idsAcertos);
+
+        foreach ($stmtItensAcertos->fetchAll(PDO::FETCH_ASSOC) as $itemAcerto) {
+            $itensAcertos[(int)$itemAcerto['acerto_id']][] = $itemAcerto;
+        }
+    }
+
+    foreach ($acertosExtrato as $acertoExtrato) {
+        $registros[] = [
+            'tipo_linha' => 'acerto',
+            'acerto_id' => (int)$acertoExtrato['id'],
+            'MOVCONTADOR' => 0,
+            'DTMOV' => $acertoExtrato['data_acerto'],
+            'TIPOES' => null,
+            'tipo_nome' => 'Acerto',
+            'HISTMOV' => 'ACERTO #' . (int)$acertoExtrato['id'] . ' - ' . $acertoExtrato['descricao'],
+            'NUMDOC' => '',
+            'NUMDOCORIGEM' => '',
+            'NUMCONTROLE' => '',
+            'TIPOMOV' => 'A',
+            'VALORMOV' => (float)$acertoExtrato['diferenca'],
+            'deletado' => 'N',
+            'CBCONTADOR' => (int)$acertoExtrato['cbcontador'],
+            'conta_nome' => $acertoExtrato['conta_nome'],
+            'total_debitos' => (float)$acertoExtrato['total_debitos'],
+            'total_creditos' => (float)$acertoExtrato['total_creditos'],
+        ];
+    }
+
+    usort($registros, static function (array $a, array $b): int {
+        $cmpData = strcmp((string)$a['DTMOV'], (string)$b['DTMOV']);
+        if ($cmpData !== 0) {
+            return $cmpData;
+        }
+
+        return ((int)($a['MOVCONTADOR'] ?? 0)) <=> ((int)($b['MOVCONTADOR'] ?? 0));
+    });
+}
+
 if (!empty($contasSelecionadas) && !empty($registros)) {
     $primeiroRegistro = $registros[0];
     $primeiraDataMov = $primeiroRegistro['DTMOV'];
@@ -429,7 +767,7 @@ if (($_GET['exportar'] ?? '') === 'excel') {
             echo '<td>' . htmlspecialchars((string)$contaResumo['conta_nome']) . '</td>';
             echo '<td>' . number_format((float)$contaResumo['total_creditos'], 2, ',', '.') . '</td>';
             echo '<td>' . number_format((float)$contaResumo['total_debitos'], 2, ',', '.') . '</td>';
-            echo '<td>' . number_format((float)$contaResumo['saldo'], 2, ',', '.') . '</td>';
+            echo '<td>' . htmlspecialchars(saldoContasBancoTexto($contaResumo['saldo'])) . '</td>';
             echo '</tr>';
         }
     } else {
@@ -449,7 +787,7 @@ if (($_GET['exportar'] ?? '') === 'excel') {
             echo '<td>' . htmlspecialchars((string)$documentoExcel) . '</td>';
             echo '<td>' . htmlspecialchars((string)$registro['TIPOMOV']) . '</td>';
             echo '<td>' . number_format(abs((float)$registro['VALORMOV']), 2, ',', '.') . '</td>';
-            echo '<td>' . (!empty($contasSelecionadas) ? number_format((float)$registro['saldo_calculado'], 2, ',', '.') : '') . '</td>';
+            echo '<td>' . (!empty($contasSelecionadas) ? htmlspecialchars(saldoContasBancoTexto($registro['saldo_calculado'])) : '') . '</td>';
             echo '</tr>';
         }
     }
@@ -649,6 +987,24 @@ require '../../layout/header.php';
     </form>
 </section>
 
+<?php if (!empty($_GET['ok_acerto'])): ?>
+    <div class="alert alert-success">
+        Acerto #<?= (int)$_GET['ok_acerto'] ?> criado com sucesso.
+    </div>
+<?php endif; ?>
+
+<?php if (!empty($_GET['erro_acerto'])): ?>
+    <?php
+        $mensagensErroAcerto = [
+            'selecione' => 'Selecione pelo menos dois lancamentos para criar um acerto.',
+            'invalidos' => 'Os lancamentos selecionados precisam estar ativos, livres de outro acerto e pertencer a mesma conta.',
+            'diferenca' => 'O acerto so pode ser criado quando os debitos e creditos selecionados zerarem.',
+        ];
+        $mensagemErroAcerto = $mensagensErroAcerto[(string)$_GET['erro_acerto']] ?? 'Nao foi possivel criar o acerto.';
+    ?>
+    <div class="alert alert-danger"><?= htmlspecialchars($mensagemErroAcerto) ?></div>
+<?php endif; ?>
+
 <section class="mb-3">
     <div class="bg-white border rounded-2 shadow-sm p-3">
         <form method="POST" class="row g-3 align-items-end">
@@ -704,7 +1060,7 @@ require '../../layout/header.php';
         <div class="col-md-3">
             <div class="bg-white border rounded-2 shadow-sm p-3 h-100">
                 <div class="small text-muted">Saldo</div>
-                <div class="h5 fw-bold mb-0 <?= $saldoResumo < 0 ? 'saldo-card-negativo' : 'saldo-card-positivo' ?>"><?= moedaContasBanco($saldoResumo) ?></div>
+                <div class="h5 fw-bold mb-0 <?= $saldoResumo < 0 ? 'saldo-card-negativo' : 'saldo-card-positivo' ?>"><?= saldoContasBancoHtml($saldoResumo) ?></div>
             </div>
         </div>
     </div>
@@ -735,7 +1091,7 @@ require '../../layout/header.php';
                             <td data-label="Creditos" class="text-end col-money saldo-card-positivo"><?= moedaContasBanco($contaResumo['total_creditos']) ?></td>
                             <td data-label="Debitos" class="text-end col-money saldo-card-negativo"><?= moedaContasBanco($contaResumo['total_debitos']) ?></td>
                             <td data-label="Saldo" class="text-end fw-bold col-money <?= $saldoContaResumo < 0 ? 'saldo-card-negativo' : 'saldo-card-positivo' ?>">
-                                <?= moedaContasBanco($saldoContaResumo) ?>
+                                <?= saldoContasBancoHtml($saldoContaResumo) ?>
                             </td>
                         </tr>
                     <?php endforeach; ?>
@@ -755,6 +1111,37 @@ require '../../layout/header.php';
         <?php if (empty($contasSelecionadas)): ?>
             <div class="alert alert-info m-3 mb-0">Selecione uma ou mais contas para acompanhar o saldo linha a linha do extrato.</div>
         <?php endif; ?>
+        <?php if (!empty($contasSelecionadas)): ?>
+            <form method="POST" id="form-criar-acerto" class="border-bottom p-3">
+                <input type="hidden" name="acao" value="criar_acerto">
+                <input type="hidden" name="redirect_query" value="<?= htmlspecialchars(queryContasBanco(['ok_acerto' => null, 'erro_acerto' => null])) ?>">
+                <div class="row g-2 align-items-end">
+                    <div class="col-md-7">
+                        <label class="form-label">Descricao do acerto</label>
+                        <input type="text" name="descricao_acerto" class="form-control" value="Acerto de extrato" maxlength="255">
+                    </div>
+                    <div class="col-md-3">
+                        <button type="submit" class="btn btn-success w-100" onclick="return confirm('Criar acerto com os lancamentos marcados?')">Criar acerto</button>
+                    </div>
+                    <div class="col-md-2">
+                        <button type="button" class="btn btn-outline-secondary w-100" id="marcar-acerto-visiveis">Marcar visiveis</button>
+                    </div>
+                    <div class="col-12">
+                        <small class="text-muted">Marque lancamentos de uma mesma conta. O total de debitos e creditos precisa zerar para finalizar o acerto.</small>
+                    </div>
+                    <div class="col-12">
+                        <div class="border rounded-2 bg-light p-2 small" id="resumo-acerto-marcados">
+                            <span class="fw-semibold">Selecionados:</span>
+                            <span id="acerto-qtd">0</span> |
+                            Total marcado: <span class="fw-semibold" id="acerto-total">R$ 0,00</span> |
+                            Debitos: <span class="text-danger fw-semibold" id="acerto-debitos">R$ 0,00</span> |
+                            Creditos: <span class="text-success fw-semibold" id="acerto-creditos">R$ 0,00</span> |
+                            Diferenca: <span class="fw-semibold" id="acerto-diferenca">R$ 0,00</span>
+                        </div>
+                    </div>
+                </div>
+            </form>
+        <?php endif; ?>
         <?php if ($totalRegistrosFiltro > $limiteExtrato): ?>
             <div class="alert alert-warning m-3 mb-0">
                 Exibindo os ultimos <?= (int)$limiteExtrato ?> lancamentos de <?= (int)$totalRegistrosFiltro ?> encontrados. Use os filtros de data ou conta para refinar o extrato.
@@ -764,6 +1151,7 @@ require '../../layout/header.php';
             <table class="table table-sm table-hover align-middle mb-0 financeiro-grid">
                 <thead class="table-primary">
                     <tr>
+                        <th class="col-dc">Sel.</th>
                         <th class="col-date">Data</th>
                         <th class="col-type">TipoEs</th>
                         <th>Historico</th>
@@ -778,11 +1166,31 @@ require '../../layout/header.php';
                         <?php
                             $doc = $registro['NUMDOC'] ?: ($registro['NUMDOCORIGEM'] ?: $registro['NUMCONTROLE']);
                             $mov = strtoupper((string)$registro['TIPOMOV']);
+                            $ehAcerto = ($registro['tipo_linha'] ?? '') === 'acerto';
                         ?>
                         <tr>
+                            <td data-label="Sel." class="col-dc">
+                                <?php if (!$ehAcerto && !empty($contasSelecionadas)): ?>
+                                    <input
+                                        type="checkbox"
+                                        class="form-check-input acerto-check"
+                                        form="form-criar-acerto"
+                                        name="movcontadores[]"
+                                        value="<?= (int)$registro['MOVCONTADOR'] ?>"
+                                        data-tipo="<?= htmlspecialchars($mov) ?>"
+                                        data-valor="<?= htmlspecialchars((string)abs((float)$registro['VALORMOV'])) ?>"
+                                    >
+                                <?php elseif ($ehAcerto): ?>
+                                    <span class="badge text-bg-info">Acerto</span>
+                                <?php else: ?>
+                                    -
+                                <?php endif; ?>
+                            </td>
                             <td data-label="Data" class="col-date"><?= dataContasBanco($registro['DTMOV']) ?></td>
                             <td data-label="TipoEs" class="col-type">
-                                <div class="fw-semibold"><?= (int)$registro['TIPOES'] ?> - <?= htmlspecialchars($registro['tipo_nome']) ?></div>
+                                <div class="fw-semibold">
+                                    <?= $ehAcerto ? 'Acerto' : ((int)$registro['TIPOES'] . ' - ' . htmlspecialchars($registro['tipo_nome'])) ?>
+                                </div>
                                 <?php if (count($contasSelecionadas) !== 1): ?>
                                     <div class="small text-muted">Conta <?= (int)$registro['CBCONTADOR'] ?> - <?= htmlspecialchars($registro['conta_nome']) ?></div>
                                 <?php endif; ?>
@@ -790,25 +1198,31 @@ require '../../layout/header.php';
                             <td data-label="Historico">
                                 <div class="historico-principal"><?= htmlspecialchars((string)$registro['HISTMOV']) ?></div>
                                 <div class="small text-muted">
-                                    Mov. <?= (int)$registro['MOVCONTADOR'] ?>
-                                    <?php if (($registro['deletado'] ?? 'N') === 'S'): ?>
-                                        <span class="badge text-bg-secondary ms-1">Excluido</span>
+                                    <?php if ($ehAcerto): ?>
+                                        Debitos: <?= moedaContasBanco($registro['total_debitos']) ?> |
+                                        Creditos: <?= moedaContasBanco($registro['total_creditos']) ?>
+                                        <button type="button" class="btn btn-sm btn-outline-dark ms-2" data-bs-toggle="modal" data-bs-target="#modalAcerto<?= (int)$registro['acerto_id'] ?>">Ver itens</button>
+                                    <?php else: ?>
+                                        Mov. <?= (int)$registro['MOVCONTADOR'] ?>
+                                        <?php if (($registro['deletado'] ?? 'N') === 'S'): ?>
+                                            <span class="badge text-bg-secondary ms-1">Excluido</span>
+                                        <?php endif; ?>
                                     <?php endif; ?>
                                 </div>
                             </td>
                             <td data-label="Documento" class="col-doc"><?= htmlspecialchars((string)$doc) ?></td>
                             <td data-label="D/C" class="col-dc">
-                                <span class="badge <?= $mov === 'C' ? 'text-bg-success' : 'text-bg-danger' ?>"><?= htmlspecialchars($mov ?: '-') ?></span>
+                                <span class="badge <?= $mov === 'C' ? 'text-bg-success' : ($mov === 'D' ? 'text-bg-danger' : 'text-bg-info') ?>"><?= htmlspecialchars($mov ?: '-') ?></span>
                             </td>
                             <td data-label="Valor" class="text-end fw-semibold col-money"><?= moedaContasBanco(abs((float)$registro['VALORMOV'])) ?></td>
                             <td data-label="Saldo" class="text-end col-money <?= ((float)$registro['saldo_calculado']) < 0 ? 'saldo-card-negativo' : 'saldo-card-positivo' ?>">
-                                <?= !empty($contasSelecionadas) ? moedaContasBanco($registro['saldo_calculado']) : '-' ?>
+                                <?= !empty($contasSelecionadas) ? saldoContasBancoHtml($registro['saldo_calculado']) : '-' ?>
                             </td>
                         </tr>
                     <?php endforeach; ?>
                     <?php if (empty($registros)): ?>
                         <tr>
-                            <td colspan="7" class="text-center text-muted py-4">Nenhum lancamento encontrado com os filtros informados.</td>
+                            <td colspan="8" class="text-center text-muted py-4">Nenhum lancamento encontrado com os filtros informados.</td>
                         </tr>
                     <?php endif; ?>
                 </tbody>
@@ -822,5 +1236,141 @@ require '../../layout/header.php';
     </div>
 </section>
 <?php endif; ?>
+
+<?php foreach ($acertosExtrato as $acertoModal): ?>
+    <?php $acertoModalId = (int)$acertoModal['id']; ?>
+    <div class="modal fade" id="modalAcerto<?= $acertoModalId ?>" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog modal-lg modal-dialog-scrollable">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">Acerto #<?= $acertoModalId ?></h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Fechar"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <div class="fw-semibold"><?= htmlspecialchars((string)$acertoModal['descricao']) ?></div>
+                        <div class="small text-muted">
+                            Conta <?= (int)$acertoModal['cbcontador'] ?> |
+                            Data <?= dataContasBanco($acertoModal['data_acerto']) ?> |
+                            Debitos <?= moedaContasBanco($acertoModal['total_debitos']) ?> |
+                            Creditos <?= moedaContasBanco($acertoModal['total_creditos']) ?> |
+                            Diferenca <?= saldoContasBancoTexto($acertoModal['diferenca']) ?>
+                        </div>
+                    </div>
+
+                    <div class="table-responsive">
+                        <table class="table table-sm table-bordered align-middle">
+                            <thead class="table-light">
+                                <tr>
+                                    <th>Mov.</th>
+                                    <th>Data</th>
+                                    <th>TipoEs</th>
+                                    <th>Historico</th>
+                                    <th>D/C</th>
+                                    <th class="text-end">Valor</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <?php foreach (($itensAcertos[$acertoModalId] ?? []) as $itemAcerto): ?>
+                                    <tr>
+                                        <td><?= (int)$itemAcerto['movcontador'] ?></td>
+                                        <td><?= dataContasBanco($itemAcerto['DTMOV'] ?? null) ?></td>
+                                        <td><?= htmlspecialchars((string)($itemAcerto['TIPOES'] ?? '')) ?></td>
+                                        <td><?= htmlspecialchars((string)($itemAcerto['HISTMOV'] ?? '')) ?></td>
+                                        <td>
+                                            <span class="badge <?= ($itemAcerto['tipo_mov'] ?? '') === 'C' ? 'text-bg-success' : 'text-bg-danger' ?>">
+                                                <?= htmlspecialchars((string)$itemAcerto['tipo_mov']) ?>
+                                            </span>
+                                        </td>
+                                        <td class="text-end"><?= moedaContasBanco($itemAcerto['valor']) ?></td>
+                                    </tr>
+                                <?php endforeach; ?>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <form method="POST" onsubmit="return confirm('Desfazer este acerto e voltar a exibir os lancamentos filhos?')">
+                        <input type="hidden" name="acao" value="desfazer_acerto">
+                        <input type="hidden" name="acerto_id" value="<?= $acertoModalId ?>">
+                        <input type="hidden" name="redirect_query" value="<?= htmlspecialchars(queryContasBanco(['ok_acerto' => null, 'erro_acerto' => null])) ?>">
+                        <button type="submit" class="btn btn-outline-danger">Desfazer acerto</button>
+                    </form>
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Fechar</button>
+                </div>
+            </div>
+        </div>
+    </div>
+<?php endforeach; ?>
+
+<script>
+document.addEventListener('DOMContentLoaded', function () {
+    var botaoMarcar = document.getElementById('marcar-acerto-visiveis');
+    var resumoQtd = document.getElementById('acerto-qtd');
+    var resumoTotal = document.getElementById('acerto-total');
+    var resumoDebitos = document.getElementById('acerto-debitos');
+    var resumoCreditos = document.getElementById('acerto-creditos');
+    var resumoDiferenca = document.getElementById('acerto-diferenca');
+
+    if (!botaoMarcar || !resumoQtd || !resumoTotal || !resumoDebitos || !resumoCreditos || !resumoDiferenca) {
+        return;
+    }
+
+    function moeda(valor) {
+        return valor.toLocaleString('pt-BR', {
+            style: 'currency',
+            currency: 'BRL'
+        });
+    }
+
+    function atualizarResumoAcerto() {
+        var checksMarcados = document.querySelectorAll('.acerto-check:checked');
+        var total = 0;
+        var debitos = 0;
+        var creditos = 0;
+
+        checksMarcados.forEach(function (checkbox) {
+            var valor = Math.abs(parseFloat(checkbox.dataset.valor || '0'));
+            var tipo = (checkbox.dataset.tipo || '').toUpperCase();
+
+            total += valor;
+
+            if (tipo === 'C') {
+                creditos += valor;
+            } else {
+                debitos += valor;
+            }
+        });
+
+        var diferenca = creditos - debitos;
+        resumoQtd.textContent = String(checksMarcados.length);
+        resumoTotal.textContent = moeda(total);
+        resumoDebitos.textContent = moeda(debitos);
+        resumoCreditos.textContent = moeda(creditos);
+        resumoDiferenca.textContent = moeda(Math.abs(diferenca)) + (Math.abs(diferenca) < 0.005 ? '' : (diferenca < 0 ? ' D' : ' C'));
+        resumoDiferenca.classList.toggle('text-danger', Math.abs(diferenca) >= 0.005 && diferenca < 0);
+        resumoDiferenca.classList.toggle('text-success', Math.abs(diferenca) >= 0.005 && diferenca > 0);
+    }
+
+    botaoMarcar.addEventListener('click', function () {
+        var checks = document.querySelectorAll('.acerto-check');
+        var marcar = Array.prototype.some.call(checks, function (checkbox) {
+            return !checkbox.checked;
+        });
+
+        checks.forEach(function (checkbox) {
+            checkbox.checked = marcar;
+        });
+
+        atualizarResumoAcerto();
+    });
+
+    document.querySelectorAll('.acerto-check').forEach(function (checkbox) {
+        checkbox.addEventListener('change', atualizarResumoAcerto);
+    });
+
+    atualizarResumoAcerto();
+});
+</script>
 
 <?php require '../../layout/footer.php'; ?>

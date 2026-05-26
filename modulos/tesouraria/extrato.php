@@ -7,6 +7,19 @@ $nivelUsuario = $_SESSION['nivel'] ?? '';
 $isMaster = $nivelUsuario === 'MASTER';
 $podeVerDetalhes = in_array($nivelUsuario, ['MASTER', 'OPERADOR'], true);
 
+function saldoComSinalTesouraria(float $valor): string
+{
+    if (abs($valor) < 0.01) {
+        return '<span class="fw-bold">R$ 0,00</span>';
+    }
+
+    $sinal = $valor < 0 ? 'D' : 'C';
+    $classe = $valor < 0 ? 'text-danger border-danger' : 'text-success border-success';
+
+    return 'R$ ' . number_format(abs($valor), 2, ',', '.') .
+        ' <span class="badge bg-white border ' . $classe . '">' . $sinal . '</span>';
+}
+
 /* =========================
    EXCLUIR MOVIMENTACAO (MASTER)
 ========================= */
@@ -391,7 +404,7 @@ require '../../layout/header.php';
                             </td>
 
                             <td>
-                                <strong>R$ <?= number_format($saldo, 2, ',', '.') ?></strong>
+                                <strong><?= saldoComSinalTesouraria((float)$saldo) ?></strong>
                             </td>
                         </tr>
 

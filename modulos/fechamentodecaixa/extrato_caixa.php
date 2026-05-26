@@ -7,6 +7,19 @@ $data  = $_GET['data'] ?? '';
 $caixa = $_GET['caixa'] ?? '';
 $empresa_id = (int)$_SESSION['empresa_id'];
 
+function saldoComSinalCaixa(float $valor): string
+{
+    if (abs($valor) < 0.01) {
+        return '<span class="fw-bold">R$ 0,00</span>';
+    }
+
+    $sinal = $valor < 0 ? 'D' : 'C';
+    $classe = $valor < 0 ? 'text-danger border-danger' : 'text-success border-success';
+
+    return 'R$ ' . number_format(abs($valor), 2, ',', '.') .
+        ' <span class="badge bg-white border ' . $classe . '">' . $sinal . '</span>';
+}
+
 if (!$data || !$caixa) {
     echo "<div class='alert alert-danger'>Parâmetros inválidos</div>";
     exit;
@@ -108,14 +121,14 @@ $saldo = 0;
     <td><?= $l['NUMDOCORIGEM'] ?></td>
     <td><?= $l['TIPOMOV'] == 'C' ? 'Entrada' : 'Saída' ?></td>
     <td>R$ <?= number_format($l['valor_calculado'], 2, ',', '.') ?></td>
-    <td class="fw-bold">R$ <?= number_format($saldo, 2, ',', '.') ?></td>
+    <td class="fw-bold"><?= saldoComSinalCaixa((float)$saldo) ?></td>
 </tr>
 
 <?php endforeach; ?>
 
 <tr class="table-dark fw-bold">
     <td colspan="5">Saldo Final</td>
-    <td>R$ <?= number_format($saldo, 2, ',', '.') ?></td>
+    <td><?= saldoComSinalCaixa((float)$saldo) ?></td>
 </tr>
 
 </tbody>
@@ -165,7 +178,7 @@ $saldo = 0;
 <?php else: ?>
 
 <div class="alert alert-danger">
-    ❌ Diferença: R$ <?= number_format($saldo, 2, ',', '.') ?>
+    ❌ Diferença: <?= saldoComSinalCaixa((float)$saldo) ?>
 </div>
 
 <?php endif; ?>
