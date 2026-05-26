@@ -41,19 +41,10 @@ foreach ($dadosSistema as $d) {
 
 if ($_SESSION['nivel'] === 'MASTER' && ($_GET['exportar_status'] ?? '') === 'excel') {
     header("Content-Type: application/vnd.ms-excel; charset=UTF-8");
-    header("Content-Disposition: attachment; filename=status_tesouraria_" . date('Ymd_His') . ".xls");
-    header("Pragma: no-cache");
-    header("Expires: 0");
+    header("Content-Disposition: attachment; filename=status_tesouraria_" . date('Ymd_His') . ".csv");
 
-    echo "\xEF\xBB\xBF";
-    echo "<table border='1'>";
-    echo "<tr>";
-    echo "<th>Denominacao</th>";
-    echo "<th>Valor Unitario</th>";
-    echo "<th>Quantidade Sistema</th>";
-    echo "<th>Valor Total</th>";
-    echo "<th>Status</th>";
-    echo "</tr>";
+    echo "sep=;\n";
+    echo "Denominacao;Quantidade Sistema;Valor Unitario;Total Sistema;Status\n";
 
     foreach ($dadosSistema as $d) {
         $quantidade = (int)$d['quantidade'];
@@ -61,21 +52,15 @@ if ($_SESSION['nivel'] === 'MASTER' && ($_GET['exportar_status'] ?? '') === 'exc
         $total = $quantidade * $valor;
         $status = $quantidade < 0 ? 'NEGATIVO' : 'OK';
 
-        echo "<tr>";
-        echo "<td>" . htmlspecialchars((string)$d['descricao']) . "</td>";
-        echo "<td>" . number_format($valor, 2, ',', '.') . "</td>";
-        echo "<td>" . $quantidade . "</td>";
-        echo "<td>" . number_format($total, 2, ',', '.') . "</td>";
-        echo "<td>" . $status . "</td>";
-        echo "</tr>";
+        echo $d['descricao'] . ";"
+           . $quantidade . ";"
+           . number_format($valor, 2, ',', '.') . ";"
+           . number_format($total, 2, ',', '.') . ";"
+           . $status . "\n";
     }
 
-    echo "<tr>";
-    echo "<td colspan='3'><strong>Total</strong></td>";
-    echo "<td><strong>" . number_format($totalSistema, 2, ',', '.') . "</strong></td>";
-    echo "<td></td>";
-    echo "</tr>";
-    echo "</table>";
+    echo "\n";
+    echo "TOTAL SISTEMA;;;" . number_format($totalSistema, 2, ',', '.') . "\n";
     exit;
 }
 
