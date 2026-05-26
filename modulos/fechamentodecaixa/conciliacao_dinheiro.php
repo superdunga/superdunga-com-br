@@ -257,7 +257,7 @@ require '../../layout/header.php';
                     <th>Caixa</th>
                     <th>Dif. Dinheiro</th>
                     <th>CR001 pend.</th>
-                    <th>Dif. Recebiveis</th>
+                    <th>Recebiveis pend.</th>
                     <th>Dif. Final</th>
                     <th>Status</th>
                     <th>Acao</th>
@@ -277,8 +277,11 @@ require '../../layout/header.php';
                             $finalizado = !empty($r['finalizado_em']);
                             $chavePrazo = $dataOp . '|' . $r['CBCONTADOR'];
                             $prazoCaixa = $prazoPorCaixa[$chavePrazo] ?? ['qtd' => 0, 'total' => 0.0];
-                            $diferencaRecebiveis = -1 * (float)$prazoCaixa['total'];
-                            $diferencaFinal = (abs($saldo) <= 0.01 ? 0.0 : $saldo) + $diferencaRecebiveis;
+                            $recebiveisDia = $recebiveisSemCaixaPorDia[$dataOp] ?? ['qtd' => 0, 'total' => 0.0];
+                            $saldoCalculado = abs($saldo) <= 0.01 ? 0.0 : $saldo;
+                            $cr001Pendente = (float)$prazoCaixa['total'];
+                            $diferencaRecebiveis = (float)$recebiveisDia['total'];
+                            $diferencaFinal = $saldoCalculado + $cr001Pendente - $diferencaRecebiveis;
 
                             if ($finalizado) {
                                 $status = 'FINALIZADO';
@@ -286,7 +289,7 @@ require '../../layout/header.php';
                             } elseif ($dataOp === $hoje) {
                                 $status = 'EM ABERTO';
                                 $classe = 'warning';
-                            } elseif (abs($saldo) <= 0.01 && abs($diferencaRecebiveis) <= 0.01) {
+                            } elseif (abs($saldoCalculado) <= 0.01 && abs($cr001Pendente) <= 0.01 && abs($diferencaRecebiveis) <= 0.01) {
                                 $status = 'OK';
                                 $classe = 'success';
                             } else {
@@ -315,9 +318,10 @@ require '../../layout/header.php';
                             </td>
                             <td>
                                 <?= (int)$prazoCaixa['qtd'] ?> |
-                                R$ <?= number_format((float)$prazoCaixa['total'], 2, ',', '.') ?>
+                                R$ <?= number_format($cr001Pendente, 2, ',', '.') ?>
                             </td>
                             <td class="fw-bold <?= abs($diferencaRecebiveis) <= 0.01 ? 'text-success' : 'text-danger' ?>">
+                                <?= (int)$recebiveisDia['qtd'] ?> |
                                 R$ <?= number_format($diferencaRecebiveis, 2, ',', '.') ?>
                             </td>
                             <td class="fw-bold <?= abs($diferencaFinal) <= 0.01 ? 'text-success' : 'text-danger' ?>">
