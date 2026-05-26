@@ -55,15 +55,42 @@ function garantirIndiceUnicoFirebirdTesouraria(PDO $pdo): void
     ")->fetchColumn();
 
     if ((int)$existe === 0) {
-        $pdo->exec("
-            CREATE UNIQUE INDEX uniq_tesouraria_empresa_firebird
-            ON tesouraria_movimentacoes (empresa_id, firebird_id)
-        ");
+        try {
+            $pdo->exec("
+                CREATE UNIQUE INDEX uniq_tesouraria_empresa_firebird
+                ON tesouraria_movimentacoes (empresa_id, firebird_id)
+            ");
+        } catch (Throwable $e) {
+            // Se houver duplicidade antiga, a regra de consulta continua evitando novos vinculos duplicados.
+        }
+    }
+}
+
+function garantirIndiceConciliacaoTesouraria(PDO $pdo): void
+{
+    $existe = $pdo->query("
+        SELECT COUNT(*)
+        FROM INFORMATION_SCHEMA.STATISTICS
+        WHERE TABLE_SCHEMA = DATABASE()
+          AND TABLE_NAME = 'tesouraria_movimentacoes'
+          AND INDEX_NAME = 'idx_tesouraria_conc_auto'
+    ")->fetchColumn();
+
+    if ((int)$existe === 0) {
+        try {
+            $pdo->exec("
+                CREATE INDEX idx_tesouraria_conc_auto
+                ON tesouraria_movimentacoes (empresa_id, conciliado, tipo_operacao, data_mov, valor_operacao)
+            ");
+        } catch (Throwable $e) {
+            // A tela segue funcionando; o indice apenas melhora a performance da conciliacao.
+        }
     }
 }
 
 garantirTabelaFirebirdConferidos($pdo_master);
 garantirIndiceUnicoFirebirdTesouraria($pdo_master);
+garantirIndiceConciliacaoTesouraria($pdo_master);
 
 if (empty($_SESSION['csrf_conciliar_tesouraria'])) {
     $_SESSION['csrf_conciliar_tesouraria'] = bin2hex(random_bytes(32));
@@ -90,9 +117,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['acao'] ?? '') === 'concili
                 f.MOVCONTADOR AS firebird_id
             FROM tesouraria_movimentacoes t
             INNER JOIN armazem_bnc001 f
-                ON ABS(CAST(t.valor_operacao AS DECIMAL(15,2))) = CAST(f.VALORMOV AS DECIMAL(15,2))
-               AND DATE(t.data_mov) = DATE(f.DTMOV)
-               AND UPPER(t.tipo_operacao) = UPPER(f.TIPOMOV)
+                ON f.VALORMOV = ABS(t.valor_operacao)
+               AND f.DTMOV >= DATE(t.data_mov)
+               AND f.DTMOV < DATE_ADD(DATE(t.data_mov), INTERVAL 1 DAY)
+               AND f.TIPOMOV = t.tipo_operacao
             WHERE t.id = ?
               AND f.MOVCONTADOR = ?
               AND t.empresa_id = ?
@@ -102,7 +130,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['acao'] ?? '') === 'concili
               AND f.CBCONTADOR = ?
               $filtro_movcontador_firebird
               AND COALESCE(f.deletado, 'N') <> 'S'
-              AND CAST(f.VALORMOV AS CHAR) REGEXP '^-?[0-9]+(\\\\.[0-9]+)?$'
               AND NOT EXISTS (
                   SELECT 1
                   FROM tesouraria_movimentacoes tx
@@ -206,9 +233,10 @@ try {
             MAX(f.MOVCONTADOR) AS firebird_id
         FROM tesouraria_movimentacoes t
         INNER JOIN armazem_bnc001 f
-            ON ABS(CAST(t.valor_operacao AS DECIMAL(15,2))) = CAST(f.VALORMOV AS DECIMAL(15,2))
-           AND DATE(t.data_mov) = DATE(f.DTMOV)
-           AND UPPER(t.tipo_operacao) = UPPER(f.TIPOMOV)
+            ON f.VALORMOV = ABS(t.valor_operacao)
+           AND f.DTMOV >= DATE(t.data_mov)
+           AND f.DTMOV < DATE_ADD(DATE(t.data_mov), INTERVAL 1 DAY)
+           AND f.TIPOMOV = t.tipo_operacao
         WHERE t.conciliado = 'N'
           AND t.empresa_id = ?
           AND t.tipo_operacao <> 'T'
@@ -216,7 +244,6 @@ try {
           AND f.CBCONTADOR = ?
           $filtro_movcontador_firebird
           AND COALESCE(f.deletado, 'N') <> 'S'
-          AND CAST(f.VALORMOV AS CHAR) REGEXP '^-?[0-9]+(\\\\.[0-9]+)?$'
           AND NOT EXISTS (
               SELECT 1
               FROM tesouraria_movimentacoes tx
@@ -230,9 +257,10 @@ try {
                 AND t2.conciliado = 'N'
                 AND t2.empresa_id = t.empresa_id
                 AND t2.tipo_operacao <> 'T'
-                AND UPPER(t2.tipo_operacao) = UPPER(f.TIPOMOV)
-                AND ABS(CAST(t2.valor_operacao AS DECIMAL(15,2))) = CAST(f.VALORMOV AS DECIMAL(15,2))
-                AND DATE(t2.data_mov) = DATE(f.DTMOV)
+                AND t2.tipo_operacao = f.TIPOMOV
+                AND f.VALORMOV = ABS(t2.valor_operacao)
+                AND t2.data_mov >= DATE(f.DTMOV)
+                AND t2.data_mov < DATE_ADD(DATE(f.DTMOV), INTERVAL 1 DAY)
           )
         GROUP BY t.id
         HAVING COUNT(f.MOVCONTADOR) = 1
@@ -263,14 +291,14 @@ $stmtPendentes = $pdo_master->prepare("
         (
             SELECT COUNT(*)
             FROM armazem_bnc001 f
-            WHERE ABS(CAST(t.valor_operacao AS DECIMAL(15,2))) = CAST(f.VALORMOV AS DECIMAL(15,2))
-              AND DATE(f.DTMOV) = DATE(t.data_mov)
-              AND UPPER(t.tipo_operacao) = UPPER(f.TIPOMOV)
+            WHERE f.VALORMOV = ABS(t.valor_operacao)
+              AND f.DTMOV >= DATE(t.data_mov)
+              AND f.DTMOV < DATE_ADD(DATE(t.data_mov), INTERVAL 1 DAY)
+              AND f.TIPOMOV = t.tipo_operacao
               AND f.EMPRESA = ?
               AND f.CBCONTADOR = ?
               $filtro_movcontador_firebird
               AND COALESCE(f.deletado, 'N') <> 'S'
-              AND CAST(f.VALORMOV AS CHAR) REGEXP '^-?[0-9]+(\\\\.[0-9]+)?$'
               AND NOT EXISTS (
                   SELECT 1
                   FROM tesouraria_movimentacoes tx
@@ -300,14 +328,14 @@ if (!empty($pendentes)) {
             f.NUMDOCORIGEM,
             f.FCONTADOR
         FROM armazem_bnc001 f
-        WHERE ABS(CAST(? AS DECIMAL(15,2))) = CAST(f.VALORMOV AS DECIMAL(15,2))
-          AND DATE(f.DTMOV) = DATE(?)
-          AND UPPER(?) = UPPER(f.TIPOMOV)
+        WHERE f.VALORMOV = ABS(?)
+          AND f.DTMOV >= DATE(?)
+          AND f.DTMOV < DATE_ADD(DATE(?), INTERVAL 1 DAY)
+          AND f.TIPOMOV = ?
           AND f.EMPRESA = ?
           AND f.CBCONTADOR = ?
           $filtro_movcontador_firebird
           AND COALESCE(f.deletado, 'N') <> 'S'
-          AND CAST(f.VALORMOV AS CHAR) REGEXP '^-?[0-9]+(\\\\.[0-9]+)?$'
           AND NOT EXISTS (
               SELECT 1
               FROM tesouraria_movimentacoes tx
@@ -319,7 +347,7 @@ if (!empty($pendentes)) {
 
     foreach ($pendentes as $p) {
         if ((int)$p['qtd_matches'] > 1) {
-            $stmtCandidatos->execute([$p['valor_operacao'], $p['data_mov'], $p['tipo_operacao'], $empresa_id, $cbcontador_tesouraria, $empresa_id]);
+            $stmtCandidatos->execute([$p['valor_operacao'], $p['data_mov'], $p['data_mov'], $p['tipo_operacao'], $empresa_id, $cbcontador_tesouraria, $empresa_id]);
             $candidatosPorTesouraria[(int)$p['id']] = $stmtCandidatos->fetchAll(PDO::FETCH_ASSOC);
         }
     }
@@ -359,7 +387,6 @@ $stmtFirebirdNao = $pdo_master->prepare("
           COALESCE(f.deletado, 'N') <> 'S'
           OR f.DTMOV >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)
       )
-      AND CAST(f.VALORMOV AS CHAR) REGEXP '^-?[0-9]+(\\\\.[0-9]+)?$'
       AND NOT EXISTS (
           SELECT 1
           FROM tesouraria_movimentacoes tx

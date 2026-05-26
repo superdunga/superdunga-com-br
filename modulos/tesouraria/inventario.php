@@ -39,6 +39,46 @@ foreach ($dadosSistema as $d) {
     $totalSistema += $d['quantidade'] * $d['valor'];
 }
 
+if ($_SESSION['nivel'] === 'MASTER' && ($_GET['exportar_status'] ?? '') === 'excel') {
+    header("Content-Type: application/vnd.ms-excel; charset=UTF-8");
+    header("Content-Disposition: attachment; filename=status_tesouraria_" . date('Ymd_His') . ".xls");
+    header("Pragma: no-cache");
+    header("Expires: 0");
+
+    echo "\xEF\xBB\xBF";
+    echo "<table border='1'>";
+    echo "<tr>";
+    echo "<th>Denominacao</th>";
+    echo "<th>Valor Unitario</th>";
+    echo "<th>Quantidade Sistema</th>";
+    echo "<th>Valor Total</th>";
+    echo "<th>Status</th>";
+    echo "</tr>";
+
+    foreach ($dadosSistema as $d) {
+        $quantidade = (int)$d['quantidade'];
+        $valor = (float)$d['valor'];
+        $total = $quantidade * $valor;
+        $status = $quantidade < 0 ? 'NEGATIVO' : 'OK';
+
+        echo "<tr>";
+        echo "<td>" . htmlspecialchars((string)$d['descricao']) . "</td>";
+        echo "<td>" . number_format($valor, 2, ',', '.') . "</td>";
+        echo "<td>" . $quantidade . "</td>";
+        echo "<td>" . number_format($total, 2, ',', '.') . "</td>";
+        echo "<td>" . $status . "</td>";
+        echo "</tr>";
+    }
+
+    echo "<tr>";
+    echo "<td colspan='3'><strong>Total</strong></td>";
+    echo "<td><strong>" . number_format($totalSistema, 2, ',', '.') . "</strong></td>";
+    echo "<td></td>";
+    echo "</tr>";
+    echo "</table>";
+    exit;
+}
+
 /* =========================
    DETALHE MASTER (LUPA)
 ========================= */
@@ -168,6 +208,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 <button class="btn btn-dark w-100 mb-2" data-bs-toggle="modal" data-bs-target="#modalSistema">
 📊 Ver Inventário do Sistema
 </button>
+
+<a href="inventario.php?exportar_status=excel"
+class="btn btn-success w-100 mb-2">
+Baixar status atual em Excel
+</a>
 
 <a href="recalcular_estoque.php"
 class="btn btn-danger w-100 mb-2"

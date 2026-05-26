@@ -89,6 +89,43 @@ foreach ($tiposDinheiro as $t) {
     $tiposMap[(int)$t['id']] = (float)$t['valor'];
 }
 
+function saldosDinheiroTesouraria(PDO $pdo, int $empresaId, ?int $ignorarMovimentacaoId = null): array
+{
+    $whereIgnorar = '';
+    $params = [$empresaId];
+
+    if ($ignorarMovimentacaoId !== null) {
+        $whereIgnorar = ' AND m.id <> ?';
+        $params[] = $ignorarMovimentacaoId;
+    }
+
+    $stmt = $pdo->prepare("
+        SELECT
+            d.tipo_dinheiro_id,
+            SUM(
+                CASE
+                    WHEN d.tipo = 'entrada' THEN d.quantidade
+                    WHEN d.tipo = 'saida' THEN -d.quantidade
+                    ELSE 0
+                END
+            ) AS saldo
+        FROM tesouraria_movimentacoes_detalhes d
+        INNER JOIN tesouraria_movimentacoes m
+            ON m.id = d.movimentacao_id
+        WHERE m.empresa_id = ?
+          $whereIgnorar
+        GROUP BY d.tipo_dinheiro_id
+    ");
+    $stmt->execute($params);
+
+    $saldos = [];
+    foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $row) {
+        $saldos[(int)$row['tipo_dinheiro_id']] = (int)$row['saldo'];
+    }
+
+    return $saldos;
+}
+
 /* =========================
    SEPARAR MOEDAS E CÉDULAS
 ========================= */
@@ -219,6 +256,32 @@ if ($modoEdicao) {
 
     if ($tipo === 'T' && round($totalEntrada, 2) !== round($totalSaida, 2)) {
         die('Troca inválida.');
+    }
+
+    $saldosAtuais = saldosDinheiroTesouraria($pdo_master, $empresa_id, $modoEdicao ? (int)$id : null);
+    $tiposMovimentados = array_unique(array_merge(array_keys($entrada), array_keys($saida)));
+
+    foreach ($tiposMovimentados as $tipo_dinheiro_id) {
+        $tipo_dinheiro_id = (int)$tipo_dinheiro_id;
+        $qtdEntrada = max(0, (int)($entrada[$tipo_dinheiro_id] ?? 0));
+        $qtdSaida = max(0, (int)($saida[$tipo_dinheiro_id] ?? 0));
+
+        if ($qtdEntrada === 0 && $qtdSaida === 0) {
+            continue;
+        }
+
+        $saldoAtualTipo = (int)($saldosAtuais[$tipo_dinheiro_id] ?? 0);
+        $saldoDepois = $saldoAtualTipo + $qtdEntrada - $qtdSaida;
+
+        if ($saldoDepois < 0) {
+            $valorTipo = $tiposMap[$tipo_dinheiro_id] ?? 0;
+            die(
+                'Saldo insuficiente para R$ ' .
+                number_format((float)$valorTipo, 2, ',', '.') .
+                '. Saldo atual: ' . $saldoAtualTipo .
+                ', saida informada: ' . $qtdSaida . '.'
+            );
+        }
     }
 
     try {
