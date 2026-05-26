@@ -32,6 +32,64 @@ $stmt = $pdo_master->prepare("
 $stmt->execute([$rec_id, $empresa_id]);
 $rec = $stmt->fetch(PDO::FETCH_ASSOC);
 
+if ($rec && !empty($rec['CRCONTADOR'])) {
+    $stmtCrVinculado = $pdo_master->prepare("
+        SELECT
+            CRCONTADOR,
+            DTLANC,
+            DTEMISSAO,
+            VLRPARCELA,
+            CMCONTADOR,
+            recebimento_id
+        FROM armazem_cr001
+        WHERE CRCONTADOR = ?
+          AND EMPRESA = ?
+        LIMIT 1
+    ");
+    $stmtCrVinculado->execute([(int)$rec['CRCONTADOR'], $empresa_id]);
+    $crVinculado = $stmtCrVinculado->fetch(PDO::FETCH_ASSOC);
+    ?>
+
+    <div class="card shadow-sm mb-3">
+        <div class="card-header d-flex justify-content-between align-items-center">
+            <h5 class="mb-0">Conciliacao Manual</h5>
+            <a href="conciliar_recebimentos.php?data=<?= htmlspecialchars($data) ?>" class="btn btn-sm btn-secondary">Voltar</a>
+        </div>
+    </div>
+
+    <div class="alert alert-info">
+        Este recebivel ja esta vinculado ao CR001 <strong><?= (int)$rec['CRCONTADOR'] ?></strong>.
+        Por isso ele nao deve exibir novos possiveis matches.
+    </div>
+
+    <div class="card mb-3">
+        <div class="card-body">
+            <strong>Recebivel selecionado:</strong><br>
+            ID: <?= (int)$rec['id'] ?><br>
+            CM: <strong><?= htmlspecialchars((string)$rec['CMCONTADOR']) ?></strong><br>
+            Valor: <strong>R$ <?= number_format((float)$rec['valor_bruto'], 2, ',', '.') ?></strong><br>
+            Data: <?= !empty($rec['data_venda']) ? date('d/m/Y H:i', strtotime($rec['data_venda'])) : '-' ?>
+        </div>
+    </div>
+
+    <?php if ($crVinculado): ?>
+        <div class="card">
+            <div class="card-header">CR001 vinculado</div>
+            <div class="card-body">
+                <div>CRCONTADOR: <strong><?= (int)$crVinculado['CRCONTADOR'] ?></strong></div>
+                <div>CM: <strong><?= htmlspecialchars((string)$crVinculado['CMCONTADOR']) ?></strong></div>
+                <div>Data: <?= !empty($crVinculado['DTLANC']) ? date('d/m/Y H:i', strtotime($crVinculado['DTLANC'])) : '-' ?></div>
+                <div>Data do Movimento: <?= !empty($crVinculado['DTEMISSAO']) ? date('d/m/Y', strtotime($crVinculado['DTEMISSAO'])) : '-' ?></div>
+                <div>Valor: <strong>R$ <?= number_format((float)$crVinculado['VLRPARCELA'], 2, ',', '.') ?></strong></div>
+            </div>
+        </div>
+    <?php endif; ?>
+
+    <?php
+    require '../../layout/footer.php';
+    exit;
+}
+
 if (!$rec) {
     die("Recebível não encontrado.");
 }
@@ -49,6 +107,12 @@ $stmtCr = $pdo_master->prepare("
         c.CMCONTADOR
     FROM armazem_cr001 c
     WHERE c.recebimento_id IS NULL
+      AND NOT EXISTS (
+          SELECT 1
+          FROM armazem_conciliacao_recebimentos r2
+          WHERE r2.empresa_id = c.EMPRESA
+            AND r2.CRCONTADOR = c.CRCONTADOR
+      )
       AND c.EMPRESA = ?
       AND c.CMCONTADOR <> 9
       AND COALESCE(c.STATUS, '') <> 'QT'
@@ -93,6 +157,12 @@ if (empty($crs)) {
             ABS(TIMESTAMPDIFF(MINUTE, ?, c.DTLANC)) AS distancia_minutos
         FROM armazem_cr001 c
         WHERE c.recebimento_id IS NULL
+          AND NOT EXISTS (
+              SELECT 1
+              FROM armazem_conciliacao_recebimentos r2
+              WHERE r2.empresa_id = c.EMPRESA
+                AND r2.CRCONTADOR = c.CRCONTADOR
+          )
           AND c.EMPRESA = ?
           AND c.CMCONTADOR <> 9
           AND COALESCE(c.STATUS, '') <> 'QT'
@@ -129,6 +199,12 @@ if ($modoFallback && empty($crs)) {
             ABS(TIMESTAMPDIFF(MINUTE, ?, c.DTLANC)) AS distancia_minutos
         FROM armazem_cr001 c
         WHERE c.recebimento_id IS NULL
+          AND NOT EXISTS (
+              SELECT 1
+              FROM armazem_conciliacao_recebimentos r2
+              WHERE r2.empresa_id = c.EMPRESA
+                AND r2.CRCONTADOR = c.CRCONTADOR
+          )
           AND c.EMPRESA = ?
           AND c.CMCONTADOR <> 9
           AND COALESCE(c.STATUS, '') <> 'QT'
