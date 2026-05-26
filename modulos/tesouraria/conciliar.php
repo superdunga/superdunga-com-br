@@ -44,7 +44,26 @@ function garantirTabelaFirebirdConferidos(PDO $pdo): void
     }
 }
 
+function garantirIndiceUnicoFirebirdTesouraria(PDO $pdo): void
+{
+    $existe = $pdo->query("
+        SELECT COUNT(*)
+        FROM INFORMATION_SCHEMA.STATISTICS
+        WHERE TABLE_SCHEMA = DATABASE()
+          AND TABLE_NAME = 'tesouraria_movimentacoes'
+          AND INDEX_NAME = 'uniq_tesouraria_empresa_firebird'
+    ")->fetchColumn();
+
+    if ((int)$existe === 0) {
+        $pdo->exec("
+            CREATE UNIQUE INDEX uniq_tesouraria_empresa_firebird
+            ON tesouraria_movimentacoes (empresa_id, firebird_id)
+        ");
+    }
+}
+
 garantirTabelaFirebirdConferidos($pdo_master);
+garantirIndiceUnicoFirebirdTesouraria($pdo_master);
 
 if (empty($_SESSION['csrf_conciliar_tesouraria'])) {
     $_SESSION['csrf_conciliar_tesouraria'] = bin2hex(random_bytes(32));
@@ -73,6 +92,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['acao'] ?? '') === 'concili
             INNER JOIN armazem_bnc001 f
                 ON ABS(CAST(t.valor_operacao AS DECIMAL(15,2))) = CAST(f.VALORMOV AS DECIMAL(15,2))
                AND DATE(t.data_mov) = DATE(f.DTMOV)
+               AND UPPER(t.tipo_operacao) = UPPER(f.TIPOMOV)
             WHERE t.id = ?
               AND f.MOVCONTADOR = ?
               AND t.empresa_id = ?
@@ -188,6 +208,7 @@ try {
         INNER JOIN armazem_bnc001 f
             ON ABS(CAST(t.valor_operacao AS DECIMAL(15,2))) = CAST(f.VALORMOV AS DECIMAL(15,2))
            AND DATE(t.data_mov) = DATE(f.DTMOV)
+           AND UPPER(t.tipo_operacao) = UPPER(f.TIPOMOV)
         WHERE t.conciliado = 'N'
           AND t.empresa_id = ?
           AND t.tipo_operacao <> 'T'
@@ -201,6 +222,17 @@ try {
               FROM tesouraria_movimentacoes tx
               WHERE tx.firebird_id = f.MOVCONTADOR
                 AND tx.empresa_id = t.empresa_id
+          )
+          AND NOT EXISTS (
+              SELECT 1
+              FROM tesouraria_movimentacoes t2
+              WHERE t2.id <> t.id
+                AND t2.conciliado = 'N'
+                AND t2.empresa_id = t.empresa_id
+                AND t2.tipo_operacao <> 'T'
+                AND UPPER(t2.tipo_operacao) = UPPER(f.TIPOMOV)
+                AND ABS(CAST(t2.valor_operacao AS DECIMAL(15,2))) = CAST(f.VALORMOV AS DECIMAL(15,2))
+                AND DATE(t2.data_mov) = DATE(f.DTMOV)
           )
         GROUP BY t.id
         HAVING COUNT(f.MOVCONTADOR) = 1
@@ -225,6 +257,7 @@ $stmtPendentes = $pdo_master->prepare("
     SELECT
         t.id,
         t.data_mov,
+        t.tipo_operacao,
         t.valor_operacao,
         t.observacao,
         (
@@ -232,6 +265,7 @@ $stmtPendentes = $pdo_master->prepare("
             FROM armazem_bnc001 f
             WHERE ABS(CAST(t.valor_operacao AS DECIMAL(15,2))) = CAST(f.VALORMOV AS DECIMAL(15,2))
               AND DATE(f.DTMOV) = DATE(t.data_mov)
+              AND UPPER(t.tipo_operacao) = UPPER(f.TIPOMOV)
               AND f.EMPRESA = ?
               AND f.CBCONTADOR = ?
               $filtro_movcontador_firebird
@@ -268,6 +302,7 @@ if (!empty($pendentes)) {
         FROM armazem_bnc001 f
         WHERE ABS(CAST(? AS DECIMAL(15,2))) = CAST(f.VALORMOV AS DECIMAL(15,2))
           AND DATE(f.DTMOV) = DATE(?)
+          AND UPPER(?) = UPPER(f.TIPOMOV)
           AND f.EMPRESA = ?
           AND f.CBCONTADOR = ?
           $filtro_movcontador_firebird
@@ -284,7 +319,7 @@ if (!empty($pendentes)) {
 
     foreach ($pendentes as $p) {
         if ((int)$p['qtd_matches'] > 1) {
-            $stmtCandidatos->execute([$p['valor_operacao'], $p['data_mov'], $empresa_id, $cbcontador_tesouraria, $empresa_id]);
+            $stmtCandidatos->execute([$p['valor_operacao'], $p['data_mov'], $p['tipo_operacao'], $empresa_id, $cbcontador_tesouraria, $empresa_id]);
             $candidatosPorTesouraria[(int)$p['id']] = $stmtCandidatos->fetchAll(PDO::FETCH_ASSOC);
         }
     }
