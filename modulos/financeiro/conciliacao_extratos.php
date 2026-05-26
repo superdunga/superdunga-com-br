@@ -778,8 +778,9 @@ $dataIni = trim($_GET['data_ini'] ?? date('Y-m-01'));
 $dataFim = trim($_GET['data_fim'] ?? date('Y-m-d'));
 $dataIniSql = $dataIni !== '' ? $dataIni . ' 00:00:00' : '';
 $dataFimExclusivoSql = $dataFim !== '' ? date('Y-m-d 00:00:00', strtotime($dataFim . ' +1 day')) : '';
-$dataIniSugestaoSql = $dataIni !== '' ? date('Y-m-d 00:00:00', strtotime($dataIni . ' -2 days')) : '';
-$dataFimSugestaoSql = $dataFim !== '' ? date('Y-m-d 00:00:00', strtotime($dataFim . ' +3 days')) : '';
+$diasJanelaMatchManual = 15;
+$dataIniSugestaoSql = $dataIni !== '' ? date('Y-m-d 00:00:00', strtotime($dataIni . " -{$diasJanelaMatchManual} days")) : '';
+$dataFimSugestaoSql = $dataFim !== '' ? date('Y-m-d 00:00:00', strtotime($dataFim . " +{$diasJanelaMatchManual} days")) : '';
 $configInterExtrato = buscarConfigInterExtrato($pdo_master, $empresaId) ?: [];
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['acao'] ?? '') === 'salvar_inter_extrato') {
@@ -1472,8 +1473,8 @@ if ($cbcontador > 0 && $dataIni !== '' && $dataFim !== '') {
                AND b.CBCONTADOR = e.cbcontador
                AND b.VALORMOV = e.valor
                AND b.TIPOMOV = e.tipo
-               AND b.DTMOV >= DATE_SUB(e.data_movimento, INTERVAL 2 DAY)
-               AND b.DTMOV < DATE_ADD(e.data_movimento, INTERVAL 3 DAY)
+               AND b.DTMOV >= DATE_SUB(e.data_movimento, INTERVAL {$diasJanelaMatchManual} DAY)
+               AND b.DTMOV < DATE_ADD(e.data_movimento, INTERVAL " . ($diasJanelaMatchManual + 1) . " DAY)
                AND b.DTMOV >= ?
                AND b.DTMOV < ?
                AND (b.deletado IS NULL OR b.deletado <> 'S')
