@@ -1,6 +1,5 @@
 <?php
 require '../../config/auth.php';
-require '../../layout/header.php';
 require '../../config/conexao.php';
 
 $empresa_id = (int)$_SESSION['empresa_id'];
@@ -182,6 +181,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         echo "<div class='alert alert-danger'>Erro: " . $e->getMessage() . "</div>";
     }
 }
+require '../../layout/header.php';
 ?>
 
 <div class="card shadow-sm">
