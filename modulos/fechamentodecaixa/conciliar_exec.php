@@ -60,7 +60,10 @@ try {
     $stmt = $pdo_master->prepare("
         UPDATE armazem_cr001
         SET
-            recebimento_id = ?
+            recebimento_id = ?,
+            CMCONTADOR = ?,
+            enviado_firebird = 'N',
+            data_envio_firebird = NULL
         WHERE CRCONTADOR = ?
           AND EMPRESA = ?
           AND recebimento_id IS NULL
@@ -69,6 +72,7 @@ try {
     ");
     $stmt->execute([
         $rec_id,
+        $rec['CMCONTADOR'],
         $cr_id,
         $empresa_id
     ]);
