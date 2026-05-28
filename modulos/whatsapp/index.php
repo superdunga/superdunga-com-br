@@ -14,6 +14,8 @@ if (empty($_SESSION['csrf_whatsapp'])) {
 $csrf = $_SESSION['csrf_whatsapp'];
 $alerta = null;
 $erro = null;
+$previewRotina = null;
+$previewMensagem = null;
 
 function postValue(string $key, string $default = ''): string
 {
@@ -265,6 +267,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $alerta = "Rotina enviada: {$resultado['ok']} OK, {$resultado['falha']} erro(s).";
         }
 
+        if ($acao === 'preview_rotina') {
+            $rotinaId = (int)($_POST['rotina_id'] ?? 0);
+            $stmt = $pdo_master->prepare("SELECT * FROM whatsapp_rotinas WHERE id = ? AND empresa_id = ?");
+            $stmt->execute([$rotinaId, $empresaId]);
+            $rotina = $stmt->fetch(PDO::FETCH_ASSOC);
+
+            if (!$rotina) {
+                throw new Exception('Rotina nao encontrada.');
+            }
+
+            list($mensagemPreview) = whatsappMensagemRotina($pdo_master, $rotina);
+            $previewRotina = $rotina;
+            $previewMensagem = $mensagemPreview;
+        }
+
         if ($acao === 'salvar_agendamento') {
             $rotinaId = (int)($_POST['rotina_id'] ?? 0);
             $periodicidade = postValue('periodicidade_agendamento', 'DIARIO');
@@ -401,6 +418,21 @@ require __DIR__ . '/../../layout/header.php';
 
 <?php if ($erro): ?>
     <div class="alert alert-danger"><?= htmlspecialchars($erro) ?></div>
+<?php endif; ?>
+
+<?php if ($previewMensagem !== null && $previewRotina !== null): ?>
+    <div class="card shadow-sm border-primary mb-3" id="preview-rotina">
+        <div class="card-header bg-primary text-white d-flex justify-content-between align-items-center">
+            <div>
+                <strong>Previa da mensagem</strong>
+                <span class="ms-2"><?= htmlspecialchars($previewRotina['nome'] ?? '') ?></span>
+            </div>
+            <span class="badge text-bg-light"><?= htmlspecialchars($previewRotina['codigo'] ?? '') ?></span>
+        </div>
+        <div class="card-body">
+            <pre class="mb-0 p-3 bg-light border rounded small text-break" style="white-space: pre-wrap; font-family: inherit;"><?= htmlspecialchars($previewMensagem) ?></pre>
+        </div>
+    </div>
 <?php endif; ?>
 
 <div class="row g-3 mb-3">
@@ -742,6 +774,12 @@ require __DIR__ . '/../../layout/header.php';
                             <td class="text-center">
                                 <div class="d-flex gap-1 justify-content-center">
                                     <button class="btn btn-sm btn-outline-primary" type="button" data-bs-toggle="collapse" data-bs-target="#rotina<?= (int)$r['id'] ?>">Editar</button>
+                                    <form method="post">
+                                        <input type="hidden" name="csrf" value="<?= htmlspecialchars($csrf) ?>">
+                                        <input type="hidden" name="acao" value="preview_rotina">
+                                        <input type="hidden" name="rotina_id" value="<?= (int)$r['id'] ?>">
+                                        <button class="btn btn-sm btn-outline-secondary">Previa</button>
+                                    </form>
                                     <form method="post">
                                         <input type="hidden" name="csrf" value="<?= htmlspecialchars($csrf) ?>">
                                         <input type="hidden" name="acao" value="enviar_rotina">

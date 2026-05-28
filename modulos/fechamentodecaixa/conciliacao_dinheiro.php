@@ -24,6 +24,496 @@ function garantirTabelaCaixasFinalizados(PDO $pdo): void
 
 garantirTabelaCaixasFinalizados($pdo_master);
 
+function moedaCaixaExport(float $valor): string
+{
+    return 'R$ ' . number_format($valor, 2, ',', '.');
+}
+
+function dataHoraCaixaExport(?string $valor): string
+{
+    if (empty($valor)) {
+        return '';
+    }
+
+    return date('d/m/Y H:i', strtotime($valor));
+}
+
+function buscarDadosExportacaoCaixa(PDO $pdo, int $empresaId, string $dataOperacional, int $cbcontador): array
+{
+    $inicio = $dataOperacional . ' 07:00:00';
+    $fim = date('Y-m-d 03:00:00', strtotime($dataOperacional . ' +1 day'));
+
+    $stmtOperador = $pdo->prepare("
+        SELECT COALESCE(MIN(NULLIF(NOMEUSER, '')), CONCAT('Caixa ', ?)) AS operador
+        FROM armazem_zconfig005
+        WHERE EMPRESA = ?
+          AND CODCX = ?
+          AND COALESCE(DESATIVADO, 'N') <> 'S'
+    ");
+    $stmtOperador->execute([$cbcontador, $empresaId, $cbcontador]);
+    $operador = (string)($stmtOperador->fetchColumn() ?: ('Caixa ' . $cbcontador));
+
+    $stmtSaldo = $pdo->prepare("
+        SELECT
+            COALESCE(SUM(
+                CASE
+                    WHEN TIPOMOV = 'C' THEN VALORMOV
+                    WHEN TIPOMOV = 'D' THEN -VALORMOV
+                    ELSE 0
+                END
+            ), 0) AS diferenca_dinheiro
+        FROM armazem_bnc001
+        WHERE EMPRESA = ?
+          AND CBCONTADOR = ?
+          AND DTLANC BETWEEN ? AND ?
+          AND COALESCE(deletado, 'N') <> 'S'
+    ");
+    $stmtSaldo->execute([$empresaId, $cbcontador, $inicio, $fim]);
+    $diferencaDinheiro = (float)$stmtSaldo->fetchColumn();
+    if (abs($diferencaDinheiro) <= 0.01) {
+        $diferencaDinheiro = 0.0;
+    }
+
+    $stmtAbertura = $pdo->prepare("
+        SELECT VALORMOV, DTLANC, HISTMOV
+        FROM armazem_bnc001
+        WHERE EMPRESA = ?
+          AND CBCONTADOR = ?
+          AND DTLANC BETWEEN ? AND ?
+          AND COALESCE(deletado, 'N') <> 'S'
+          AND HISTMOV LIKE 'ABERTURA%'
+        ORDER BY DTLANC ASC, MOVCONTADOR ASC
+        LIMIT 1
+    ");
+    $stmtAbertura->execute([$empresaId, $cbcontador, $inicio, $fim]);
+    $abertura = $stmtAbertura->fetch(PDO::FETCH_ASSOC) ?: [];
+
+    $stmtFechamento = $pdo->prepare("
+        SELECT VALORMOV, DTLANC, HISTMOV
+        FROM armazem_bnc001
+        WHERE EMPRESA = ?
+          AND CBCONTADOR = ?
+          AND DTLANC BETWEEN ? AND ?
+          AND COALESCE(deletado, 'N') <> 'S'
+          AND HISTMOV LIKE 'FECHAMENTO%'
+        ORDER BY DTLANC DESC, MOVCONTADOR DESC
+        LIMIT 1
+    ");
+    $stmtFechamento->execute([$empresaId, $cbcontador, $inicio, $fim]);
+    $fechamento = $stmtFechamento->fetch(PDO::FETCH_ASSOC) ?: [];
+
+    $stmtCr = $pdo->prepare("
+        SELECT
+            c.CRCONTADOR,
+            c.NUMDOCORIGEM,
+            c.DTLANC,
+            c.VLRPARCELA,
+            c.CMCONTADOR,
+            COALESCE(NULLIF(cli.NOME, ''), NULLIF(cli.APELIDO, ''), '') AS cliente_nome
+        FROM armazem_cr001 c
+        INNER JOIN armazem_zconfig005 z
+            ON z.EMPRESA = c.EMPRESA
+           AND z.CODUSER = c.USERLANC
+           AND z.CODCX = ?
+        LEFT JOIN armazem_cr002 cli
+            ON cli.EMPRESA = c.EMPRESA
+           AND cli.CLICONTADOR = c.CLICONTADOR
+        WHERE c.DTLANC BETWEEN ? AND ?
+          AND c.EMPRESA = ?
+          AND c.CMCONTADOR <> 9
+          AND c.recebimento_id IS NULL
+          AND COALESCE(c.STATUS, '') <> 'QT'
+          AND COALESCE(c.excluido_firebird, 'N') = 'N'
+        ORDER BY c.DTLANC ASC, c.CRCONTADOR ASC
+    ");
+    $stmtCr->execute([$cbcontador, $inicio, $fim, $empresaId]);
+    $crPendentes = $stmtCr->fetchAll(PDO::FETCH_ASSOC);
+
+    $vendasIds = [];
+    foreach ($crPendentes as $cr) {
+        $vendaId = (int)($cr['NUMDOCORIGEM'] ?? 0);
+        if ($vendaId > 0) {
+            $vendasIds[$vendaId] = true;
+        }
+    }
+
+    $itensPorVenda = [];
+    if (!empty($vendasIds)) {
+        $idsVenda = array_keys($vendasIds);
+        $placeholders = implode(',', array_fill(0, count($idsVenda), '?'));
+        $stmtItens = $pdo->prepare("
+            SELECT
+                i.ITEMVENDACONTADOR,
+                i.VENDACONTA,
+                i.PRODUTO,
+                i.QTDE,
+                i.VALOR,
+                i.TOTPROD,
+                p.CODPRODUTO,
+                p.DESCPRODUTO,
+                p.UNIDADE
+            FROM armazem_est008 i
+            LEFT JOIN armazem_est004 p
+                ON p.EMPRESA = i.EMPRESA
+               AND p.CONTAPRODUTO = i.PRODUTO
+            WHERE i.EMPRESA = ?
+              AND i.ITEMVENDACONTADOR IN ($placeholders)
+              AND COALESCE(i.CANCELADO, 'N') <> 'S'
+            ORDER BY i.ITEMVENDACONTADOR ASC, i.VENDACONTA ASC
+        ");
+        $stmtItens->execute(array_merge([$empresaId], $idsVenda));
+        while ($item = $stmtItens->fetch(PDO::FETCH_ASSOC)) {
+            $itensPorVenda[(int)$item['ITEMVENDACONTADOR']][] = $item;
+        }
+    }
+
+    $stmtRecebiveis = $pdo->prepare("
+        SELECT
+            r.id,
+            r.data_venda,
+            r.valor_bruto,
+            r.CMCONTADOR,
+            COALESCE(NULLIF(r.pagador, ''), NULLIF(r.origem, ''), 'Recebivel') AS pagador,
+            r.descricao,
+            r.identificador
+        FROM armazem_conciliacao_recebimentos r
+        WHERE r.data_venda BETWEEN ? AND ?
+          AND r.empresa_id = ?
+          AND r.CRCONTADOR IS NULL
+          AND NOT EXISTS (
+              SELECT 1
+              FROM armazem_cr001 c
+              WHERE c.recebimento_id = r.id
+                AND c.EMPRESA = ?
+                AND COALESCE(c.STATUS, '') <> 'QT'
+                AND COALESCE(c.excluido_firebird, 'N') = 'N'
+          )
+        ORDER BY r.data_venda ASC, r.id ASC
+    ");
+    $stmtRecebiveis->execute([$inicio, $fim, $empresaId, $empresaId]);
+    $recebiveisPendentes = $stmtRecebiveis->fetchAll(PDO::FETCH_ASSOC);
+
+    $totalCr = array_sum(array_map(static fn($cr) => (float)($cr['VLRPARCELA'] ?? 0), $crPendentes));
+    $totalRecebiveis = array_sum(array_map(static fn($rec) => (float)($rec['valor_bruto'] ?? 0), $recebiveisPendentes));
+
+    return [
+        'data_operacional' => $dataOperacional,
+        'inicio' => $inicio,
+        'fim' => $fim,
+        'cbcontador' => $cbcontador,
+        'operador' => $operador,
+        'abertura' => $abertura,
+        'fechamento' => $fechamento,
+        'diferenca_dinheiro' => $diferencaDinheiro,
+        'cr_pendentes' => $crPendentes,
+        'itens_por_venda' => $itensPorVenda,
+        'recebiveis_pendentes' => $recebiveisPendentes,
+        'total_cr' => (float)$totalCr,
+        'total_recebiveis' => (float)$totalRecebiveis,
+        'diferenca_final' => $diferencaDinheiro + (float)$totalCr - (float)$totalRecebiveis,
+    ];
+}
+
+function exportarConferenciaCaixaXls(array $dados): void
+{
+    $nomeArquivo = 'conferencia_caixa_' . $dados['data_operacional'] . '_caixa_' . $dados['cbcontador'] . '.xls';
+
+    header('Content-Type: application/vnd.ms-excel; charset=UTF-8');
+    header('Content-Disposition: attachment; filename="' . $nomeArquivo . '"');
+    header('Cache-Control: no-store, no-cache, must-revalidate');
+
+    echo "\xEF\xBB\xBF";
+    ?>
+    <html>
+    <head>
+        <meta charset="UTF-8">
+        <style>
+            table { border-collapse: collapse; width: 100%; }
+            th, td { border: 1px solid #999; padding: 5px; vertical-align: top; }
+            th { background: #17336f; color: #fff; }
+            .titulo { background: #d9e6ff; font-weight: bold; font-size: 16px; }
+            .subtitulo { background: #e9ecef; font-weight: bold; }
+            .numero { text-align: right; }
+        </style>
+    </head>
+    <body>
+        <table>
+            <tr><td colspan="6" class="titulo">Conferencia do Caixa</td></tr>
+            <tr><td>Data do caixa</td><td colspan="5"><?= date('d/m/Y', strtotime($dados['data_operacional'])) ?></td></tr>
+            <tr><td>Operador</td><td colspan="5"><?= htmlspecialchars($dados['operador']) ?></td></tr>
+            <tr><td>Caixa</td><td colspan="5"><?= (int)$dados['cbcontador'] ?></td></tr>
+            <tr><td>Periodo</td><td colspan="5"><?= dataHoraCaixaExport($dados['inicio']) ?> ate <?= dataHoraCaixaExport($dados['fim']) ?></td></tr>
+            <tr><td>Valor de Abertura</td><td colspan="5" class="numero"><?= moedaCaixaExport((float)($dados['abertura']['VALORMOV'] ?? 0)) ?></td></tr>
+            <tr><td>Valor de Fechamento</td><td colspan="5" class="numero"><?= moedaCaixaExport((float)($dados['fechamento']['VALORMOV'] ?? 0)) ?></td></tr>
+            <tr><td>Diferenca no dinheiro</td><td colspan="5" class="numero"><?= moedaCaixaExport((float)$dados['diferenca_dinheiro']) ?></td></tr>
+            <tr><td>Passou no caixa e nao recebeu (CR001 PEND)</td><td colspan="5" class="numero"><?= count($dados['cr_pendentes']) ?> | <?= moedaCaixaExport((float)$dados['total_cr']) ?></td></tr>
+            <tr><td>Recebeu e nao passou no caixa (RECEBIVEIS PEN)</td><td colspan="5" class="numero"><?= count($dados['recebiveis_pendentes']) ?> | <?= moedaCaixaExport((float)$dados['total_recebiveis']) ?></td></tr>
+            <tr><td>DIF. FINAL</td><td colspan="5" class="numero"><?= moedaCaixaExport((float)$dados['diferenca_final']) ?></td></tr>
+        </table>
+
+        <br>
+        <table>
+            <tr><td colspan="6" class="subtitulo">Passou no caixa e nao recebeu (CR001 PEND)</td></tr>
+            <tr>
+                <th>Venda</th>
+                <th>CR001</th>
+                <th>Data/Hora venda</th>
+                <th>CM</th>
+                <th>Cliente</th>
+                <th>Valor venda</th>
+            </tr>
+            <?php if (empty($dados['cr_pendentes'])): ?>
+                <tr><td colspan="6">Nenhum registro</td></tr>
+            <?php endif; ?>
+            <?php foreach ($dados['cr_pendentes'] as $cr): ?>
+                <?php $vendaId = (int)($cr['NUMDOCORIGEM'] ?? 0); ?>
+                <tr>
+                    <td><?= $vendaId ?: '' ?></td>
+                    <td><?= (int)$cr['CRCONTADOR'] ?></td>
+                    <td><?= dataHoraCaixaExport($cr['DTLANC'] ?? '') ?></td>
+                    <td><?= htmlspecialchars((string)($cr['CMCONTADOR'] ?? '')) ?></td>
+                    <td><?= htmlspecialchars((string)($cr['cliente_nome'] ?? '')) ?></td>
+                    <td class="numero"><?= moedaCaixaExport((float)($cr['VLRPARCELA'] ?? 0)) ?></td>
+                </tr>
+                <tr>
+                    <td></td>
+                    <td colspan="5">
+                        <table>
+                            <tr>
+                                <th>Item</th>
+                                <th>Produto</th>
+                                <th>Descricao</th>
+                                <th>Qtde</th>
+                                <th>Unitario</th>
+                                <th>Total</th>
+                            </tr>
+                            <?php $itens = $dados['itens_por_venda'][$vendaId] ?? []; ?>
+                            <?php if (empty($itens)): ?>
+                                <tr><td colspan="6">Nenhum item encontrado para esta venda.</td></tr>
+                            <?php endif; ?>
+                            <?php foreach ($itens as $item): ?>
+                                <tr>
+                                    <td><?= htmlspecialchars((string)($item['VENDACONTA'] ?? '')) ?></td>
+                                    <td><?= htmlspecialchars((string)($item['CODPRODUTO'] ?? $item['PRODUTO'] ?? '')) ?></td>
+                                    <td><?= htmlspecialchars((string)($item['DESCPRODUTO'] ?? '')) ?></td>
+                                    <td class="numero"><?= number_format((float)($item['QTDE'] ?? 0), 3, ',', '.') ?> <?= htmlspecialchars((string)($item['UNIDADE'] ?? '')) ?></td>
+                                    <td class="numero"><?= moedaCaixaExport((float)($item['VALOR'] ?? 0)) ?></td>
+                                    <td class="numero"><?= moedaCaixaExport((float)($item['TOTPROD'] ?? 0)) ?></td>
+                                </tr>
+                            <?php endforeach; ?>
+                        </table>
+                    </td>
+                </tr>
+            <?php endforeach; ?>
+        </table>
+
+        <br>
+        <table>
+            <tr><td colspan="5" class="subtitulo">Recebeu e nao passou no caixa (RECEBIVEIS PEN)</td></tr>
+            <tr>
+                <th>ID</th>
+                <th>Data/Hora</th>
+                <th>CM</th>
+                <th>Pagador</th>
+                <th>Valor</th>
+            </tr>
+            <?php if (empty($dados['recebiveis_pendentes'])): ?>
+                <tr><td colspan="5">Nenhum registro</td></tr>
+            <?php endif; ?>
+            <?php foreach ($dados['recebiveis_pendentes'] as $recebivel): ?>
+                <tr>
+                    <td><?= (int)$recebivel['id'] ?></td>
+                    <td><?= dataHoraCaixaExport($recebivel['data_venda'] ?? '') ?></td>
+                    <td><?= htmlspecialchars((string)($recebivel['CMCONTADOR'] ?? '')) ?></td>
+                    <td><?= htmlspecialchars((string)($recebivel['pagador'] ?? '')) ?></td>
+                    <td class="numero"><?= moedaCaixaExport((float)($recebivel['valor_bruto'] ?? 0)) ?></td>
+                </tr>
+            <?php endforeach; ?>
+        </table>
+    </body>
+    </html>
+    <?php
+    exit;
+}
+
+function textoPdfCaixa($valor, int $limite = 0): string
+{
+    $texto = preg_replace('/\s+/', ' ', trim((string)$valor));
+    if ($limite > 0) {
+        if (function_exists('mb_strlen') && function_exists('mb_substr')) {
+            if (mb_strlen($texto, 'UTF-8') > $limite) {
+                $texto = mb_substr($texto, 0, max(0, $limite - 3), 'UTF-8') . '...';
+            }
+        } elseif (strlen($texto) > $limite) {
+            $texto = substr($texto, 0, max(0, $limite - 3)) . '...';
+        }
+    }
+
+    $convertido = iconv('UTF-8', 'ISO-8859-1//TRANSLIT', $texto);
+    return $convertido === false ? $texto : $convertido;
+}
+
+function escaparPdfCaixa(string $texto): string
+{
+    return str_replace(['\\', '(', ')'], ['\\\\', '\\(', '\\)'], $texto);
+}
+
+function comandoTextoPdfCaixa(float $x, float $y, int $tamanho, string $texto, bool $negrito = false): string
+{
+    $fonte = $negrito ? 'F2' : 'F1';
+    return "BT /{$fonte} {$tamanho} Tf 1 0 0 1 " . number_format($x, 2, '.', '') . ' ' . number_format($y, 2, '.', '') . ' Tm (' . escaparPdfCaixa($texto) . ") Tj ET\n";
+}
+
+function exportarConferenciaCaixaPdf(array $dados): void
+{
+    $largura = 595;
+    $altura = 842;
+    $margem = 34;
+    $yInicial = $altura - 38;
+    $yMinimo = 34;
+    $paginas = [];
+    $conteudo = '';
+    $y = $yInicial;
+
+    $novaPagina = static function () use (&$paginas, &$conteudo, &$y, $yInicial): void {
+        if ($conteudo !== '') {
+            $paginas[] = $conteudo;
+        }
+        $conteudo = '';
+        $y = $yInicial;
+    };
+
+    $linha = static function (string $texto = '', bool $negrito = false, int $tamanho = 9, int $recuo = 0) use (&$conteudo, &$y, $margem, $yMinimo, $novaPagina): void {
+        if ($y < $yMinimo) {
+            $novaPagina();
+        }
+        $conteudo .= comandoTextoPdfCaixa($margem + $recuo, $y, $tamanho, textoPdfCaixa($texto, 120), $negrito);
+        $y -= ($tamanho >= 12 ? 17 : 13);
+    };
+
+    $linha('Conferencia detalhada do caixa', true, 15);
+    $linha('Data do caixa: ' . date('d/m/Y', strtotime($dados['data_operacional'])));
+    $linha('Operador: ' . $dados['operador']);
+    $linha('Caixa: ' . (int)$dados['cbcontador']);
+    $linha('Valor de Abertura: ' . moedaCaixaExport((float)($dados['abertura']['VALORMOV'] ?? 0)));
+    $linha('Valor de Fechamento: ' . moedaCaixaExport((float)($dados['fechamento']['VALORMOV'] ?? 0)));
+    $linha('Diferenca no dinheiro: ' . moedaCaixaExport((float)$dados['diferenca_dinheiro']));
+    $linha('Passou no caixa e nao recebeu (CR001 PEND): ' . count($dados['cr_pendentes']) . ' | ' . moedaCaixaExport((float)$dados['total_cr']));
+    $linha('Recebeu e nao passou no caixa (RECEBIVEIS PEN): ' . count($dados['recebiveis_pendentes']) . ' | ' . moedaCaixaExport((float)$dados['total_recebiveis']));
+    $linha('DIF. FINAL: ' . moedaCaixaExport((float)$dados['diferenca_final']), true, 11);
+    $linha();
+
+    $linha('Passou no caixa e nao recebeu (CR001 PEND)', true, 12);
+    if (empty($dados['cr_pendentes'])) {
+        $linha('Nenhum registro.');
+    }
+    foreach ($dados['cr_pendentes'] as $cr) {
+        $vendaId = (int)($cr['NUMDOCORIGEM'] ?? 0);
+        $linha(
+            'Venda: ' . ($vendaId ?: '-') .
+            ' | CR001: ' . (int)$cr['CRCONTADOR'] .
+            ' | Data/Hora: ' . dataHoraCaixaExport($cr['DTLANC'] ?? '') .
+            ' | Valor: ' . moedaCaixaExport((float)($cr['VLRPARCELA'] ?? 0)),
+            true
+        );
+        $linha('Cliente: ' . (string)($cr['cliente_nome'] ?? '') . ' | CM: ' . (string)($cr['CMCONTADOR'] ?? ''), false, 8, 12);
+
+        $itens = $dados['itens_por_venda'][$vendaId] ?? [];
+        if (empty($itens)) {
+            $linha('Itens: nenhum item encontrado para esta venda.', false, 8, 12);
+        } else {
+            foreach ($itens as $item) {
+                $produto = (string)($item['CODPRODUTO'] ?? $item['PRODUTO'] ?? '');
+                $descricao = (string)($item['DESCPRODUTO'] ?? '');
+                $qtde = number_format((float)($item['QTDE'] ?? 0), 3, ',', '.');
+                $total = moedaCaixaExport((float)($item['TOTPROD'] ?? 0));
+                $linha('Item: ' . $produto . ' - ' . $descricao . ' | Qtde: ' . $qtde . ' | Total: ' . $total, false, 8, 12);
+            }
+        }
+        $linha();
+    }
+
+    $linha('Recebeu e nao passou no caixa (RECEBIVEIS PEN)', true, 12);
+    if (empty($dados['recebiveis_pendentes'])) {
+        $linha('Nenhum registro.');
+    }
+    foreach ($dados['recebiveis_pendentes'] as $recebivel) {
+        $linha(
+            'ID: ' . (int)$recebivel['id'] .
+            ' | Data/Hora: ' . dataHoraCaixaExport($recebivel['data_venda'] ?? '') .
+            ' | Valor: ' . moedaCaixaExport((float)($recebivel['valor_bruto'] ?? 0)) .
+            ' | CM: ' . (string)($recebivel['CMCONTADOR'] ?? ''),
+            true
+        );
+        $linha('Pagador: ' . (string)($recebivel['pagador'] ?? ''), false, 8, 12);
+        $linha();
+    }
+
+    if ($conteudo !== '') {
+        $paginas[] = $conteudo;
+    }
+
+    $totalPaginas = max(1, count($paginas));
+    foreach ($paginas as $indice => $paginaConteudo) {
+        $paginas[$indice] = $paginaConteudo . comandoTextoPdfCaixa($margem, 18, 8, textoPdfCaixa('Gerado em ' . date('d/m/Y H:i') . ' - Pagina ' . ($indice + 1) . ' de ' . $totalPaginas));
+    }
+
+    $objetos = [
+        1 => "<< /Type /Catalog /Pages 2 0 R >>",
+        2 => '',
+        3 => "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>",
+        4 => "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>",
+    ];
+    $idsPaginas = [];
+    $proximoId = 5;
+
+    foreach ($paginas as $paginaConteudo) {
+        $conteudoId = $proximoId++;
+        $paginaId = $proximoId++;
+        $objetos[$conteudoId] = "<< /Length " . strlen($paginaConteudo) . " >>\nstream\n{$paginaConteudo}endstream";
+        $objetos[$paginaId] = "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 {$largura} {$altura}] /Resources << /Font << /F1 3 0 R /F2 4 0 R >> >> /Contents {$conteudoId} 0 R >>";
+        $idsPaginas[] = $paginaId;
+    }
+
+    $objetos[2] = "<< /Type /Pages /Kids [" . implode(' ', array_map(static function ($id) {
+        return "{$id} 0 R";
+    }, $idsPaginas)) . "] /Count " . count($idsPaginas) . " >>";
+    ksort($objetos);
+
+    $pdf = "%PDF-1.4\n";
+    $offsets = [0 => 0];
+    foreach ($objetos as $id => $objeto) {
+        $offsets[$id] = strlen($pdf);
+        $pdf .= "{$id} 0 obj\n{$objeto}\nendobj\n";
+    }
+
+    $xref = strlen($pdf);
+    $pdf .= "xref\n0 " . (count($objetos) + 1) . "\n0000000000 65535 f \n";
+    for ($i = 1; $i <= count($objetos); $i++) {
+        $pdf .= str_pad((string)$offsets[$i], 10, '0', STR_PAD_LEFT) . " 00000 n \n";
+    }
+    $pdf .= "trailer\n<< /Size " . (count($objetos) + 1) . " /Root 1 0 R >>\nstartxref\n{$xref}\n%%EOF";
+
+    $nomeArquivo = 'conferencia_caixa_' . $dados['data_operacional'] . '_caixa_' . $dados['cbcontador'] . '.pdf';
+    header('Content-Type: application/pdf');
+    header('Content-Disposition: attachment; filename="' . $nomeArquivo . '"');
+    header('Content-Length: ' . strlen($pdf));
+    echo $pdf;
+    exit;
+}
+
+if (($_GET['exportar'] ?? '') === 'caixa') {
+    $dataExport = (string)($_GET['data'] ?? '');
+    $caixaExport = (int)($_GET['caixa'] ?? 0);
+
+    if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $dataExport) || $caixaExport <= 0) {
+        http_response_code(400);
+        exit('Parametros invalidos para exportacao.');
+    }
+
+    exportarConferenciaCaixaPdf(buscarDadosExportacaoCaixa($pdo_master, $empresa_id, $dataExport, $caixaExport));
+}
+
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $acao = $_POST['acao'] ?? '';
     $dataPost = $_POST['data_operacional'] ?? '';
@@ -334,6 +824,12 @@ require '../../layout/header.php';
                                 <div class="d-flex justify-content-center gap-1">
                                     <a href="extrato_caixa.php?data=<?= urlencode($dataOp) ?>&caixa=<?= urlencode((string)$r['CBCONTADOR']) ?>" class="btn btn-sm btn-outline-dark">
                                         Ver
+                                    </a>
+                                    <a
+                                        href="conciliacao_dinheiro.php?exportar=caixa&data=<?= urlencode($dataOp) ?>&caixa=<?= urlencode((string)$r['CBCONTADOR']) ?>"
+                                        class="btn btn-sm btn-outline-primary"
+                                    >
+                                        Exportar PDF
                                     </a>
 
                                     <?php if ($isMaster && $finalizado): ?>
