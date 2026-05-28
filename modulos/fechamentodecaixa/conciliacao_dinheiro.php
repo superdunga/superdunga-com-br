@@ -193,8 +193,12 @@ function buscarDadosExportacaoCaixa(PDO $pdo, int $empresaId, string $dataOperac
     $stmtRecebiveis->execute([$inicio, $fim, $empresaId, $empresaId]);
     $recebiveisPendentes = $stmtRecebiveis->fetchAll(PDO::FETCH_ASSOC);
 
-    $totalCr = array_sum(array_map(static fn($cr) => (float)($cr['VLRPARCELA'] ?? 0), $crPendentes));
-    $totalRecebiveis = array_sum(array_map(static fn($rec) => (float)($rec['valor_bruto'] ?? 0), $recebiveisPendentes));
+    $totalCr = array_sum(array_map(static function ($cr) {
+        return (float)($cr['VLRPARCELA'] ?? 0);
+    }, $crPendentes));
+    $totalRecebiveis = array_sum(array_map(static function ($rec) {
+        return (float)($rec['valor_bruto'] ?? 0);
+    }, $recebiveisPendentes));
 
     return [
         'data_operacional' => $dataOperacional,
