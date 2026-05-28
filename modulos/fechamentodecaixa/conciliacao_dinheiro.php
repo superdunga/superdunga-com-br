@@ -38,6 +38,31 @@ function dataHoraCaixaExport(?string $valor): string
     return date('d/m/Y H:i', strtotime($valor));
 }
 
+function valorLancamentoCaixaExport(array $movimento): float
+{
+    if (array_key_exists('VALORMOV', $movimento)) {
+        return abs((float)($movimento['VALORMOV'] ?? 0));
+    }
+
+    if (($movimento['tipo_operacao'] ?? '') === 'D') {
+        $valor = (float)($movimento['valor_entregue'] ?? 0);
+        return $valor > 0 ? $valor : abs((float)($movimento['valor_operacao'] ?? 0));
+    }
+
+    $valor = (float)($movimento['valor_troco'] ?? 0);
+    return $valor > 0 ? $valor : abs((float)($movimento['valor_operacao'] ?? 0));
+}
+
+function dataMovimentoCaixaExport(array $movimento): string
+{
+    return dataHoraCaixaExport($movimento['DTLANC'] ?? $movimento['data_mov'] ?? '');
+}
+
+function historicoMovimentoCaixaExport(array $movimento): string
+{
+    return (string)($movimento['HISTMOV'] ?? $movimento['observacao'] ?? '');
+}
+
 function buscarDadosExportacaoCaixa(PDO $pdo, int $empresaId, string $dataOperacional, int $cbcontador): array
 {
     $inicio = $dataOperacional . ' 07:00:00';
@@ -75,13 +100,13 @@ function buscarDadosExportacaoCaixa(PDO $pdo, int $empresaId, string $dataOperac
     }
 
     $stmtAbertura = $pdo->prepare("
-        SELECT VALORMOV, DTLANC, HISTMOV
+        SELECT MOVCONTADOR, VALORMOV, DTLANC, HISTMOV
         FROM armazem_bnc001
         WHERE EMPRESA = ?
           AND CBCONTADOR = ?
           AND DTLANC BETWEEN ? AND ?
           AND COALESCE(deletado, 'N') <> 'S'
-          AND HISTMOV LIKE 'ABERTURA%'
+          AND UPPER(TRIM(HISTMOV)) LIKE 'ABERTURA%'
         ORDER BY DTLANC ASC, MOVCONTADOR ASC
         LIMIT 1
     ");
@@ -89,13 +114,13 @@ function buscarDadosExportacaoCaixa(PDO $pdo, int $empresaId, string $dataOperac
     $abertura = $stmtAbertura->fetch(PDO::FETCH_ASSOC) ?: [];
 
     $stmtFechamento = $pdo->prepare("
-        SELECT VALORMOV, DTLANC, HISTMOV
+        SELECT MOVCONTADOR, VALORMOV, DTLANC, HISTMOV
         FROM armazem_bnc001
         WHERE EMPRESA = ?
           AND CBCONTADOR = ?
           AND DTLANC BETWEEN ? AND ?
           AND COALESCE(deletado, 'N') <> 'S'
-          AND HISTMOV LIKE 'FECHAMENTO%'
+          AND UPPER(TRIM(HISTMOV)) LIKE 'FECHAMENTO%'
         ORDER BY DTLANC DESC, MOVCONTADOR DESC
         LIMIT 1
     ");
@@ -373,11 +398,12 @@ function exportarConferenciaCaixaPdf(array $dados): void
     $largura = 595;
     $altura = 842;
     $margem = 34;
-    $yInicial = $altura - 38;
+    $yInicial = $altura - 32;
     $yMinimo = 34;
     $paginas = [];
     $conteudo = '';
     $y = $yInicial;
+    $larguraUtil = $largura - ($margem * 2);
 
     $novaPagina = static function () use (&$paginas, &$conteudo, &$y, $yInicial): void {
         if ($conteudo !== '') {
@@ -385,6 +411,12 @@ function exportarConferenciaCaixaPdf(array $dados): void
         }
         $conteudo = '';
         $y = $yInicial;
+    };
+
+    $garantirEspaco = static function (int $alturaNecessaria = 20) use (&$y, $yMinimo, $novaPagina): void {
+        if (($y - $alturaNecessaria) < $yMinimo) {
+            $novaPagina();
+        }
     };
 
     $linha = static function (string $texto = '', bool $negrito = false, int $tamanho = 9, int $recuo = 0) use (&$conteudo, &$y, $margem, $yMinimo, $novaPagina): void {
@@ -395,61 +427,97 @@ function exportarConferenciaCaixaPdf(array $dados): void
         $y -= ($tamanho >= 12 ? 17 : 13);
     };
 
-    $linha('Conferencia detalhada do caixa', true, 15);
-    $linha('Data do caixa: ' . date('d/m/Y', strtotime($dados['data_operacional'])));
-    $linha('Operador: ' . $dados['operador']);
-    $linha('Caixa: ' . (int)$dados['cbcontador']);
-    $linha('Valor de Abertura: ' . moedaCaixaExport((float)($dados['abertura']['VALORMOV'] ?? 0)));
-    $linha('Valor de Fechamento: ' . moedaCaixaExport((float)($dados['fechamento']['VALORMOV'] ?? 0)));
-    $linha('Diferenca no dinheiro: ' . moedaCaixaExport((float)$dados['diferenca_dinheiro']));
-    $linha('Passou no caixa e nao recebeu (CR001 PEND): ' . count($dados['cr_pendentes']) . ' | ' . moedaCaixaExport((float)$dados['total_cr']));
-    $linha('Recebeu e nao passou no caixa (RECEBIVEIS PEN): ' . count($dados['recebiveis_pendentes']) . ' | ' . moedaCaixaExport((float)$dados['total_recebiveis']));
-    $linha('DIF. FINAL: ' . moedaCaixaExport((float)$dados['diferenca_final']), true, 11);
-    $linha();
+    $secao = static function (string $titulo) use (&$conteudo, &$y, $margem, $larguraUtil, $garantirEspaco): void {
+        $garantirEspaco(28);
+        $conteudo .= "0.91 0.94 0.98 rg {$margem} " . ($y - 4) . " {$larguraUtil} 18 re f\n0 g\n";
+        $conteudo .= comandoTextoPdfCaixa($margem + 8, $y + 1, 9, textoPdfCaixa($titulo, 80), true);
+        $y -= 24;
+    };
 
-    $linha('Passou no caixa e nao recebeu (CR001 PEND)', true, 12);
+    $campo = static function (string $rotulo, string $valor, int $recuo = 0) use (&$conteudo, &$y, $margem, $linha): void {
+        $conteudo .= comandoTextoPdfCaixa($margem + $recuo, $y, 8, textoPdfCaixa($rotulo, 36), true);
+        $conteudo .= comandoTextoPdfCaixa($margem + $recuo + 150, $y, 8, textoPdfCaixa($valor, 70));
+        $y -= 13;
+    };
+
+    $aberturaValor = valorLancamentoCaixaExport($dados['abertura']);
+    $fechamentoValor = valorLancamentoCaixaExport($dados['fechamento']);
+    $aberturaInfo = !empty($dados['abertura'])
+        ? dataMovimentoCaixaExport($dados['abertura']) . ' - ' . historicoMovimentoCaixaExport($dados['abertura'])
+        : 'Nao localizado no periodo';
+    $fechamentoInfo = !empty($dados['fechamento'])
+        ? dataMovimentoCaixaExport($dados['fechamento']) . ' - ' . historicoMovimentoCaixaExport($dados['fechamento'])
+        : 'Nao localizado no periodo';
+
+    $conteudo .= "0.06 0.18 0.42 rg 0 " . ($altura - 86) . " {$largura} 86 re f\n0 g\n";
+    $conteudo .= comandoTextoPdfCaixa($margem, $altura - 35, 16, textoPdfCaixa('CONFERENCIA DETALHADA DO CAIXA'), true);
+    $conteudo .= comandoTextoPdfCaixa($margem, $altura - 56, 9, textoPdfCaixa('Data do caixa: ' . date('d/m/Y', strtotime($dados['data_operacional'])) . '   |   Caixa: ' . (int)$dados['cbcontador'] . '   |   Operador: ' . $dados['operador']));
+    $conteudo .= comandoTextoPdfCaixa($margem, $altura - 72, 8, textoPdfCaixa('Periodo operacional: ' . dataHoraCaixaExport($dados['inicio']) . ' ate ' . dataHoraCaixaExport($dados['fim'])));
+    $y = $altura - 112;
+
+    $secao('RESUMO DO CAIXA');
+    $campo('Valor de Abertura', moedaCaixaExport($aberturaValor));
+    $campo('Lancamento da Abertura', $aberturaInfo);
+    $campo('Valor de Fechamento', moedaCaixaExport($fechamentoValor));
+    $campo('Lancamento do Fechamento', $fechamentoInfo);
+    $campo('Diferenca no dinheiro', moedaCaixaExport((float)$dados['diferenca_dinheiro']));
+    $campo('CR001 PEND.', count($dados['cr_pendentes']) . ' registro(s) | ' . moedaCaixaExport((float)$dados['total_cr']));
+    $campo('RECEBIVEIS PEN.', count($dados['recebiveis_pendentes']) . ' registro(s) | ' . moedaCaixaExport((float)$dados['total_recebiveis']));
+    $campo('DIF. FINAL', moedaCaixaExport((float)$dados['diferenca_final']));
+    $y -= 6;
+
+    $secao('PASSOU NO CAIXA E NAO RECEBEU (CR001 PEND)');
     if (empty($dados['cr_pendentes'])) {
         $linha('Nenhum registro.');
     }
     foreach ($dados['cr_pendentes'] as $cr) {
         $vendaId = (int)($cr['NUMDOCORIGEM'] ?? 0);
+        $garantirEspaco(90);
+        $conteudo .= "0.97 0.97 0.97 rg {$margem} " . ($y - 6) . " {$larguraUtil} 20 re f\n0 g\n";
         $linha(
-            'Venda: ' . ($vendaId ?: '-') .
-            ' | CR001: ' . (int)$cr['CRCONTADOR'] .
-            ' | Data/Hora: ' . dataHoraCaixaExport($cr['DTLANC'] ?? '') .
-            ' | Valor: ' . moedaCaixaExport((float)($cr['VLRPARCELA'] ?? 0)),
-            true
+            'CUPOM VENDA ' . ($vendaId ?: '-') .
+            '  |  CR001 ' . (int)$cr['CRCONTADOR'] .
+            '  |  ' . dataHoraCaixaExport($cr['DTLANC'] ?? '') .
+            '  |  ' . moedaCaixaExport((float)($cr['VLRPARCELA'] ?? 0)),
+            true,
+            9,
+            8
         );
-        $linha('Cliente: ' . (string)($cr['cliente_nome'] ?? '') . ' | CM: ' . (string)($cr['CMCONTADOR'] ?? ''), false, 8, 12);
+        $linha('Cliente: ' . (string)($cr['cliente_nome'] ?? '') . '  |  CM: ' . (string)($cr['CMCONTADOR'] ?? ''), false, 8, 8);
 
         $itens = $dados['itens_por_venda'][$vendaId] ?? [];
         if (empty($itens)) {
-            $linha('Itens: nenhum item encontrado para esta venda.', false, 8, 12);
+            $linha('Itens: nenhum item encontrado para esta venda.', false, 8, 14);
         } else {
+            $linha('Codigo      Descricao                                      Qtde       Total', true, 8, 14);
             foreach ($itens as $item) {
                 $produto = (string)($item['CODPRODUTO'] ?? $item['PRODUTO'] ?? '');
                 $descricao = (string)($item['DESCPRODUTO'] ?? '');
                 $qtde = number_format((float)($item['QTDE'] ?? 0), 3, ',', '.');
                 $total = moedaCaixaExport((float)($item['TOTPROD'] ?? 0));
-                $linha('Item: ' . $produto . ' - ' . $descricao . ' | Qtde: ' . $qtde . ' | Total: ' . $total, false, 8, 12);
+                $linha(str_pad($produto, 11) . ' ' . $descricao . ' | Qtde: ' . $qtde . ' | Total: ' . $total, false, 8, 14);
             }
         }
         $linha();
     }
 
-    $linha('Recebeu e nao passou no caixa (RECEBIVEIS PEN)', true, 12);
+    $secao('RECEBEU E NAO PASSOU NO CAIXA (RECEBIVEIS PEN)');
     if (empty($dados['recebiveis_pendentes'])) {
         $linha('Nenhum registro.');
     }
     foreach ($dados['recebiveis_pendentes'] as $recebivel) {
+        $garantirEspaco(42);
+        $conteudo .= "0.98 0.98 0.98 rg {$margem} " . ($y - 6) . " {$larguraUtil} 18 re f\n0 g\n";
         $linha(
             'ID: ' . (int)$recebivel['id'] .
-            ' | Data/Hora: ' . dataHoraCaixaExport($recebivel['data_venda'] ?? '') .
-            ' | Valor: ' . moedaCaixaExport((float)($recebivel['valor_bruto'] ?? 0)) .
-            ' | CM: ' . (string)($recebivel['CMCONTADOR'] ?? ''),
-            true
+            '  |  ' . dataHoraCaixaExport($recebivel['data_venda'] ?? '') .
+            '  |  CM ' . (string)($recebivel['CMCONTADOR'] ?? '') .
+            '  |  ' . moedaCaixaExport((float)($recebivel['valor_bruto'] ?? 0)),
+            true,
+            9,
+            8
         );
-        $linha('Pagador: ' . (string)($recebivel['pagador'] ?? ''), false, 8, 12);
+        $linha('Pagador: ' . (string)($recebivel['pagador'] ?? ''), false, 8, 14);
         $linha();
     }
 
