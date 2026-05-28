@@ -102,6 +102,7 @@ if (!empty($vendasCR001)) {
             i.QTDE,
             i.VALOR,
             i.TOTPROD,
+            i.CANCELADO,
             p.CODPRODUTO,
             p.DESCPRODUTO,
             p.UNIDADE
@@ -111,7 +112,6 @@ if (!empty($vendasCR001)) {
            AND p.CONTAPRODUTO = i.PRODUTO
         WHERE i.EMPRESA = ?
           AND i.ITEMVENDACONTADOR IN ($placeholders)
-          AND COALESCE(i.CANCELADO, 'N') <> 'S'
         ORDER BY i.ITEMVENDACONTADOR ASC, i.VENDACONTA ASC
     ");
     $stmtItensVenda->execute(array_merge([$empresa_id], $idsVenda));
@@ -137,6 +137,7 @@ function renderizarItensVendaDiagnostico(array $itens): void
                     <th class="text-end">Qtde</th>
                     <th class="text-end">Unitario</th>
                     <th class="text-end">Total</th>
+                    <th>Status</th>
                 </tr>
             </thead>
             <tbody>
@@ -148,6 +149,7 @@ function renderizarItensVendaDiagnostico(array $itens): void
                         <td class="text-end"><?= number_format((float)($item['QTDE'] ?? 0), 3, ',', '.') ?> <?= htmlspecialchars($item['UNIDADE'] ?? '') ?></td>
                         <td class="text-end">R$ <?= number_format((float)($item['VALOR'] ?? 0), 2, ',', '.') ?></td>
                         <td class="text-end">R$ <?= number_format((float)($item['TOTPROD'] ?? 0), 2, ',', '.') ?></td>
+                        <td><?= (($item['CANCELADO'] ?? 'N') === 'S') ? '<span class="badge bg-secondary">Cancelado</span>' : '<span class="badge bg-success">Ativo</span>' ?></td>
                     </tr>
                 <?php endforeach; ?>
             </tbody>
