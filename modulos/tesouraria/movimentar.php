@@ -242,7 +242,8 @@ if ($modoEdicao) {
         $totalArquivosExistentes = (int)$stmtExist->fetchColumn();
     }
 
-    if (!$dispensaComprovante && ($tipo === 'D' || $tipo === 'C') && ($totalArquivos + $totalArquivosExistentes) === 0) {
+    $exigirComprovante = !$modoEdicao && !$dispensaComprovante && ($tipo === 'D' || $tipo === 'C');
+    if ($exigirComprovante && ($totalArquivos + $totalArquivosExistentes) === 0) {
         die('Anexe pelo menos um comprovante.');
     }
 
@@ -1016,7 +1017,7 @@ input[type="file"] {
 
                 <?php if (!$dispensaComprovante): ?>
                 <div class="col-md-6 mb-2">
-                    <label>Comprovantes <?= $dispensaComprovante ? '(opcional)' : '*' ?></label>
+                    <label>Comprovantes <?= ($dispensaComprovante || $modoEdicao) ? '(opcional)' : '*' ?></label>
 
                     <?php if (!empty($comprovantes)): ?>
                         <div style="margin-top:10px;">
@@ -1130,6 +1131,7 @@ function calcular() {
     const totalArquivosExistentes = <?= count($comprovantes) ?>;
     const totalArquivos = totalArquivosNovos + totalArquivosExistentes;
     const dispensaComprovante = <?= $dispensaComprovante ? 'true' : 'false' ?>;
+    const modoEdicao = <?= $modoEdicao ? 'true' : 'false' ?>;
 
     let ok = true;
     let msg = '';
@@ -1140,7 +1142,7 @@ function calcular() {
     } else if (!historico) {
         ok = false;
         msg = 'Informe o histórico';
-    } else if (!dispensaComprovante && (tipo === 'D' || tipo === 'C') && totalArquivos === 0) {
+    } else if (!modoEdicao && !dispensaComprovante && (tipo === 'D' || tipo === 'C') && totalArquivos === 0) {
         ok = false;
         msg = 'Anexe pelo menos um comprovante';
     } else if (tipo === 'D' && totalSaida <= totalEntrada) {
