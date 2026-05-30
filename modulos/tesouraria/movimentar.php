@@ -126,6 +126,42 @@ function saldosDinheiroTesouraria(PDO $pdo, int $empresaId, ?int $ignorarMovimen
     return $saldos;
 }
 
+function nomeArquivoSeguroTesouraria(string $nome): string
+{
+    $nome = basename(str_replace('\\', '/', $nome));
+    $nome = trim($nome);
+
+    if ($nome === '') {
+        return 'comprovante';
+    }
+
+    if (function_exists('mb_check_encoding') && !mb_check_encoding($nome, 'UTF-8')) {
+        $convertido = @mb_convert_encoding($nome, 'UTF-8', 'Windows-1252,ISO-8859-1,UTF-8');
+        if (is_string($convertido) && $convertido !== '') {
+            $nome = $convertido;
+        }
+    }
+
+    $normalizado = @iconv('UTF-8', 'ASCII//TRANSLIT//IGNORE', $nome);
+    if (is_string($normalizado) && $normalizado !== '') {
+        $nome = $normalizado;
+    }
+
+    $nome = preg_replace('/[^\w.\- ]+/', '_', $nome);
+    $nome = preg_replace('/\s+/', ' ', (string)$nome);
+    $nome = trim((string)$nome, " ._\t\n\r\0\x0B");
+
+    if ($nome === '') {
+        return 'comprovante';
+    }
+
+    if (function_exists('mb_substr')) {
+        return mb_substr($nome, 0, 180, 'UTF-8');
+    }
+
+    return substr($nome, 0, 180);
+}
+
 /* =========================
    SEPARAR MOEDAS E CÉDULAS
 ========================= */
@@ -466,7 +502,9 @@ if ($modoEdicao) {
                     continue;
                 }
 
-                $ext = strtolower(pathinfo($nomeOriginal, PATHINFO_EXTENSION));
+                $nomeOriginalSeguro = nomeArquivoSeguroTesouraria((string)$nomeOriginal);
+                $ext = strtolower(pathinfo($nomeOriginalSeguro, PATHINFO_EXTENSION));
+                $ext = preg_replace('/[^a-z0-9]+/', '', (string)$ext);
                 $novoNome = uniqid('comp_', true) . ($ext ? "." . $ext : '');
                 $destino = $pastaBase . $novoNome;
 
@@ -476,7 +514,7 @@ if ($modoEdicao) {
                     $stmtComp->execute([
                         $mov_id,
                         $caminhoBanco,
-                        $nomeOriginal,
+                        $nomeOriginalSeguro,
                         $usuario_id
                     ]);
                 }
