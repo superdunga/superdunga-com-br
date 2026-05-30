@@ -113,6 +113,19 @@ function buscarDadosExportacaoCaixa(PDO $pdo, int $empresaId, string $dataOperac
     $stmtAbertura->execute([$empresaId, $cbcontador, $inicio, $fim]);
     $abertura = $stmtAbertura->fetch(PDO::FETCH_ASSOC) ?: [];
 
+    $stmtSangrias = $pdo->prepare("
+        SELECT MOVCONTADOR, VALORMOV, DTLANC, HISTMOV
+        FROM armazem_bnc001
+        WHERE EMPRESA = ?
+          AND CBCONTADOR = ?
+          AND DTLANC BETWEEN ? AND ?
+          AND COALESCE(deletado, 'N') <> 'S'
+          AND UPPER(TRIM(HISTMOV)) LIKE 'SANGRIA%'
+        ORDER BY DTLANC ASC, MOVCONTADOR ASC
+    ");
+    $stmtSangrias->execute([$empresaId, $cbcontador, $inicio, $fim]);
+    $sangrias = $stmtSangrias->fetchAll(PDO::FETCH_ASSOC);
+
     $stmtFechamento = $pdo->prepare("
         SELECT MOVCONTADOR, VALORMOV, DTLANC, HISTMOV
         FROM armazem_bnc001
@@ -232,6 +245,7 @@ function buscarDadosExportacaoCaixa(PDO $pdo, int $empresaId, string $dataOperac
         'cbcontador' => $cbcontador,
         'operador' => $operador,
         'abertura' => $abertura,
+        'sangrias' => $sangrias,
         'fechamento' => $fechamento,
         'diferenca_dinheiro' => $diferencaDinheiro,
         'cr_pendentes' => $crPendentes,
@@ -273,6 +287,13 @@ function exportarConferenciaCaixaXls(array $dados): void
             <tr><td>Caixa</td><td colspan="5"><?= (int)$dados['cbcontador'] ?></td></tr>
             <tr><td>Periodo</td><td colspan="5"><?= dataHoraCaixaExport($dados['inicio']) ?> ate <?= dataHoraCaixaExport($dados['fim']) ?></td></tr>
             <tr><td>Valor de Abertura</td><td colspan="5" class="numero"><?= moedaCaixaExport((float)($dados['abertura']['VALORMOV'] ?? 0)) ?></td></tr>
+            <?php foreach (($dados['sangrias'] ?? []) as $sangria): ?>
+                <tr>
+                    <td>Sangria</td>
+                    <td colspan="4"><?= htmlspecialchars(dataMovimentoCaixaExport($sangria) . ' - ' . historicoMovimentoCaixaExport($sangria)) ?></td>
+                    <td class="numero"><?= moedaCaixaExport(valorLancamentoCaixaExport($sangria)) ?></td>
+                </tr>
+            <?php endforeach; ?>
             <tr><td>Valor de Fechamento</td><td colspan="5" class="numero"><?= moedaCaixaExport((float)($dados['fechamento']['VALORMOV'] ?? 0)) ?></td></tr>
             <tr><td>Diferenca no dinheiro</td><td colspan="5" class="numero"><?= moedaCaixaExport((float)$dados['diferenca_dinheiro']) ?></td></tr>
             <tr><td>Passou no caixa e nao recebeu (CR001 PEND)</td><td colspan="5" class="numero"><?= count($dados['cr_pendentes']) ?> | <?= moedaCaixaExport((float)$dados['total_cr']) ?></td></tr>
@@ -458,6 +479,16 @@ function exportarConferenciaCaixaPdf(array $dados): void
     $secao('RESUMO DO CAIXA');
     $campo('Valor de Abertura', moedaCaixaExport($aberturaValor));
     $campo('Lancamento da Abertura', $aberturaInfo);
+    if (!empty($dados['sangrias'])) {
+        foreach ($dados['sangrias'] as $indiceSangria => $sangria) {
+            $sangriaInfo = dataMovimentoCaixaExport($sangria) .
+                ' - ' . moedaCaixaExport(valorLancamentoCaixaExport($sangria)) .
+                ' - ' . historicoMovimentoCaixaExport($sangria);
+            $campo('Sangria ' . ($indiceSangria + 1), $sangriaInfo);
+        }
+    } else {
+        $campo('Sangrias', 'Nenhum registro no periodo');
+    }
     $campo('Valor de Fechamento', moedaCaixaExport($fechamentoValor));
     $campo('Lancamento do Fechamento', $fechamentoInfo);
     $campo('Diferenca no dinheiro', moedaCaixaExport((float)$dados['diferenca_dinheiro']));
