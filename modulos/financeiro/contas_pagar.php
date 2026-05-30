@@ -211,12 +211,27 @@ $stmt->execute($params);
 $registros = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
 $itensPorCompra = [];
+$comprasResumo = [];
 $comprasIds = array_values(array_unique(array_filter(array_map(static function (array $registro): int {
     return (int)($registro['NUMDOCORIGEM'] ?? 0);
 }, $registros))));
 
 if (!empty($comprasIds) && !in_array($exportar, ['excel', 'pdf'], true)) {
     $placeholdersCompras = implode(',', array_fill(0, count($comprasIds), '?'));
+
+    $stmtComprasResumo = $pdo_master->prepare("
+        SELECT COMPRACONTADOR, NUMDOC, TOTCOMPRA, TOTGERAL
+        FROM armazem_est005
+        WHERE EMPRESA = ?
+          AND COMPRACONTADOR IN ($placeholdersCompras)
+          AND COALESCE(excluido_firebird, 'N') <> 'S'
+          AND COALESCE(CANCELADO, 'N') <> 'S'
+    ");
+    $stmtComprasResumo->execute(array_merge([$empresaId], $comprasIds));
+    foreach ($stmtComprasResumo->fetchAll(PDO::FETCH_ASSOC) as $compraResumo) {
+        $comprasResumo[(int)$compraResumo['COMPRACONTADOR']] = $compraResumo;
+    }
+
     $stmtItensCompra = $pdo_master->prepare("
         SELECT
             c.COMPRACONTADOR,
@@ -224,6 +239,7 @@ if (!empty($comprasIds) && !in_array($exportar, ['excel', 'pdf'], true)) {
             i.COMPRACONTA,
             i.PRODUTO,
             i.QTDE,
+            i.VALOR,
             i.TOTPRODCHEIO,
             p.CODPRODUTO,
             p.DESCPRODUTO,
@@ -824,6 +840,7 @@ require '../../layout/header.php';
                         <?php
                             $compraOrigem = (int)($registro['NUMDOCORIGEM'] ?? 0);
                             $itensCompra = $compraOrigem > 0 ? ($itensPorCompra[$compraOrigem] ?? []) : [];
+                            $compraResumo = $compraOrigem > 0 ? ($comprasResumo[$compraOrigem] ?? []) : [];
                             $collapseItensId = 'itens-cp-' . (int)$registro['CPCONTADOR'];
                         ?>
                         <tr>
@@ -878,6 +895,15 @@ require '../../layout/header.php';
                                         Nenhum item encontrado para a compra <?= htmlspecialchars((string)$compraOrigem) ?>.
                                     </div>
                                 <?php else: ?>
+                                    <div class="small text-muted mb-2">
+                                        Itens da compra completa
+                                        <?= $compraOrigem > 0 ? '#' . htmlspecialchars((string)$compraOrigem) : '' ?>
+                                        <?php if (!empty($compraResumo)): ?>
+                                            | Total EST005: <strong><?= moedaContasPagar($compraResumo['TOTGERAL'] ?? 0) ?></strong>
+                                        <?php endif; ?>
+                                        | Parcela CP001: <strong><?= moedaContasPagar($registro['VLRPARCELA']) ?></strong>
+                                        | Restante: <strong><?= moedaContasPagar($registro['VLRRESTANTE']) ?></strong>
+                                    </div>
                                     <div class="table-responsive">
                                         <table class="table table-sm table-bordered align-middle mb-0">
                                             <thead class="table-light">
@@ -886,7 +912,7 @@ require '../../layout/header.php';
                                                     <th>Descricao</th>
                                                     <th class="text-end">Qtd.</th>
                                                     <th class="text-end">Total</th>
-                                                    <th class="text-end">Custo Unit.</th>
+                                                    <th class="text-end">Unit. Compra</th>
                                                     <th class="text-end">Venda Dia</th>
                                                     <th class="text-end">Margem</th>
                                                 </tr>
@@ -894,7 +920,7 @@ require '../../layout/header.php';
                                             <tbody>
                                                 <?php foreach ($itensCompra as $itemCompra): ?>
                                                     <?php
-                                                        $custoUnitario = (float)($itemCompra['PRECOFINAL'] ?? 0);
+                                                        $custoUnitario = (float)($itemCompra['VALOR'] ?? 0);
                                                         $precoVenda = (float)($itemCompra['PVENDA1ANT'] ?? 0);
                                                         $margem = $custoUnitario > 0 ? (($precoVenda / $custoUnitario) - 1) * 100 : null;
                                                     ?>
