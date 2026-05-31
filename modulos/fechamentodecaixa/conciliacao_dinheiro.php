@@ -470,10 +470,11 @@ function exportarConferenciaCaixaPdf(array $dados): void
         ? dataMovimentoCaixaExport($dados['fechamento']) . ' - ' . historicoMovimentoCaixaExport($dados['fechamento'])
         : 'Nao localizado no periodo';
 
-    $conteudo .= "0.06 0.18 0.42 rg 0 " . ($altura - 86) . " {$largura} 86 re f\n0 g\n";
+    $conteudo .= "0.06 0.18 0.42 rg 0 " . ($altura - 86) . " {$largura} 86 re f\n1 g\n";
     $conteudo .= comandoTextoPdfCaixa($margem, $altura - 35, 16, textoPdfCaixa('CONFERENCIA DETALHADA DO CAIXA'), true);
     $conteudo .= comandoTextoPdfCaixa($margem, $altura - 56, 9, textoPdfCaixa('Data do caixa: ' . date('d/m/Y', strtotime($dados['data_operacional'])) . '   |   Caixa: ' . (int)$dados['cbcontador'] . '   |   Operador: ' . $dados['operador']));
     $conteudo .= comandoTextoPdfCaixa($margem, $altura - 72, 8, textoPdfCaixa('Periodo operacional: ' . dataHoraCaixaExport($dados['inicio']) . ' ate ' . dataHoraCaixaExport($dados['fim'])));
+    $conteudo .= "0 g\n";
     $y = $altura - 112;
 
     $secao('RESUMO DO CAIXA');

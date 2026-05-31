@@ -135,9 +135,14 @@ $historico = trim($_GET['historico'] ?? '');
 $documento = trim($_GET['documento'] ?? '');
 $dc = strtoupper(trim($_GET['dc'] ?? ''));
 $visao = trim($_GET['visao'] ?? 'extrato');
+$mostrarAcertos = trim($_GET['mostrar_acertos'] ?? 'todos');
 
 if (!in_array($visao, ['extrato', 'sintetico'], true)) {
     $visao = 'extrato';
+}
+
+if (!in_array($mostrarAcertos, ['todos', 'sim', 'nao'], true)) {
+    $mostrarAcertos = 'todos';
 }
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['acao'] ?? '') === 'salvar_saldo') {
@@ -405,6 +410,10 @@ $where = [
 ];
 $params = [$empresaId];
 
+if ($mostrarAcertos === 'sim') {
+    $where[] = '1 = 0';
+}
+
 if (!empty($contasSelecionadas)) {
     $where[] = 'b.CBCONTADOR IN (' . implode(',', array_fill(0, count($contasSelecionadas), '?')) . ')';
     foreach ($contasSelecionadas as $contaFiltro) {
@@ -573,7 +582,7 @@ $registros = $stmt->fetchAll(PDO::FETCH_ASSOC);
 $acertosExtrato = [];
 $itensAcertos = [];
 
-if ($visao === 'extrato' && $tipoes === '' && $documento === '' && $dc === '') {
+if ($mostrarAcertos !== 'nao' && $visao === 'extrato' && $tipoes === '' && $documento === '' && $dc === '') {
     $whereAcertos = [
         'a.empresa_id = ?',
         "a.status = 'ATIVO'",
@@ -955,6 +964,14 @@ require '../../layout/header.php';
                     <option value="">Todos</option>
                     <option value="C" <?= $dc === 'C' ? 'selected' : '' ?>>Credito</option>
                     <option value="D" <?= $dc === 'D' ? 'selected' : '' ?>>Debito</option>
+                </select>
+            </div>
+            <div class="col-6 col-lg-2">
+                <label class="form-label">Mostrar acertos</label>
+                <select name="mostrar_acertos" class="form-select">
+                    <option value="todos" <?= $mostrarAcertos === 'todos' ? 'selected' : '' ?>>Todos</option>
+                    <option value="sim" <?= $mostrarAcertos === 'sim' ? 'selected' : '' ?>>Sim</option>
+                    <option value="nao" <?= $mostrarAcertos === 'nao' ? 'selected' : '' ?>>Nao</option>
                 </select>
             </div>
             <div class="col-6 col-lg-2">
