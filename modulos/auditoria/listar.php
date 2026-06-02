@@ -67,7 +67,7 @@ if (!empty($comprasIds)) {
             p.CODPRODUTO,
             p.DESCPRODUTO,
             p.PRECOFINAL,
-            p.PVENDA1ANT
+            p.PVENDA1
         FROM armazem_est006 i
         LEFT JOIN armazem_est004 p
             ON p.CONTAPRODUTO = i.PRODUTO
@@ -190,7 +190,7 @@ function numero($valor, int $casas = 2): string
                                                 <?php foreach ($itens as $item): ?>
                                                     <?php
                                                         $precoFinal = (float)($item['PRECOFINAL'] ?? 0);
-                                                        $precoVenda = (float)($item['PVENDA1ANT'] ?? 0);
+                                                        $precoVenda = (float)($item['PVENDA1'] ?? 0);
                                                         $margem = $precoFinal > 0 ? (($precoVenda / $precoFinal) - 1) * 100 : null;
                                                     ?>
                                                     <tr>
