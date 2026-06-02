@@ -826,6 +826,13 @@ require '../../layout/header.php';
     .saldo-card-negativo { color: #dc3545; }
     .saldo-card-positivo { color: #087f5b; }
     .contas-filter-actions .btn { white-space: nowrap; }
+    .contas-selector-tools {
+        display: grid;
+        grid-template-columns: minmax(180px, 1fr) auto auto auto;
+        gap: .5rem;
+        margin-bottom: .5rem;
+        align-items: center;
+    }
     .contas-selector {
         max-height: 190px;
         overflow-y: auto;
@@ -848,6 +855,7 @@ require '../../layout/header.php';
         border-radius: .4rem;
     }
     .conta-check:hover { background: #f5f8fc; }
+    .conta-check.is-hidden { display: none; }
     .conta-check input { flex: 0 0 auto; }
     .conta-check span {
         font-size: .9rem;
@@ -912,6 +920,12 @@ require '../../layout/header.php';
         .contas-filter-actions button {
             width: 100%;
         }
+        .contas-selector-tools {
+            grid-template-columns: 1fr 1fr;
+        }
+        .contas-selector-tools .contas-busca {
+            grid-column: 1 / -1;
+        }
     }
 </style>
 
@@ -936,6 +950,12 @@ require '../../layout/header.php';
         <div class="row g-3">
             <div class="col-12">
                 <label class="form-label">Conta</label>
+                <div class="contas-selector-tools">
+                    <input type="search" id="filtro-contas" class="form-control contas-busca" placeholder="Buscar conta por numero ou nome">
+                    <button type="button" class="btn btn-outline-primary btn-sm" id="selecionar-contas-visiveis">Selecionar visiveis</button>
+                    <button type="button" class="btn btn-outline-primary btn-sm" id="selecionar-todas-contas">Selecionar todas</button>
+                    <button type="button" class="btn btn-outline-secondary btn-sm" id="limpar-contas-marcadas">Limpar marcadas</button>
+                </div>
                 <div class="contas-selector">
                     <div class="contas-selector-grid">
                         <?php foreach ($contas as $conta): ?>
@@ -948,7 +968,10 @@ require '../../layout/header.php';
                         <?php endforeach; ?>
                     </div>
                 </div>
-                <div class="form-text">Marque uma ou mais contas. Sem marcar nenhuma, a tela mostra todas.</div>
+                <div class="form-text">
+                    Marque uma ou mais contas. Sem marcar nenhuma, a tela mostra todas.
+                    <span id="resumo-contas-marcadas"></span>
+                </div>
             </div>
             <div class="col-6 col-lg-2">
                 <label class="form-label">Data inicial</label>
@@ -1322,6 +1345,94 @@ require '../../layout/header.php';
 
 <script>
 document.addEventListener('DOMContentLoaded', function () {
+    var filtroContas = document.getElementById('filtro-contas');
+    var botaoSelecionarVisiveis = document.getElementById('selecionar-contas-visiveis');
+    var botaoSelecionarTodas = document.getElementById('selecionar-todas-contas');
+    var botaoLimparMarcadas = document.getElementById('limpar-contas-marcadas');
+    var resumoContasMarcadas = document.getElementById('resumo-contas-marcadas');
+    var contasLabels = Array.prototype.slice.call(document.querySelectorAll('.conta-check'));
+
+    function textoNormalizado(valor) {
+        return String(valor || '')
+            .normalize('NFD')
+            .replace(/[\u0300-\u036f]/g, '')
+            .toLowerCase()
+            .trim();
+    }
+
+    function contasVisiveis() {
+        return contasLabels.filter(function (label) {
+            return !label.classList.contains('is-hidden');
+        });
+    }
+
+    function atualizarResumoContas() {
+        if (!resumoContasMarcadas) {
+            return;
+        }
+
+        var totalMarcadas = document.querySelectorAll('input[name="cbcontador[]"]:checked').length;
+        var totalVisiveis = contasVisiveis().length;
+        resumoContasMarcadas.textContent = ' Visiveis: ' + totalVisiveis + ' | Marcadas: ' + totalMarcadas + '.';
+    }
+
+    function aplicarFiltroContas() {
+        var termo = textoNormalizado(filtroContas ? filtroContas.value : '');
+
+        contasLabels.forEach(function (label) {
+            var texto = textoNormalizado(label.textContent);
+            label.classList.toggle('is-hidden', termo !== '' && texto.indexOf(termo) === -1);
+        });
+
+        atualizarResumoContas();
+    }
+
+    if (filtroContas) {
+        filtroContas.addEventListener('input', aplicarFiltroContas);
+    }
+
+    if (botaoSelecionarVisiveis) {
+        botaoSelecionarVisiveis.addEventListener('click', function () {
+            contasVisiveis().forEach(function (label) {
+                var checkbox = label.querySelector('input[type="checkbox"]');
+                if (checkbox) {
+                    checkbox.checked = true;
+                }
+            });
+            atualizarResumoContas();
+        });
+    }
+
+    if (botaoSelecionarTodas) {
+        botaoSelecionarTodas.addEventListener('click', function () {
+            contasLabels.forEach(function (label) {
+                var checkbox = label.querySelector('input[type="checkbox"]');
+                if (checkbox) {
+                    checkbox.checked = true;
+                }
+            });
+            atualizarResumoContas();
+        });
+    }
+
+    if (botaoLimparMarcadas) {
+        botaoLimparMarcadas.addEventListener('click', function () {
+            contasLabels.forEach(function (label) {
+                var checkbox = label.querySelector('input[type="checkbox"]');
+                if (checkbox) {
+                    checkbox.checked = false;
+                }
+            });
+            atualizarResumoContas();
+        });
+    }
+
+    document.querySelectorAll('input[name="cbcontador[]"]').forEach(function (checkbox) {
+        checkbox.addEventListener('change', atualizarResumoContas);
+    });
+
+    aplicarFiltroContas();
+
     var botaoMarcar = document.getElementById('marcar-acerto-visiveis');
     var resumoQtd = document.getElementById('acerto-qtd');
     var resumoTotal = document.getElementById('acerto-total');
