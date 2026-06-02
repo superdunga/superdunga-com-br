@@ -754,6 +754,19 @@ hr.my-2 {
     line-height: 1.1;
 }
 
+.total-denominacao {
+    min-width: 72px;
+    font-size: 12px;
+    font-weight: 700;
+    text-align: right;
+    color: #495057;
+    background: #f8f9fa;
+    border: 1px solid #dee2e6;
+    border-radius: 6px;
+    padding: 3px 6px;
+    user-select: none;
+}
+
 .total-secao {
     font-size: 12px;
     font-weight: 700;
@@ -848,6 +861,12 @@ input[type="file"] {
         font-size: 11px;
     }
 
+    .total-denominacao {
+        min-width: 62px;
+        font-size: 11px;
+        padding: 2px 4px;
+    }
+
     #saldoFinal {
         font-size: 15px;
     }
@@ -926,6 +945,7 @@ input[type="file"] {
 
                                     <button type="button" class="btn btn-outline-success btn-ajuste btn-plus">+</button>
                                     <button type="button" class="btn btn-outline-primary btn-ajuste btn-plus10">+10</button>
+                                    <span class="total-denominacao">R$ 0,00</span>
                                 <?php endif; ?>
                             </div>
 
@@ -946,6 +966,7 @@ input[type="file"] {
 
                                     <button type="button" class="btn btn-outline-success btn-ajuste btn-plus">+</button>
                                     <button type="button" class="btn btn-outline-primary btn-ajuste btn-plus10">+10</button>
+                                    <span class="total-denominacao">R$ 0,00</span>
                                 <?php endif; ?>
                             </div>
 
@@ -990,6 +1011,7 @@ input[type="file"] {
 
                                     <button type="button" class="btn btn-outline-success btn-ajuste btn-plus">+</button>
                                     <button type="button" class="btn btn-outline-primary btn-ajuste btn-plus10">+10</button>
+                                    <span class="total-denominacao">R$ 0,00</span>
                                 <?php endif; ?>
                             </div>
 
@@ -1010,6 +1032,7 @@ input[type="file"] {
 
                                     <button type="button" class="btn btn-outline-success btn-ajuste btn-plus">+</button>
                                     <button type="button" class="btn btn-outline-primary btn-ajuste btn-plus10">+10</button>
+                                    <span class="total-denominacao">R$ 0,00</span>
                                 <?php endif; ?>
                             </div>
 
@@ -1107,6 +1130,20 @@ function formatar(v) {
     });
 }
 
+function atualizarTotalDenominacao(input) {
+    const bloco = input.closest('.bloco-dinheiro');
+    const totalLinha = bloco ? bloco.querySelector('.total-denominacao') : null;
+
+    if (!totalLinha) {
+        return;
+    }
+
+    const valor = parseFloat(input.dataset.valor || 0);
+    const qtd = parseInt(input.value || 0, 10);
+    const total = Math.round((valor * qtd) * 100) / 100;
+    totalLinha.innerText = 'R$ ' + formatar(total);
+}
+
 function renderListaArquivos() {
     const lista = document.getElementById('listaArquivos');
     const input = document.getElementById('comprovante');
@@ -1145,12 +1182,14 @@ function calcular() {
         const valor = parseFloat(input.dataset.valor);
         const qtd = parseInt(input.value || 0, 10);
         totalEntrada += valor * qtd;
+        atualizarTotalDenominacao(input);
     });
 
     document.querySelectorAll('.saida').forEach(function(input) {
         const valor = parseFloat(input.dataset.valor);
         const qtd = parseInt(input.value || 0, 10);
         totalSaida += valor * qtd;
+        atualizarTotalDenominacao(input);
     });
 
     totalEntrada = Math.round(totalEntrada * 100) / 100;

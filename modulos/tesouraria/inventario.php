@@ -38,6 +38,31 @@ foreach ($dadosSistema as $d) {
     $totalSistema += $d['quantidade'] * $d['valor'];
 }
 
+$erroInventario = '';
+$valoresDigitados = [];
+
+function valorInventarioParaCentavos($valor): int
+{
+    if (is_string($valor)) {
+        $valor = trim($valor);
+        if ($valor === '') {
+            return 0;
+        }
+
+        if (strpos($valor, ',') !== false) {
+            $valor = str_replace('.', '', $valor);
+            $valor = str_replace(',', '.', $valor);
+        }
+    }
+
+    return (int)round(((float)$valor) * 100);
+}
+
+function valorInventarioParaInput($valor): string
+{
+    return number_format(valorInventarioParaCentavos($valor) / 100, 2, '.', '');
+}
+
 if ($_SESSION['nivel'] === 'MASTER' && ($_GET['exportar_status'] ?? '') === 'excel') {
     header("Content-Type: application/vnd.ms-excel; charset=UTF-8");
     header("Content-Disposition: attachment; filename=status_tesouraria_" . date('Ymd_His') . ".csv");
@@ -99,29 +124,28 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     $usuario_id = $_SESSION['usuario_id'];
     $valores = $_POST['valor_digitado'] ?? [];
+    $valoresDigitados = is_array($valores) ? $valores : [];
 
     try {
         $pdo_master->beginTransaction();
 
-        $totalFisico = 0;
+        $totalFisicoCentavos = 0;
 
         foreach ($dadosSistema as $d) {
 
             $idTipo = $d['id'];
             $valor  = (float)$d['valor'];
-            $sistema = (int)$d['quantidade'];
+            $valorCentavos = valorInventarioParaCentavos($valor);
+            $valorDigitadoCentavos = isset($valores[$idTipo]) ? valorInventarioParaCentavos($valores[$idTipo]) : 0;
 
-            $valorDigitado = isset($valores[$idTipo]) ? (float)$valores[$idTipo] : 0;
-
-            $qtd = $valor > 0 ? $valorDigitado / $valor : 0;
-
-            if ($valorDigitado > 0 && floor($qtd) != $qtd) {
+            if ($valorDigitadoCentavos > 0 && $valorCentavos > 0 && $valorDigitadoCentavos % $valorCentavos !== 0) {
                 throw new Exception("Valor inválido para " . number_format($valor, 2, ',', '.'));
             }
 
-            $totalFisico += $valorDigitado;
+            $totalFisicoCentavos += $valorDigitadoCentavos;
         }
 
+        $totalFisico = $totalFisicoCentavos / 100;
         $diferenca = $totalFisico - $totalSistema;
         $status = ($diferenca == 0) ? 'OK' : 'DIVERGENTE';
 
@@ -153,11 +177,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $idTipo = $d['id'];
             $valor  = (float)$d['valor'];
             $sistema = (int)$d['quantidade'];
+            $valorCentavos = valorInventarioParaCentavos($valor);
+            $valorDigitadoCentavos = isset($valores[$idTipo]) ? valorInventarioParaCentavos($valores[$idTipo]) : 0;
+            $valorDigitado = $valorDigitadoCentavos / 100;
 
-            $valorDigitado = isset($valores[$idTipo]) ? (float)$valores[$idTipo] : 0;
-
-            $qtd = $valor > 0 ? $valorDigitado / $valor : 0;
-            $fis = (int)$qtd;
+            $fis = $valorCentavos > 0 ? intdiv($valorDigitadoCentavos, $valorCentavos) : 0;
 
             $stmtItem->execute([
                 $inventario_id,
@@ -178,7 +202,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     } catch (Exception $e) {
         $pdo_master->rollBack();
-        echo "<div class='alert alert-danger'>Erro: " . $e->getMessage() . "</div>";
+        $erroInventario = $e->getMessage();
     }
 }
 require '../../layout/header.php';
@@ -188,6 +212,12 @@ require '../../layout/header.php';
 <div class="card-body p-2">
 
 <a href="menu_tesouraria.php" class="btn btn-outline-secondary mb-2 w-100">← Voltar</a>
+
+<?php if ($erroInventario !== ''): ?>
+<div class="alert alert-danger">
+Erro: <?= htmlspecialchars($erroInventario) ?>. A contagem digitada foi mantida para correÃ§Ã£o.
+</div>
+<?php endif; ?>
 
 <?php if ($_SESSION['nivel'] === 'MASTER'): ?>
 <button class="btn btn-dark w-100 mb-2" data-bs-toggle="modal" data-bs-target="#modalSistema">
@@ -233,7 +263,7 @@ onclick="abrirDetalhe(<?= $d['id'] ?>,'<?= $d['descricao'] ?>')">
 name="valor_digitado[<?= $d['id'] ?>]"
 class="form-control valor text-center"
 data-valor="<?= $d['valor'] ?>"
-value="0"
+value="<?= htmlspecialchars(valorInventarioParaInput($valoresDigitados[$d['id']] ?? 0)) ?>"
 style="width:110px;">
 </div>
 
@@ -293,16 +323,25 @@ style="width:110px;">
 <script>
 const movDetalhe = <?= json_encode($movDetalhe, JSON_HEX_TAG|JSON_HEX_APOS|JSON_HEX_QUOT|JSON_HEX_AMP) ?>;
 
+function valorParaCentavos(valor) {
+    const texto = String(valor || '0').trim();
+    const normalizado = texto.includes(',')
+        ? texto.replace(/\./g, '').replace(',', '.')
+        : texto;
+
+    return Math.round((parseFloat(normalizado) || 0) * 100);
+}
+
 function calcular(){
-let total=0;
+let totalCentavos=0;
 document.querySelectorAll(".valor").forEach(input=>{
-let v=parseFloat(input.value||0);
-let unit=parseFloat(input.dataset.valor);
-let qtd=v/unit;
-input.closest('.card').querySelector('.qtd').innerText=Number.isInteger(qtd)?qtd:'-';
-total+=v;
+let valorCentavos=valorParaCentavos(input.value);
+let unitCentavos=valorParaCentavos(input.dataset.valor);
+let qtd=unitCentavos > 0 && valorCentavos % unitCentavos === 0 ? valorCentavos / unitCentavos : null;
+input.closest('.card').querySelector('.qtd').innerText=qtd !== null ? qtd : '-';
+totalCentavos+=valorCentavos;
 });
-document.getElementById("totalGeral").innerText=total.toLocaleString('pt-BR',{minimumFractionDigits:2});
+document.getElementById("totalGeral").innerText=(totalCentavos / 100).toLocaleString('pt-BR',{minimumFractionDigits:2});
 }
 
 document.querySelectorAll(".valor").forEach(i=>i.addEventListener("input",calcular));
