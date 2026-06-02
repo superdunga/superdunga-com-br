@@ -130,6 +130,29 @@ function moedaExtratoBanco($valor): string
     return 'R$ ' . number_format((float)$valor, 2, ',', '.');
 }
 
+function pagadorRecebivelExtratoBanco(string $historico): string
+{
+    $pagador = trim($historico);
+    $pagador = preg_replace('/^pix\s+recebido\s*[:\-]\s*/i', '', $pagador) ?? $pagador;
+    $pagador = trim($pagador, " \t\n\r\0\x0B\"'");
+
+    if ($pagador === '') {
+        return 'CLIENTE BANCO';
+    }
+
+    return mb_substr($pagador, 0, 150);
+}
+
+function descricaoRecebivelExtratoBanco(int $extratoId, int $cbcontador, string $documento): string
+{
+    $descricao = 'PIX/BANCO - Extrato #' . $extratoId . ' - Conta ' . $cbcontador;
+    if ($documento !== '') {
+        $descricao .= ' - Doc ' . $documento;
+    }
+
+    return mb_substr($descricao, 0, 255);
+}
+
 function dataHoraExtratoBanco($valor): string
 {
     return $valor ? date('d/m/Y H:i', strtotime($valor)) : '-';
@@ -974,13 +997,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['acao'] ?? '') === 'gerar_r
             INSERT INTO armazem_conciliacao_recebimentos (
                 empresa_id, origem, data_venda, data_prevista, data_recebimento,
                 valor_bruto, valor_desconto, valor_liquido, identificador, descricao,
-                pagador, parcela, total_parcelas, status, arquivo_origem, CMCONTADOR
-            ) VALUES (?, 'EXTRATO_BANCARIO', ?, ?, ?, ?, 0, ?, ?, ?, ?, 1, 1, 'PAGO', 'financeiro_extrato_bancario', ?)
+                pagador, parcela, total_parcelas, status, arquivo_origem, CMCONTADOR,
+                tipo_operacao, bandeira, nsu_transacao, autorizacao, numero_estabelecimento
+            ) VALUES (?, 'EXTRATO_BANCARIO', ?, ?, ?, ?, 0, ?, ?, ?, ?, 1, 1, 'LIQUIDADA', 'financeiro_extrato_bancario', ?, ?, 'PIX/BANCO', ?, ?, ?)
             ON DUPLICATE KEY UPDATE
                 id = LAST_INSERT_ID(id),
                 pagador = VALUES(pagador),
                 descricao = VALUES(descricao),
-                CMCONTADOR = VALUES(CMCONTADOR)
+                CMCONTADOR = VALUES(CMCONTADOR),
+                tipo_operacao = VALUES(tipo_operacao),
+                bandeira = VALUES(bandeira),
+                nsu_transacao = VALUES(nsu_transacao),
+                autorizacao = VALUES(autorizacao),
+                numero_estabelecimento = VALUES(numero_estabelecimento),
+                status = VALUES(status),
+                data_prevista = VALUES(data_prevista),
+                data_recebimento = VALUES(data_recebimento)
         ");
         $stmtUpdateExtratoRecebivel = $pdo_master->prepare("
             UPDATE financeiro_extrato_bancario
@@ -1012,9 +1044,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['acao'] ?? '') === 'gerar_r
             $valor = abs((float)$extratoRecebivel['valor']);
             $historico = trim((string)($extratoRecebivel['historico'] ?? ''));
             $documento = trim((string)($extratoRecebivel['documento'] ?? ''));
-            $descricao = trim('Recebivel gerado do extrato bancario ' . $extratoIdSelecionado . ($documento !== '' ? ' doc ' . $documento : ''));
-            $pagador = $historico !== '' ? mb_substr($historico, 0, 150) : 'CLIENTE BANCO';
+            $descricao = descricaoRecebivelExtratoBanco($extratoIdSelecionado, (int)$extratoRecebivel['cbcontador'], $documento);
+            $pagador = pagadorRecebivelExtratoBanco($historico);
             $identificador = 'EXTRATO_BANCO_' . $empresaId . '_' . $extratoIdSelecionado;
+            $tipoOperacaoRecebivel = in_array((string)$extratoRecebivel['tipo'], ['C', 'D'], true) ? (string)$extratoRecebivel['tipo'] : 'C';
+            $nsuTransacao = mb_substr((string)$extratoRecebivel['identificador_banco'], 0, 50);
+            $autorizacao = mb_substr($documento, 0, 20);
+            $numeroEstabelecimento = (string)$extratoRecebivel['cbcontador'];
 
             $stmtInsertRecebivel->execute([
                 $empresaId,
@@ -1027,6 +1063,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['acao'] ?? '') === 'gerar_r
                 mb_substr($descricao, 0, 255),
                 $pagador,
                 $cmRecebivel,
+                $tipoOperacaoRecebivel,
+                $nsuTransacao,
+                $autorizacao,
+                $numeroEstabelecimento,
             ]);
 
             $recebimentoId = (int)$pdo_master->lastInsertId();
