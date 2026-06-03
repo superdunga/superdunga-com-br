@@ -107,7 +107,7 @@ function salvarImagemRecebimento(array $arquivo, string $prefixo): ?string
     ];
 
     if (!isset($extensoes[$mime])) {
-        throw new RuntimeException('Envie apenas imagens do documento, produto ou selfie.');
+        throw new RuntimeException('Envie apenas imagens do documento, produto ou comprovante de finalizacao.');
     }
 
     $nome = $prefixo . '_' . date('YmdHis') . '_' . bin2hex(random_bytes(4)) . '.' . $extensoes[$mime];
@@ -310,9 +310,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 throw new RuntimeException('Inclua ao menos um item antes de finalizar.');
             }
 
-            $selfie = isset($_FILES['selfie']) ? salvarImagemRecebimento($_FILES['selfie'], 'selfie_' . $recebimentoIdPost) : null;
-            if ($selfie === null) {
-                throw new RuntimeException('A selfie do funcionario e obrigatoria para finalizar.');
+            $comprovanteFinalizacao = null;
+            if (isset($_FILES['selfie'])) {
+                $comprovanteFinalizacao = salvarImagemRecebimento($_FILES['selfie'], 'selfie_' . $recebimentoIdPost);
+            }
+            if ($comprovanteFinalizacao === null && isset($_FILES['canhoto_assinado'])) {
+                $comprovanteFinalizacao = salvarImagemRecebimento($_FILES['canhoto_assinado'], 'canhoto_' . $recebimentoIdPost);
+            }
+            if ($comprovanteFinalizacao === null) {
+                throw new RuntimeException('Envie a selfie de quem recebeu ou a foto do canhoto/documento assinado.');
             }
 
             $stmt = $pdo_master->prepare("
@@ -324,7 +330,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                   AND empresa_id = ?
                   AND status <> 'finalizado'
             ");
-            $stmt->execute([$selfie, $recebimentoIdPost, $empresaId]);
+            $stmt->execute([$comprovanteFinalizacao, $recebimentoIdPost, $empresaId]);
 
             header('Location: recebimento_mercadorias.php?id=' . $recebimentoIdPost . '&ok=finalizado');
             exit;
@@ -342,7 +348,7 @@ if (($_GET['ok'] ?? '') === 'documentos') {
 } elseif (($_GET['ok'] ?? '') === 'item') {
     $mensagemOk = 'Item adicionado ao recebimento.';
 } elseif (($_GET['ok'] ?? '') === 'finalizado') {
-    $mensagemOk = 'Recebimento finalizado com selfie do funcionario.';
+    $mensagemOk = 'Recebimento finalizado com comprovante de quem recebeu.';
 }
 
 $documentos = [];
@@ -406,6 +412,24 @@ require '../../layout/header.php';
         border-radius: .5rem;
         background: #fff;
     }
+    .produto-alerta-nao-cadastrado {
+        background: #fff7ed;
+        border: 2px solid #f97316;
+        border-radius: .75rem;
+        padding: 1rem;
+    }
+    .produto-alerta-nao-cadastrado .alerta-icone {
+        width: 42px;
+        height: 42px;
+        border-radius: 50%;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        background: #f97316;
+        color: #fff;
+        font-weight: 800;
+        flex: 0 0 auto;
+    }
     .item-order {
         width: 42px;
         height: 42px;
@@ -439,7 +463,7 @@ require '../../layout/header.php';
                 <div>
                     <span class="badge text-bg-success mb-2">Rotinas Operacionais</span>
                     <h1 class="h4 fw-bold mb-1">Recebimento de Mercadorias</h1>
-                    <p class="text-muted mb-0">Fotografe o documento, leia os produtos e finalize com selfie.</p>
+                    <p class="text-muted mb-0">Fotografe o documento, leia os produtos e finalize com a identificacao de quem recebeu.</p>
                 </div>
                 <div class="d-flex gap-2 align-items-start">
                     <a href="menu_rotinas_operacionais.php" class="btn btn-outline-secondary">Voltar</a>
@@ -576,10 +600,19 @@ require '../../layout/header.php';
                             <div class="p-3 rounded-2 bg-light border fw-bold">Total recebido: <span id="qtdTotal">0</span></div>
                         </div>
                         <div class="col-12 d-none" id="blocoProdutoNaoEncontrado">
-                            <label class="form-label">Foto do produto nao cadastrado</label>
+                            <div class="produto-alerta-nao-cadastrado">
+                                <div class="d-flex gap-3 align-items-start mb-3">
+                                    <div class="alerta-icone">!</div>
+                                    <div>
+                                        <div class="fw-bold fs-5 text-warning-emphasis">Produto nao cadastrado</div>
+                                        <div class="small text-muted">Tire uma foto do produto para o cadastro ser avaliado depois. A descricao nao e obrigatoria.</div>
+                                    </div>
+                                </div>
+                            <label class="form-label fw-semibold">Foto obrigatoria do produto</label>
                             <input type="file" name="foto_produto" id="fotoProduto" accept="image/*" capture="environment" class="form-control">
-                            <label class="form-label mt-2">Descricao informada</label>
-                            <input type="text" name="descricao_informada" class="form-control" maxlength="255" placeholder="Descricao simples do produto">
+                                <label class="form-label mt-3">Observacao opcional</label>
+                                <input type="text" name="descricao_informada" class="form-control" maxlength="255" placeholder="Opcional">
+                            </div>
                         </div>
                         <div class="col-12">
                             <button type="submit" class="btn btn-primary btn-lg-mobile w-100">Adicionar item</button>
@@ -597,11 +630,11 @@ require '../../layout/header.php';
                                         <?php if (($item['produto_encontrado'] ?? 'N') === 'S'): ?>
                                             <span class="badge text-bg-success">Produto encontrado</span>
                                         <?php else: ?>
-                                            <span class="badge text-bg-warning">Nao cadastrado</span>
+                                            <span class="badge text-bg-warning">Produto nao cadastrado</span>
                                         <?php endif; ?>
                                         <span class="badge text-bg-light border text-dark"><?= date('H:i', strtotime($item['criado_em'])) ?></span>
                                     </div>
-                                    <div class="fw-bold"><?= htmlspecialchars($item['descproduto'] ?: ($item['descricao_informada'] ?: 'Produto nao cadastrado')) ?></div>
+                                    <div class="fw-bold"><?= htmlspecialchars($item['descproduto'] ?: ($item['descricao_informada'] ?: 'Produto nao cadastrado - foto anexada')) ?></div>
                                     <div class="text-muted small">Codigo: <?= htmlspecialchars($item['codigo_barras']) ?></div>
                                     <?php if (!empty($item['codproduto'])): ?>
                                         <div class="text-muted small">CODPRODUTO: <?= htmlspecialchars($item['codproduto']) ?></div>
@@ -642,18 +675,24 @@ require '../../layout/header.php';
 
         <section class="card shadow-sm mb-4 mobile-step">
             <div class="card-body">
-                <h2 class="h6 fw-bold mb-3">3. Finalizar com selfie</h2>
+                <h2 class="h6 fw-bold mb-3">3. Finalizar</h2>
                 <?php if ($finalizado): ?>
                     <div class="alert alert-success mb-3">Recebimento finalizado em <?= date('d/m/Y H:i', strtotime($recebimento['finalizado_em'])) ?>.</div>
                     <?php if (!empty($recebimento['selfie_arquivo'])): ?>
-                        <a href="../../<?= htmlspecialchars($recebimento['selfie_arquivo']) ?>" target="_blank" class="btn btn-outline-secondary">Ver selfie</a>
+                        <a href="../../<?= htmlspecialchars($recebimento['selfie_arquivo']) ?>" target="_blank" class="btn btn-outline-secondary">Ver comprovante</a>
                     <?php endif; ?>
                 <?php else: ?>
-                    <form method="POST" enctype="multipart/form-data" onsubmit="return confirm('Finalizar recebimento com esta selfie?');">
+                    <form method="POST" enctype="multipart/form-data" onsubmit="return confirm('Finalizar recebimento com a identificacao enviada?');">
                         <input type="hidden" name="acao" value="finalizar">
                         <input type="hidden" name="recebimento_id" value="<?= (int)$recebimento['id'] ?>">
-                        <label class="form-label">Selfie do funcionario</label>
-                        <input type="file" name="selfie" accept="image/*" capture="user" class="form-control mb-3" required>
+                        <div class="alert alert-light border mb-3">
+                            Envie <strong>uma</strong> das opcoes abaixo para identificar quem recebeu.
+                        </div>
+                        <label class="form-label">Selfie de quem recebeu</label>
+                        <input type="file" name="selfie" accept="image/*" capture="user" class="form-control mb-3">
+                        <div class="text-center text-muted fw-semibold mb-3">ou</div>
+                        <label class="form-label">Foto do canhoto/documento assinado por quem recebeu</label>
+                        <input type="file" name="canhoto_assinado" accept="image/*" capture="environment" class="form-control mb-3">
                         <button type="submit" class="btn btn-success btn-lg-mobile w-100">Finalizar recebimento</button>
                     </form>
                 <?php endif; ?>
@@ -700,7 +739,7 @@ require '../../layout/header.php';
             const dados = await resposta.json();
             if (dados.encontrado && dados.produto) {
                 const embQtde = parseFloat(String(dados.produto.EMB_QTDE || '0').replace(',', '.')) || 0;
-                preview.className = 'alert alert-success mb-0';
+                preview.className = 'alert alert-success border border-success mb-0';
                 preview.innerHTML = '<strong>Produto encontrado</strong><br>' +
                     (dados.produto.CODPRODUTO || '') + ' - ' + (dados.produto.DESCPRODUTO || '') +
                     (embQtde > 0 ? '<br>Qtd por caixa cadastrada: <strong>' + embQtde.toLocaleString('pt-BR', { maximumFractionDigits: 4 }) + '</strong>' : '');
@@ -711,8 +750,8 @@ require '../../layout/header.php';
                 blocoNaoEncontrado?.classList.add('d-none');
                 if (fotoProduto) fotoProduto.required = false;
             } else {
-                preview.className = 'alert alert-warning mb-0';
-                preview.innerHTML = '<strong>Produto nao cadastrado.</strong><br>Tire uma foto do produto antes de adicionar.';
+                preview.className = 'alert alert-warning border border-warning border-2 mb-0';
+                preview.innerHTML = '<strong>ATENCAO: produto nao cadastrado</strong><br>O item sera salvo como novo produto pendente. A foto do produto e obrigatoria; descricao e opcional.';
                 blocoNaoEncontrado?.classList.remove('d-none');
                 if (fotoProduto) fotoProduto.required = true;
             }
