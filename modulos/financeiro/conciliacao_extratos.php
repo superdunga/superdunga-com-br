@@ -805,6 +805,13 @@ if (empty($contas)) {
 $cbcontador = (int)($_GET['cbcontador'] ?? ($_POST['cbcontador'] ?? 0));
 $dataIni = trim($_GET['data_ini'] ?? date('Y-m-01'));
 $dataFim = trim($_GET['data_fim'] ?? date('Y-m-d'));
+$dcFiltro = strtoupper(trim((string)($_GET['dc'] ?? '')));
+$historicoFiltro = trim((string)($_GET['historico'] ?? ''));
+
+if (!in_array($dcFiltro, ['D', 'C'], true)) {
+    $dcFiltro = '';
+}
+
 $dataIniSql = $dataIni !== '' ? $dataIni . ' 00:00:00' : '';
 $dataFimExclusivoSql = $dataFim !== '' ? date('Y-m-d 00:00:00', strtotime($dataFim . ' +1 day')) : '';
 $diasJanelaMatchManual = 15;
@@ -1097,6 +1104,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['acao'] ?? '') === 'concili
             throw new RuntimeException('Selecione conta e periodo para executar a conciliacao automatica.');
         }
 
+        $whereAutoFiltros = '';
+        $paramsAutoFiltros = [];
+
+        if ($dcFiltro !== '') {
+            $whereAutoFiltros .= ' AND e.tipo = ?';
+            $paramsAutoFiltros[] = $dcFiltro;
+        }
+        if ($historicoFiltro !== '') {
+            $whereAutoFiltros .= ' AND (e.historico LIKE ? OR b.HISTMOV LIKE ?)';
+            $paramsAutoFiltros[] = '%' . $historicoFiltro . '%';
+            $paramsAutoFiltros[] = '%' . $historicoFiltro . '%';
+        }
+
         $stmtAuto = $pdo_master->prepare("
             WITH candidatos AS (
                 SELECT
@@ -1120,6 +1140,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['acao'] ?? '') === 'concili
                   AND e.bnc001_movcontador IS NULL
                   AND e.data_movimento >= ?
                   AND e.data_movimento < ?
+                  {$whereAutoFiltros}
                   AND NOT EXISTS (
                       SELECT 1
                       FROM financeiro_extrato_bancario ex2
@@ -1135,7 +1156,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['acao'] ?? '') === 'concili
               AND qtd_sistema = 1
             LIMIT 500
         ");
-        $stmtAuto->execute([$empresaId, $cbcontador, $dataIniSql, $dataFimExclusivoSql]);
+        $stmtAuto->execute(array_merge([$empresaId, $cbcontador, $dataIniSql, $dataFimExclusivoSql], $paramsAutoFiltros));
         $matchesAuto = $stmtAuto->fetchAll(PDO::FETCH_ASSOC);
 
         $pdo_master->beginTransaction();
@@ -1422,6 +1443,14 @@ if ($dataFim !== '') {
     $whereExtrato[] = 'e.data_movimento < ?';
     $paramsExtrato[] = $dataFimExclusivoSql;
 }
+if ($dcFiltro !== '') {
+    $whereExtrato[] = 'e.tipo = ?';
+    $paramsExtrato[] = $dcFiltro;
+}
+if ($historicoFiltro !== '') {
+    $whereExtrato[] = 'e.historico LIKE ?';
+    $paramsExtrato[] = '%' . $historicoFiltro . '%';
+}
 
 $whereExtratoSql = implode(' AND ', $whereExtrato);
 
@@ -1459,6 +1488,14 @@ if ($dataIni !== '') {
 if ($dataFim !== '') {
     $whereBnc[] = 'b.DTMOV < ?';
     $paramsBnc[] = $dataFimExclusivoSql;
+}
+if ($dcFiltro !== '') {
+    $whereBnc[] = 'b.TIPOMOV = ?';
+    $paramsBnc[] = $dcFiltro;
+}
+if ($historicoFiltro !== '') {
+    $whereBnc[] = 'b.HISTMOV LIKE ?';
+    $paramsBnc[] = '%' . $historicoFiltro . '%';
 }
 $whereBncSql = implode(' AND ', $whereBnc);
 
@@ -1498,6 +1535,19 @@ $sistemaPendentes = $stmtBnc->fetchAll(PDO::FETCH_ASSOC);
 
 $sugestoes = [];
 if ($cbcontador > 0 && $dataIni !== '' && $dataFim !== '') {
+    $whereSugestoesFiltros = '';
+    $paramsSugestoesFiltros = [];
+
+    if ($dcFiltro !== '') {
+        $whereSugestoesFiltros .= ' AND e.tipo = ?';
+        $paramsSugestoesFiltros[] = $dcFiltro;
+    }
+    if ($historicoFiltro !== '') {
+        $whereSugestoesFiltros .= ' AND (e.historico LIKE ? OR b.HISTMOV LIKE ?)';
+        $paramsSugestoesFiltros[] = '%' . $historicoFiltro . '%';
+        $paramsSugestoesFiltros[] = '%' . $historicoFiltro . '%';
+    }
+
     $stmtSug = $pdo_master->prepare("
         WITH candidatos AS (
             SELECT
@@ -1531,6 +1581,7 @@ if ($cbcontador > 0 && $dataIni !== '' && $dataFim !== '') {
               AND e.bnc001_movcontador IS NULL
               AND e.data_movimento >= ?
               AND e.data_movimento < ?
+              {$whereSugestoesFiltros}
               AND NOT EXISTS (
                   SELECT 1
                   FROM financeiro_extrato_bancario ex2
@@ -1552,7 +1603,7 @@ if ($cbcontador > 0 && $dataIni !== '' && $dataFim !== '') {
         ORDER BY tipo_sugestao ASC, dias_diferenca ASC, data_extrato DESC
         LIMIT 100
     ");
-    $stmtSug->execute([$dataIniSugestaoSql, $dataFimSugestaoSql, $empresaId, $cbcontador, $dataIniSql, $dataFimExclusivoSql]);
+    $stmtSug->execute(array_merge([$dataIniSugestaoSql, $dataFimSugestaoSql, $empresaId, $cbcontador, $dataIniSql, $dataFimExclusivoSql], $paramsSugestoesFiltros));
     $sugestoes = $stmtSug->fetchAll(PDO::FETCH_ASSOC);
 }
 
@@ -1613,7 +1664,7 @@ require '../../layout/header.php';
 <section class="mb-4">
     <div class="bg-white border rounded-2 shadow-sm p-3">
         <form method="GET" class="row g-3 align-items-end">
-            <div class="col-lg-4">
+            <div class="col-lg-3">
                 <label class="form-label">Conta</label>
                 <select name="cbcontador" class="form-select">
                     <option value="">Todas</option>
@@ -1633,6 +1684,18 @@ require '../../layout/header.php';
                 <input type="date" name="data_fim" class="form-control" value="<?= htmlspecialchars($dataFim) ?>">
             </div>
             <div class="col-md-3 col-lg-2">
+                <label class="form-label">D/C</label>
+                <select name="dc" class="form-select">
+                    <option value="">Debito e credito</option>
+                    <option value="D" <?= $dcFiltro === 'D' ? 'selected' : '' ?>>Debito</option>
+                    <option value="C" <?= $dcFiltro === 'C' ? 'selected' : '' ?>>Credito</option>
+                </select>
+            </div>
+            <div class="col-lg-3">
+                <label class="form-label">Historico</label>
+                <input type="text" name="historico" class="form-control" value="<?= htmlspecialchars($historicoFiltro) ?>" placeholder="Buscar no historico">
+            </div>
+            <div class="col-md-3 col-lg-1">
                 <button type="submit" class="btn btn-primary w-100">Filtrar</button>
             </div>
         </form>
