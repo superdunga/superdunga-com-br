@@ -19,6 +19,7 @@ $fechamentoUrl = ($appBaseUrl ?: '') . '/modulos/fechamentodecaixa/menu_fechamen
 $financeiroUrl = ($appBaseUrl ?: '') . '/modulos/financeiro/menu_financeiro.php';
 $estoqueUrl = ($appBaseUrl ?: '') . '/modulos/estoque/menu_estoque.php';
 $gestaoUrl = ($appBaseUrl ?: '') . '/modulos/gestao/menu_gestao.php';
+$rotinasOperacionaisUrl = ($appBaseUrl ?: '') . '/modulos/rotinas_operacionais/menu_rotinas_operacionais.php';
 $whatsappUrl = ($appBaseUrl ?: '') . '/modulos/whatsapp/index.php';
 $usuariosUrl = ($appBaseUrl ?: '') . '/modulos/usuarios/listar.php';
 $empresasUrl = ($appBaseUrl ?: '') . '/modulos/empresas/listar.php';
@@ -31,6 +32,7 @@ $mostrarFechamentoTopbar = true;
 $mostrarFinanceiroTopbar = true;
 $mostrarEstoqueTopbar = true;
 $mostrarGestaoTopbar = true;
+$mostrarRotinasOperacionaisTopbar = true;
 $mostrarWhatsappTopbar = $nivelUsuario === 'MASTER';
 $mostrarUsuariosTopbar = $nivelUsuario === 'MASTER' || $nivelUsuario === 'ADMIN';
 $mostrarEmpresasTopbar = $nivelUsuario === 'MASTER';
@@ -66,6 +68,7 @@ if (isset($pdo_master) && function_exists('grupoPermitido') && function_exists('
     $mostrarFinanceiroTopbar = grupoPermitido($pdo_master, $empresaIdSessao, 'Financeiro', $nivelUsuario);
     $mostrarEstoqueTopbar = grupoPermitido($pdo_master, $empresaIdSessao, 'Estoque', $nivelUsuario);
     $mostrarGestaoTopbar = grupoPermitido($pdo_master, $empresaIdSessao, 'Gestao', $nivelUsuario);
+    $mostrarRotinasOperacionaisTopbar = grupoPermitido($pdo_master, $empresaIdSessao, 'Rotinas Operacionais', $nivelUsuario);
     $mostrarWhatsappTopbar = $nivelUsuario === 'MASTER' && moduloPermitido($pdo_master, $empresaIdSessao, 'whatsapp', $nivelUsuario);
     $mostrarUsuariosTopbar = in_array($nivelUsuario, ['MASTER', 'ADMIN'], true) && moduloPermitido($pdo_master, $empresaIdSessao, 'usuarios', $nivelUsuario);
     $mostrarEmpresasTopbar = $nivelUsuario === 'MASTER' && moduloPermitido($pdo_master, $empresaIdSessao, 'empresas', $nivelUsuario);
@@ -113,6 +116,7 @@ $bootstrapCssUrl = ($appBaseUrl ?: '') . '/assets/bootstrap/bootstrap.min.css';
         .app-topbar .nav-link {
             color: rgba(255, 255, 255, .82);
             font-weight: 500;
+            white-space: nowrap;
         }
 
         .app-topbar .nav-link:hover,
@@ -140,6 +144,8 @@ $bootstrapCssUrl = ($appBaseUrl ?: '') . '/assets/bootstrap/bootstrap.min.css';
             padding: .4rem .75rem;
             font-size: .875rem;
             line-height: 1.15;
+            max-width: 240px;
+            min-width: 0;
         }
 
         .user-chip .user-chip-label {
@@ -150,6 +156,9 @@ $bootstrapCssUrl = ($appBaseUrl ?: '') . '/assets/bootstrap/bootstrap.min.css';
         .user-chip .user-chip-value {
             color: #fff;
             font-weight: 700;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
         }
 
         .card {
@@ -286,6 +295,59 @@ $bootstrapCssUrl = ($appBaseUrl ?: '') . '/assets/bootstrap/bootstrap.min.css';
         textarea,
         button {
             max-width: 100%;
+        }
+
+        @media (min-width: 992px) {
+            .app-topbar .navbar-collapse {
+                min-width: 0;
+            }
+
+            .app-topbar .navbar-nav {
+                flex-wrap: wrap;
+                row-gap: .15rem;
+            }
+
+            .app-topbar .navbar-nav .nav-link {
+                padding-right: .42rem;
+                padding-left: .42rem;
+                font-size: .92rem;
+            }
+
+            .app-topbar .navbar-brand {
+                flex: 0 0 auto;
+                margin-right: .25rem;
+            }
+
+            .app-topbar .user-chip {
+                max-width: 220px;
+            }
+        }
+
+        @media (min-width: 992px) and (max-width: 1250px) {
+            .btn-back-top {
+                padding-right: .45rem;
+                padding-left: .45rem;
+            }
+
+            .app-topbar .navbar-brand span:last-child {
+                display: none;
+            }
+
+            .app-topbar .navbar-nav {
+                margin-left: .75rem !important;
+            }
+
+            .app-topbar .navbar-nav .nav-link {
+                padding-right: .32rem;
+                padding-left: .32rem;
+                font-size: .86rem;
+            }
+
+            .app-topbar .user-chip {
+                max-width: 185px;
+                padding-right: .55rem;
+                padding-left: .55rem;
+            }
         }
 
         @media (max-width: 991.98px) {
@@ -485,6 +547,11 @@ $bootstrapCssUrl = ($appBaseUrl ?: '') . '/assets/bootstrap/bootstrap.min.css';
                 <?php if ($mostrarGestaoTopbar): ?>
                     <li class="nav-item">
                         <a class="nav-link" href="<?= htmlspecialchars($gestaoUrl) ?>">Gestão</a>
+                    </li>
+                <?php endif; ?>
+                <?php if ($mostrarRotinasOperacionaisTopbar): ?>
+                    <li class="nav-item">
+                        <a class="nav-link" href="<?= htmlspecialchars($rotinasOperacionaisUrl) ?>">Operacional</a>
                     </li>
                 <?php endif; ?>
                 <?php if ($mostrarWhatsappTopbar): ?>

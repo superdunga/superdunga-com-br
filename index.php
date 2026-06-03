@@ -63,6 +63,15 @@ $atalhos = [
         'visivel' => grupoPermitido($pdo_master, $empresaId, 'Gestao', $nivelUsuario),
     ],
     [
+        'titulo' => 'Rotinas Operacionais',
+        'descricao' => 'Recebimento de mercadorias e rotinas simples para execucao na loja.',
+        'href' => 'modulos/rotinas_operacionais/menu_rotinas_operacionais.php',
+        'classe' => 'border-success',
+        'botao' => 'btn-success',
+        'icone' => 'OP',
+        'visivel' => grupoPermitido($pdo_master, $empresaId, 'Rotinas Operacionais', $nivelUsuario),
+    ],
+    [
         'titulo' => 'Sincronizar Dados',
         'descricao' => 'Atualize dados integrados antes das rotinas operacionais.',
         'href' => 'modulos/tesouraria/sincronizacao.php',

@@ -44,6 +44,8 @@ function redirecionarPendenciasOperador(): void
         '/modulos/fechamentodecaixa/resumo_prazo.php',
         '/modulos/fechamentodecaixa/diagnostico_divergencia.php',
         '/modulos/auditoria/itens_fora_padrao.php',
+        '/modulos/rotinas_operacionais/menu_rotinas_operacionais.php',
+        '/modulos/rotinas_operacionais/recebimento_mercadorias.php',
         '/logout.php',
         '/login.php',
     ];
@@ -188,6 +190,7 @@ function validarPermissaoModuloAtual(): void
         'modulos/financeiro/menu_financeiro.php' => 'Financeiro',
         'modulos/estoque/menu_estoque.php' => 'Estoque',
         'modulos/gestao/menu_gestao.php' => 'Gestao',
+        'modulos/rotinas_operacionais/menu_rotinas_operacionais.php' => 'Rotinas Operacionais',
     ];
 
     if (isset($menusPorGrupo[$caminho])) {
@@ -254,6 +257,7 @@ function validarPermissaoModuloAtual(): void
         'modulos/financeiro/contas.php' => 'financeiro',
         'modulos/financeiro/conciliacao_extratos.php' => 'financeiro_conciliacao_extratos',
         'modulos/estoque/posicao_estoque.php' => 'estoque_posicao',
+        'modulos/rotinas_operacionais/recebimento_mercadorias.php' => 'recebimento_mercadorias',
     ];
 
     $codigoModulo = $aliases[$caminho] ?? null;
