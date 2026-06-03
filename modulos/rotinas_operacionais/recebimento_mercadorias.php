@@ -79,6 +79,16 @@ function formatarQtdRecebimento($valor): string
     return rtrim(rtrim($texto, '0'), ',');
 }
 
+function formatarTextoExcelRecebimento($valor): string
+{
+    $texto = trim((string)$valor);
+    if ($texto === '') {
+        return '';
+    }
+
+    return '="' . str_replace('"', '""', $texto) . '"';
+}
+
 function pastaUploadRecebimento(): string
 {
     $pasta = __DIR__ . '/../../uploads/recebimento_mercadorias';
@@ -205,6 +215,41 @@ function contarItens(PDO $pdo, int $recebimentoId): int
     $stmt = $pdo->prepare("SELECT COUNT(*) FROM recebimento_mercadorias_itens WHERE recebimento_id = ?");
     $stmt->execute([$recebimentoId]);
     return (int)$stmt->fetchColumn();
+}
+
+function exportarCsvRecebimentoMercadorias(int $recebimentoId, array $itens): void
+{
+    $nomeArquivo = 'recebimento_mercadorias_' . $recebimentoId . '_' . date('Ymd_His') . '.csv';
+
+    header('Content-Type: application/vnd.ms-excel; charset=UTF-8');
+    header('Content-Disposition: attachment; filename="' . $nomeArquivo . '"');
+
+    echo "sep=;\n";
+    $saida = fopen('php://output', 'w');
+    fputcsv($saida, [
+        'CODIGO',
+        'CODIGO DE BARRAS',
+        'DESCRICAO',
+        'QTD POR CAIXA',
+        'QTD RECEBIDA',
+        'QTD TOTAL',
+    ], ';');
+
+    foreach ($itens as $item) {
+        $produtoEncontrado = ($item['produto_encontrado'] ?? 'N') === 'S';
+
+        fputcsv($saida, [
+            $produtoEncontrado ? formatarTextoExcelRecebimento($item['codproduto'] ?? '') : '',
+            formatarTextoExcelRecebimento($item['codigo_barras'] ?? ''),
+            $produtoEncontrado ? (string)($item['descproduto'] ?? '') : 'CADASTRAR PRODUTO',
+            formatarQtdRecebimento($item['quantidade_por_caixa'] ?? 0),
+            formatarQtdRecebimento($item['quantidade_caixas'] ?? 0),
+            formatarQtdRecebimento($item['quantidade_total'] ?? 0),
+        ], ';');
+    }
+
+    fclose($saida);
+    exit;
 }
 
 garantirTabelasRecebimentoMercadorias($pdo_master);
@@ -342,6 +387,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
 $recebimentoId = (int)($_GET['id'] ?? 0);
 $recebimento = $recebimentoId > 0 ? obterRecebimento($pdo_master, $empresaId, $recebimentoId) : null;
+$usuarioMasterRecebimento = ($_SESSION['nivel'] ?? '') === 'MASTER';
 
 if (($_GET['ok'] ?? '') === 'documentos') {
     $mensagemOk = 'Foto(s) do documento salva(s).';
@@ -349,6 +395,9 @@ if (($_GET['ok'] ?? '') === 'documentos') {
     $mensagemOk = 'Item adicionado ao recebimento.';
 } elseif (($_GET['ok'] ?? '') === 'finalizado') {
     $mensagemOk = 'Recebimento finalizado com comprovante de quem recebeu.';
+}
+if (($_GET['erro'] ?? '') === 'csv_pendente') {
+    $mensagemErro = 'A exportacao CSV fica disponivel somente apos finalizar o recebimento.';
 }
 
 $documentos = [];
@@ -373,6 +422,18 @@ if ($recebimento) {
     ");
     $stmtItens->execute([$recebimentoId]);
     $itens = $stmtItens->fetchAll(PDO::FETCH_ASSOC);
+
+    if (($_GET['exportar'] ?? '') === 'csv') {
+        if (($recebimento['status'] ?? '') !== 'finalizado') {
+            header('Location: recebimento_mercadorias.php?id=' . $recebimentoId . '&erro=csv_pendente');
+            exit;
+        }
+        exportarCsvRecebimentoMercadorias($recebimentoId, $itens);
+    }
+
+    if (($recebimento['status'] ?? '') === 'finalizado' && !$usuarioMasterRecebimento) {
+        renderizarAcessoNegadoModulo('Somente usuario MASTER pode abrir recebimentos de mercadorias finalizados.');
+    }
 } else {
     $stmtRecentes = $pdo_master->prepare("
         SELECT r.*,
@@ -467,6 +528,9 @@ require '../../layout/header.php';
                 </div>
                 <div class="d-flex gap-2 align-items-start">
                     <a href="menu_rotinas_operacionais.php" class="btn btn-outline-secondary">Voltar</a>
+                    <?php if ($recebimento && ($recebimento['status'] ?? '') === 'finalizado'): ?>
+                        <a href="recebimento_mercadorias.php?id=<?= (int)$recebimento['id'] ?>&exportar=csv" class="btn btn-outline-success">Exportar CSV</a>
+                    <?php endif; ?>
                     <form method="POST">
                         <input type="hidden" name="acao" value="novo">
                         <button type="submit" class="btn btn-success">Novo recebimento</button>
@@ -512,7 +576,14 @@ require '../../layout/header.php';
                                     <td><?= (int)$recente['total_documentos'] ?></td>
                                     <td><?= (int)$recente['total_itens'] ?></td>
                                     <td class="text-end">
-                                        <a href="recebimento_mercadorias.php?id=<?= (int)$recente['id'] ?>" class="btn btn-sm btn-primary">Abrir</a>
+                                        <div class="d-inline-flex flex-wrap justify-content-end gap-1">
+                                            <?php if (($recente['status'] ?? '') !== 'finalizado' || $usuarioMasterRecebimento): ?>
+                                                <a href="recebimento_mercadorias.php?id=<?= (int)$recente['id'] ?>" class="btn btn-sm btn-primary">Abrir</a>
+                                            <?php endif; ?>
+                                            <?php if (($recente['status'] ?? '') === 'finalizado'): ?>
+                                                <a href="recebimento_mercadorias.php?id=<?= (int)$recente['id'] ?>&exportar=csv" class="btn btn-sm btn-outline-success">CSV</a>
+                                            <?php endif; ?>
+                                        </div>
                                     </td>
                                 </tr>
                             <?php endforeach; ?>
