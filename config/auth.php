@@ -46,6 +46,7 @@ function redirecionarPendenciasOperador(): void
         '/modulos/auditoria/itens_fora_padrao.php',
         '/modulos/rotinas_operacionais/menu_rotinas_operacionais.php',
         '/modulos/rotinas_operacionais/recebimento_mercadorias.php',
+        '/modulos/rotinas_operacionais/lista_recebimentos.php',
         '/logout.php',
         '/login.php',
     ];
@@ -236,6 +237,17 @@ function validarPermissaoModuloAtual(): void
         return;
     }
 
+    if ($caminho === 'modulos/rotinas_operacionais/lista_recebimentos.php') {
+        if (
+            moduloPermitido($pdo, $empresaId, 'lista_recebimentos_mercadorias', $perfil)
+            || moduloPermitido($pdo, $empresaId, 'recebimento_mercadorias', $perfil)
+        ) {
+            return;
+        }
+
+        renderizarAcessoNegadoModulo();
+    }
+
     $aliases = [
         'modulos/tesouraria/download.php' => 'tesouraria_extrato',
         'modulos/tesouraria/editar_movimentacao.php' => 'tesouraria_extrato',
@@ -258,6 +270,7 @@ function validarPermissaoModuloAtual(): void
         'modulos/financeiro/conciliacao_extratos.php' => 'financeiro_conciliacao_extratos',
         'modulos/estoque/posicao_estoque.php' => 'estoque_posicao',
         'modulos/rotinas_operacionais/recebimento_mercadorias.php' => 'recebimento_mercadorias',
+        'modulos/rotinas_operacionais/lista_recebimentos.php' => 'lista_recebimentos_mercadorias',
     ];
 
     $codigoModulo = $aliases[$caminho] ?? null;

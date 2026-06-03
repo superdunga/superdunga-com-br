@@ -23,11 +23,24 @@ function garantirTabelasRecebimentoMercadorias(PDO $pdo): void
             usuario_id INT NOT NULL,
             status VARCHAR(30) NOT NULL DEFAULT 'em_andamento',
             selfie_arquivo VARCHAR(255) NULL,
+            id_firebird INT NULL,
             criado_em DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
             finalizado_em DATETIME NULL,
             INDEX idx_receb_merc_empresa_status (empresa_id, status, criado_em)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
     ");
+
+    $stmtColunaFirebird = $pdo->prepare("
+        SELECT COUNT(*)
+        FROM information_schema.COLUMNS
+        WHERE TABLE_SCHEMA = DATABASE()
+          AND TABLE_NAME = 'recebimento_mercadorias'
+          AND COLUMN_NAME = 'id_firebird'
+    ");
+    $stmtColunaFirebird->execute();
+    if ((int)$stmtColunaFirebird->fetchColumn() === 0) {
+        $pdo->exec("ALTER TABLE recebimento_mercadorias ADD COLUMN id_firebird INT NULL AFTER selfie_arquivo");
+    }
 
     $pdo->exec("
         CREATE TABLE IF NOT EXISTS recebimento_mercadorias_documentos (
@@ -528,9 +541,6 @@ require '../../layout/header.php';
                 </div>
                 <div class="d-flex gap-2 align-items-start">
                     <a href="menu_rotinas_operacionais.php" class="btn btn-outline-secondary">Voltar</a>
-                    <?php if ($recebimento && ($recebimento['status'] ?? '') === 'finalizado'): ?>
-                        <a href="recebimento_mercadorias.php?id=<?= (int)$recebimento['id'] ?>&exportar=csv" class="btn btn-outline-success">Exportar CSV</a>
-                    <?php endif; ?>
                     <form method="POST">
                         <input type="hidden" name="acao" value="novo">
                         <button type="submit" class="btn btn-success">Novo recebimento</button>
@@ -579,9 +589,6 @@ require '../../layout/header.php';
                                         <div class="d-inline-flex flex-wrap justify-content-end gap-1">
                                             <?php if (($recente['status'] ?? '') !== 'finalizado' || $usuarioMasterRecebimento): ?>
                                                 <a href="recebimento_mercadorias.php?id=<?= (int)$recente['id'] ?>" class="btn btn-sm btn-primary">Abrir</a>
-                                            <?php endif; ?>
-                                            <?php if (($recente['status'] ?? '') === 'finalizado'): ?>
-                                                <a href="recebimento_mercadorias.php?id=<?= (int)$recente['id'] ?>&exportar=csv" class="btn btn-sm btn-outline-success">CSV</a>
                                             <?php endif; ?>
                                         </div>
                                     </td>
