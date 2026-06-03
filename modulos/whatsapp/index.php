@@ -33,9 +33,13 @@ function formatarAgendaWhatsapp(array $agendamento, array $nomesDias): string
 {
     $periodicidade = (string)($agendamento['periodicidade'] ?? '');
     $horario = !empty($agendamento['horario']) ? substr((string)$agendamento['horario'], 0, 5) : '--:--';
+    $diasAgendamento = array_filter(array_map('intval', explode(',', (string)($agendamento['dias_semana'] ?? ''))));
+
+    if ($periodicidade === 'DIARIO' && !empty($diasAgendamento) && count(array_unique($diasAgendamento)) < 7) {
+        $periodicidade = 'SEMANAL';
+    }
 
     if ($periodicidade === 'SEMANAL') {
-        $diasAgendamento = array_filter(array_map('intval', explode(',', (string)($agendamento['dias_semana'] ?? ''))));
         $diasTexto = [];
         foreach ($diasAgendamento as $dia) {
             if (isset($nomesDias[$dia])) {
@@ -294,6 +298,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
             $diasSemana = array_values(array_intersect(array_map('intval', $_POST['dias_semana_agendamento'] ?? []), [1, 2, 3, 4, 5, 6, 7]));
             $diasSemanaSql = !empty($diasSemana) ? implode(',', $diasSemana) : null;
+            if ($periodicidade === 'DIARIO' && $diasSemanaSql !== null && count(array_unique($diasSemana)) < 7) {
+                $periodicidade = 'SEMANAL';
+            }
             $diaMes = (int)($_POST['dia_mes_agendamento'] ?? 0);
             $diaMes = $diaMes > 0 ? max(1, min(31, $diaMes)) : null;
 

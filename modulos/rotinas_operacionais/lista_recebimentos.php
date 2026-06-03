@@ -6,6 +6,35 @@ require_once '../../config/modulos.php';
 $empresaId = (int)($_SESSION['empresa_id'] ?? 0);
 $mensagemOk = '';
 $mensagemErro = '';
+$filtros = [
+    'recebimento_id' => trim((string)($_GET['recebimento_id'] ?? '')),
+    'id_firebird' => trim((string)($_GET['id_firebird'] ?? '')),
+    'situacao_firebird' => trim((string)($_GET['situacao_firebird'] ?? 'todos')),
+    'data_ini' => trim((string)($_GET['data_ini'] ?? '')),
+    'data_fim' => trim((string)($_GET['data_fim'] ?? '')),
+    'usuario' => trim((string)($_GET['usuario'] ?? '')),
+];
+
+if (!in_array($filtros['situacao_firebird'], ['todos', 'pendentes', 'preenchidos'], true)) {
+    $filtros['situacao_firebird'] = 'todos';
+}
+
+$queryFiltros = http_build_query(array_filter($filtros, function ($valor): bool {
+    return $valor !== '' && $valor !== 'todos';
+}));
+
+function urlListaRecebimentos(array $parametros = [], string $queryFiltros = ''): string
+{
+    $queryExtra = http_build_query(array_filter($parametros, function ($valor): bool {
+        return $valor !== null && $valor !== '';
+    }));
+
+    $partes = array_filter([$queryFiltros, $queryExtra], function ($valor): bool {
+        return $valor !== '';
+    });
+
+    return 'lista_recebimentos.php' . (!empty($partes) ? '?' . implode('&', $partes) : '');
+}
 
 function garantirEstruturaListaRecebimentos(PDO $pdo): void
 {
@@ -177,7 +206,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['acao'] ?? '') === 'salvar_
     ");
     $stmtAtualizar->execute([$idFirebird, $recebimentoIdPost, $empresaId]);
 
-    header('Location: lista_recebimentos.php?ok=firebird');
+    header('Location: ' . urlListaRecebimentos(['ok' => 'firebird'], $queryFiltros));
     exit;
 }
 
@@ -193,6 +222,53 @@ if (($_GET['erro'] ?? '') === 'firebird_invalido') {
     $mensagemErro = 'Nao foi possivel gerar o CSV deste recebimento.';
 }
 
+$where = [
+    "r.empresa_id = ?",
+    "r.status = 'finalizado'",
+];
+$params = [$empresaId];
+
+if ($filtros['recebimento_id'] !== '') {
+    if (ctype_digit($filtros['recebimento_id'])) {
+        $where[] = 'r.id = ?';
+        $params[] = (int)$filtros['recebimento_id'];
+    } else {
+        $where[] = '1 = 0';
+    }
+}
+
+if ($filtros['id_firebird'] !== '') {
+    if (ctype_digit($filtros['id_firebird'])) {
+        $where[] = 'r.id_firebird = ?';
+        $params[] = (int)$filtros['id_firebird'];
+    } else {
+        $where[] = '1 = 0';
+    }
+}
+
+if ($filtros['situacao_firebird'] === 'pendentes') {
+    $where[] = 'r.id_firebird IS NULL';
+} elseif ($filtros['situacao_firebird'] === 'preenchidos') {
+    $where[] = 'r.id_firebird IS NOT NULL';
+}
+
+if ($filtros['data_ini'] !== '') {
+    $where[] = 'r.finalizado_em >= ?';
+    $params[] = $filtros['data_ini'] . ' 00:00:00';
+}
+
+if ($filtros['data_fim'] !== '') {
+    $where[] = 'r.finalizado_em <= ?';
+    $params[] = $filtros['data_fim'] . ' 23:59:59';
+}
+
+if ($filtros['usuario'] !== '') {
+    $where[] = 'u.nome LIKE ?';
+    $params[] = '%' . $filtros['usuario'] . '%';
+}
+
+$whereSql = implode("\n      AND ", $where);
+
 $stmtRecebimentos = $pdo_master->prepare("
     SELECT r.id,
            r.criado_em,
@@ -204,12 +280,11 @@ $stmtRecebimentos = $pdo_master->prepare("
     FROM recebimento_mercadorias r
     LEFT JOIN usuarios u ON u.id = r.usuario_id
     LEFT JOIN recebimento_mercadorias_itens i ON i.recebimento_id = r.id
-    WHERE r.empresa_id = ?
-      AND r.status = 'finalizado'
+    WHERE {$whereSql}
     GROUP BY r.id, r.criado_em, r.finalizado_em, r.id_firebird, u.nome
     ORDER BY r.finalizado_em DESC, r.id DESC
 ");
-$stmtRecebimentos->execute([$empresaId]);
+$stmtRecebimentos->execute($params);
 $recebimentos = $stmtRecebimentos->fetchAll(PDO::FETCH_ASSOC);
 
 require '../../layout/header.php';
@@ -239,7 +314,79 @@ require '../../layout/header.php';
     <div class="alert alert-danger"><?= htmlspecialchars($mensagemErro) ?></div>
 <?php endif; ?>
 
+<section class="bg-white border rounded-2 shadow-sm p-3 mb-3">
+    <form method="GET" class="row g-3 align-items-end">
+        <div class="col-6 col-md-2">
+            <label class="form-label small text-muted">ID local</label>
+            <input
+                type="number"
+                name="recebimento_id"
+                class="form-control"
+                min="1"
+                step="1"
+                value="<?= htmlspecialchars($filtros['recebimento_id']) ?>"
+                placeholder="Ex.: 3"
+            >
+        </div>
+        <div class="col-6 col-md-2">
+            <label class="form-label small text-muted">ID Firebird</label>
+            <input
+                type="number"
+                name="id_firebird"
+                class="form-control"
+                min="0"
+                step="1"
+                value="<?= htmlspecialchars($filtros['id_firebird']) ?>"
+                placeholder="Ex.: 6442"
+            >
+        </div>
+        <div class="col-12 col-md-3">
+            <label class="form-label small text-muted">Situacao Firebird</label>
+            <select name="situacao_firebird" class="form-select">
+                <option value="todos" <?= $filtros['situacao_firebird'] === 'todos' ? 'selected' : '' ?>>Todos</option>
+                <option value="pendentes" <?= $filtros['situacao_firebird'] === 'pendentes' ? 'selected' : '' ?>>Pendentes de ID</option>
+                <option value="preenchidos" <?= $filtros['situacao_firebird'] === 'preenchidos' ? 'selected' : '' ?>>Com ID Firebird</option>
+            </select>
+        </div>
+        <div class="col-6 col-md-2">
+            <label class="form-label small text-muted">Finalizado de</label>
+            <input
+                type="date"
+                name="data_ini"
+                class="form-control"
+                value="<?= htmlspecialchars($filtros['data_ini']) ?>"
+            >
+        </div>
+        <div class="col-6 col-md-2">
+            <label class="form-label small text-muted">Finalizado ate</label>
+            <input
+                type="date"
+                name="data_fim"
+                class="form-control"
+                value="<?= htmlspecialchars($filtros['data_fim']) ?>"
+            >
+        </div>
+        <div class="col-12 col-md-4">
+            <label class="form-label small text-muted">Usuario</label>
+            <input
+                type="text"
+                name="usuario"
+                class="form-control"
+                value="<?= htmlspecialchars($filtros['usuario']) ?>"
+                placeholder="Nome de quem criou"
+            >
+        </div>
+        <div class="col-12 col-md-auto d-flex gap-2">
+            <button type="submit" class="btn btn-primary">Filtrar</button>
+            <a href="lista_recebimentos.php" class="btn btn-outline-secondary">Limpar</a>
+        </div>
+    </form>
+</section>
+
 <section class="bg-white border rounded-2 shadow-sm overflow-hidden">
+    <div class="px-3 py-2 border-bottom text-muted small">
+        <?= count($recebimentos) ?> recebimento(s) finalizado(s) encontrado(s)
+    </div>
     <div class="table-responsive">
         <table class="table table-sm align-middle mb-0">
             <thead class="table-light">

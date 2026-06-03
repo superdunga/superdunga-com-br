@@ -471,6 +471,11 @@ function whatsappCalcularProximaExecucao(array $rotina, ?DateTime $base = null):
         $horario = '08:00:00';
     }
 
+    $diasSemana = array_filter(array_map('intval', explode(',', (string)($rotina['dias_semana'] ?? ''))));
+    if ($periodicidade === 'DIARIO' && !empty($diasSemana) && count(array_unique($diasSemana)) < 7) {
+        $periodicidade = 'SEMANAL';
+    }
+
     if ($periodicidade === 'DIARIO') {
         $proxima = new DateTime($base->format('Y-m-d') . ' ' . $horario);
         if ($proxima <= $base) {
@@ -480,7 +485,7 @@ function whatsappCalcularProximaExecucao(array $rotina, ?DateTime $base = null):
     }
 
     if ($periodicidade === 'SEMANAL') {
-        $dias = array_filter(array_map('intval', explode(',', (string)($rotina['dias_semana'] ?? ''))));
+        $dias = $diasSemana;
         if (empty($dias)) {
             $dias = [(int)$base->format('N')];
         }
