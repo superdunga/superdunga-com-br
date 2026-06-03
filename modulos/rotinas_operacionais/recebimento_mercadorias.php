@@ -69,11 +69,35 @@ function garantirTabelasRecebimentoMercadorias(PDO $pdo): void
             descricao_informada VARCHAR(255) NULL,
             status VARCHAR(30) NOT NULL DEFAULT 'pendente',
             enviado_firebird CHAR(1) NOT NULL DEFAULT 'N',
+            emb_qtde_atual DECIMAL(15,4) NULL,
+            erro_firebird VARCHAR(255) NULL,
+            tentativa_firebird INT NOT NULL DEFAULT 0,
+            data_envio_firebird DATETIME NULL,
             criado_em DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
             INDEX idx_receb_merc_item_recebimento (recebimento_id, ordem),
             INDEX idx_receb_merc_item_codigo (codigo_barras)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
     ");
+
+    $colunasItens = [
+        'emb_qtde_atual' => 'ALTER TABLE recebimento_mercadorias_itens ADD COLUMN emb_qtde_atual DECIMAL(15,4) NULL AFTER enviado_firebird',
+        'erro_firebird' => 'ALTER TABLE recebimento_mercadorias_itens ADD COLUMN erro_firebird VARCHAR(255) NULL AFTER emb_qtde_atual',
+        'tentativa_firebird' => 'ALTER TABLE recebimento_mercadorias_itens ADD COLUMN tentativa_firebird INT NOT NULL DEFAULT 0 AFTER erro_firebird',
+        'data_envio_firebird' => 'ALTER TABLE recebimento_mercadorias_itens ADD COLUMN data_envio_firebird DATETIME NULL AFTER tentativa_firebird',
+    ];
+    foreach ($colunasItens as $coluna => $alterSql) {
+        $stmtColunaItem = $pdo->prepare("
+            SELECT COUNT(*)
+            FROM information_schema.COLUMNS
+            WHERE TABLE_SCHEMA = DATABASE()
+              AND TABLE_NAME = 'recebimento_mercadorias_itens'
+              AND COLUMN_NAME = ?
+        ");
+        $stmtColunaItem->execute([$coluna]);
+        if ((int)$stmtColunaItem->fetchColumn() === 0) {
+            $pdo->exec($alterSql);
+        }
+    }
 }
 
 function numeroDecimalRecebimento(string $valor): float
@@ -265,6 +289,74 @@ function exportarCsvRecebimentoMercadorias(int $recebimentoId, array $itens): vo
     exit;
 }
 
+function prepararAtualizacaoEmbalagemFirebird(PDO $pdo, int $empresaId, int $recebimentoId): array
+{
+    $stmtItens = $pdo->prepare("
+        SELECT id, codproduto, produto_encontrado, quantidade_por_caixa
+        FROM recebimento_mercadorias_itens
+        WHERE recebimento_id = ?
+        ORDER BY ordem, id
+    ");
+    $stmtItens->execute([$recebimentoId]);
+
+    $totais = [
+        'pendente_firebird' => 0,
+        'sem_alteracao' => 0,
+        'produto_nao_cadastrado' => 0,
+    ];
+
+    $stmtProduto = $pdo->prepare("
+        SELECT EMB_QTDE
+        FROM armazem_est004
+        WHERE EMPRESA = ?
+          AND CODPRODUTO = ?
+          AND COALESCE(excluido_firebird, 'N') <> 'S'
+        LIMIT 1
+    ");
+
+    $stmtAtualizarItem = $pdo->prepare("
+        UPDATE recebimento_mercadorias_itens
+        SET status = ?,
+            enviado_firebird = ?,
+            emb_qtde_atual = ?,
+            erro_firebird = NULL
+        WHERE id = ?
+          AND recebimento_id = ?
+    ");
+
+    foreach ($stmtItens->fetchAll(PDO::FETCH_ASSOC) as $item) {
+        $itemId = (int)$item['id'];
+        $qtdInformada = round((float)$item['quantidade_por_caixa'], 4);
+
+        if (($item['produto_encontrado'] ?? 'N') !== 'S' || empty($item['codproduto'])) {
+            $stmtAtualizarItem->execute(['produto_nao_cadastrado', 'S', null, $itemId, $recebimentoId]);
+            $totais['produto_nao_cadastrado']++;
+            continue;
+        }
+
+        $stmtProduto->execute([$empresaId, $item['codproduto']]);
+        $qtdAtual = $stmtProduto->fetchColumn();
+
+        if ($qtdAtual === false) {
+            $stmtAtualizarItem->execute(['produto_nao_cadastrado', 'S', null, $itemId, $recebimentoId]);
+            $totais['produto_nao_cadastrado']++;
+            continue;
+        }
+
+        $qtdAtual = round((float)$qtdAtual, 4);
+        if (abs($qtdAtual - $qtdInformada) < 0.0001) {
+            $stmtAtualizarItem->execute(['sem_alteracao', 'S', $qtdAtual, $itemId, $recebimentoId]);
+            $totais['sem_alteracao']++;
+            continue;
+        }
+
+        $stmtAtualizarItem->execute(['pendente_firebird', 'N', $qtdAtual, $itemId, $recebimentoId]);
+        $totais['pendente_firebird']++;
+    }
+
+    return $totais;
+}
+
 garantirTabelasRecebimentoMercadorias($pdo_master);
 
 if (($_GET['ajax'] ?? '') === 'produto') {
@@ -379,16 +471,26 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 throw new RuntimeException('Envie a selfie de quem recebeu ou a foto do canhoto/documento assinado.');
             }
 
-            $stmt = $pdo_master->prepare("
-                UPDATE recebimento_mercadorias
-                SET status = 'finalizado',
-                    selfie_arquivo = ?,
-                    finalizado_em = NOW()
-                WHERE id = ?
-                  AND empresa_id = ?
-                  AND status <> 'finalizado'
-            ");
-            $stmt->execute([$comprovanteFinalizacao, $recebimentoIdPost, $empresaId]);
+            $pdo_master->beginTransaction();
+            try {
+                $stmt = $pdo_master->prepare("
+                    UPDATE recebimento_mercadorias
+                    SET status = 'finalizado',
+                        selfie_arquivo = ?,
+                        finalizado_em = NOW()
+                    WHERE id = ?
+                      AND empresa_id = ?
+                      AND status <> 'finalizado'
+                ");
+                $stmt->execute([$comprovanteFinalizacao, $recebimentoIdPost, $empresaId]);
+
+                prepararAtualizacaoEmbalagemFirebird($pdo_master, $empresaId, $recebimentoIdPost);
+
+                $pdo_master->commit();
+            } catch (Throwable $e) {
+                $pdo_master->rollBack();
+                throw $e;
+            }
 
             header('Location: recebimento_mercadorias.php?id=' . $recebimentoIdPost . '&ok=finalizado');
             exit;

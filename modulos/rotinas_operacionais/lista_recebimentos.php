@@ -86,11 +86,35 @@ function garantirEstruturaListaRecebimentos(PDO $pdo): void
             descricao_informada VARCHAR(255) NULL,
             status VARCHAR(30) NOT NULL DEFAULT 'pendente',
             enviado_firebird CHAR(1) NOT NULL DEFAULT 'N',
+            emb_qtde_atual DECIMAL(15,4) NULL,
+            erro_firebird VARCHAR(255) NULL,
+            tentativa_firebird INT NOT NULL DEFAULT 0,
+            data_envio_firebird DATETIME NULL,
             criado_em DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
             INDEX idx_receb_merc_item_recebimento (recebimento_id, ordem),
             INDEX idx_receb_merc_item_codigo (codigo_barras)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
     ");
+
+    $colunasItens = [
+        'emb_qtde_atual' => 'ALTER TABLE recebimento_mercadorias_itens ADD COLUMN emb_qtde_atual DECIMAL(15,4) NULL AFTER enviado_firebird',
+        'erro_firebird' => 'ALTER TABLE recebimento_mercadorias_itens ADD COLUMN erro_firebird VARCHAR(255) NULL AFTER emb_qtde_atual',
+        'tentativa_firebird' => 'ALTER TABLE recebimento_mercadorias_itens ADD COLUMN tentativa_firebird INT NOT NULL DEFAULT 0 AFTER erro_firebird',
+        'data_envio_firebird' => 'ALTER TABLE recebimento_mercadorias_itens ADD COLUMN data_envio_firebird DATETIME NULL AFTER tentativa_firebird',
+    ];
+    foreach ($colunasItens as $coluna => $alterSql) {
+        $stmtColunaItem = $pdo->prepare("
+            SELECT COUNT(*)
+            FROM information_schema.COLUMNS
+            WHERE TABLE_SCHEMA = DATABASE()
+              AND TABLE_NAME = 'recebimento_mercadorias_itens'
+              AND COLUMN_NAME = ?
+        ");
+        $stmtColunaItem->execute([$coluna]);
+        if ((int)$stmtColunaItem->fetchColumn() === 0) {
+            $pdo->exec($alterSql);
+        }
+    }
 }
 
 function formatarQtdListaRecebimento($valor): string
@@ -276,7 +300,11 @@ $stmtRecebimentos = $pdo_master->prepare("
            r.id_firebird,
            u.nome AS usuario_nome,
            COUNT(i.id) AS total_itens,
-           COALESCE(SUM(i.quantidade_total), 0) AS total_quantidade
+           COALESCE(SUM(i.quantidade_total), 0) AS total_quantidade,
+           SUM(CASE WHEN i.status = 'pendente_firebird' THEN 1 ELSE 0 END) AS pendentes_firebird,
+           SUM(CASE WHEN i.status = 'sem_alteracao' THEN 1 ELSE 0 END) AS sem_alteracao,
+           SUM(CASE WHEN i.status = 'produto_nao_cadastrado' THEN 1 ELSE 0 END) AS nao_cadastrados,
+           SUM(CASE WHEN i.status = 'atualizado_firebird' THEN 1 ELSE 0 END) AS atualizados_firebird
     FROM recebimento_mercadorias r
     LEFT JOIN usuarios u ON u.id = r.usuario_id
     LEFT JOIN recebimento_mercadorias_itens i ON i.recebimento_id = r.id
@@ -396,6 +424,7 @@ require '../../layout/header.php';
                     <th>Usuario</th>
                     <th class="text-end">Itens</th>
                     <th class="text-end">Qtd total</th>
+                    <th>Qtd por caixa</th>
                     <th style="min-width: 260px;">ID recebimento Firebird</th>
                     <th class="text-end">CSV</th>
                 </tr>
@@ -408,6 +437,20 @@ require '../../layout/header.php';
                         <td><?= htmlspecialchars($recebimento['usuario_nome'] ?? '-') ?></td>
                         <td class="text-end"><?= (int)$recebimento['total_itens'] ?></td>
                         <td class="text-end"><?= htmlspecialchars(formatarQtdListaRecebimento($recebimento['total_quantidade'] ?? 0)) ?></td>
+                        <td>
+                            <?php if ((int)($recebimento['pendentes_firebird'] ?? 0) > 0): ?>
+                                <span class="badge text-bg-warning"><?= (int)$recebimento['pendentes_firebird'] ?> pendente(s)</span>
+                            <?php endif; ?>
+                            <?php if ((int)($recebimento['atualizados_firebird'] ?? 0) > 0): ?>
+                                <span class="badge text-bg-success"><?= (int)$recebimento['atualizados_firebird'] ?> atualizado(s)</span>
+                            <?php endif; ?>
+                            <?php if ((int)($recebimento['sem_alteracao'] ?? 0) > 0): ?>
+                                <span class="badge text-bg-secondary"><?= (int)$recebimento['sem_alteracao'] ?> sem alteracao</span>
+                            <?php endif; ?>
+                            <?php if ((int)($recebimento['nao_cadastrados'] ?? 0) > 0): ?>
+                                <span class="badge text-bg-danger"><?= (int)$recebimento['nao_cadastrados'] ?> nao cadastrado(s)</span>
+                            <?php endif; ?>
+                        </td>
                         <td>
                             <form method="POST" class="d-flex gap-2">
                                 <input type="hidden" name="acao" value="salvar_firebird">
@@ -437,7 +480,7 @@ require '../../layout/header.php';
 
                 <?php if (empty($recebimentos)): ?>
                     <tr>
-                        <td colspan="7" class="text-center text-muted py-4">Nenhum recebimento finalizado encontrado.</td>
+                        <td colspan="8" class="text-center text-muted py-4">Nenhum recebimento finalizado encontrado.</td>
                     </tr>
                 <?php endif; ?>
             </tbody>
