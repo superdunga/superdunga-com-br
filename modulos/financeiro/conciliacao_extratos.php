@@ -807,9 +807,13 @@ $dataIni = trim($_GET['data_ini'] ?? date('Y-m-01'));
 $dataFim = trim($_GET['data_fim'] ?? date('Y-m-d'));
 $dcFiltro = strtoupper(trim((string)($_GET['dc'] ?? '')));
 $historicoFiltro = trim((string)($_GET['historico'] ?? ''));
+$situacaoFiltro = trim((string)($_GET['situacao'] ?? 'pendentes'));
 
 if (!in_array($dcFiltro, ['D', 'C'], true)) {
     $dcFiltro = '';
+}
+if (!in_array($situacaoFiltro, ['pendentes', 'conciliados', 'todos'], true)) {
+    $situacaoFiltro = 'pendentes';
 }
 
 $dataIniSql = $dataIni !== '' ? $dataIni . ' 00:00:00' : '';
@@ -1429,7 +1433,13 @@ if (($_GET['ok_recebiveis'] ?? '') === '1') {
 }
 
 $paramsExtrato = [$empresaId];
-$whereExtrato = ['e.empresa_id = ?', "e.conciliado = 'N'"];
+$whereExtrato = ['e.empresa_id = ?'];
+
+if ($situacaoFiltro === 'pendentes') {
+    $whereExtrato[] = "e.conciliado = 'N'";
+} elseif ($situacaoFiltro === 'conciliados') {
+    $whereExtrato[] = "e.conciliado = 'S'";
+}
 
 if ($cbcontador > 0) {
     $whereExtrato[] = 'e.cbcontador = ?';
@@ -1455,7 +1465,13 @@ if ($historicoFiltro !== '') {
 $whereExtratoSql = implode(' AND ', $whereExtrato);
 
 $stmtExtrato = $pdo_master->prepare("
-    SELECT e.*, c.nome_conta
+    SELECT
+        e.*,
+        c.nome_conta,
+        b.DTMOV AS data_sistema,
+        b.HISTMOV AS historico_sistema,
+        b.TIPOMOV AS tipo_sistema,
+        b.VALORMOV AS valor_sistema
     FROM financeiro_extrato_bancario e
     LEFT JOIN (
         SELECT CBCONTADOR, TRIM(COALESCE(NULLIF(TITULAR, ''), NULLIF(DESCABREV, ''), CONCAT('Conta ', CBCONTADOR))) AS nome_conta
@@ -1465,6 +1481,10 @@ $stmtExtrato = $pdo_master->prepare("
           AND COALESCE(CONTABLOQUEADA, 'N') <> 'S'
           AND TRIM(COALESCE(CLASSIFICACAO, '')) IN ('1', '2')
     ) c ON c.CBCONTADOR = e.cbcontador
+    LEFT JOIN armazem_bnc001 b
+      ON b.EMPRESA = e.empresa_id
+     AND b.CBCONTADOR = e.cbcontador
+     AND b.MOVCONTADOR = e.bnc001_movcontador
     WHERE {$whereExtratoSql}
     ORDER BY e.data_movimento DESC, e.id DESC
     LIMIT 300
@@ -1534,7 +1554,7 @@ $stmtBnc->execute(array_merge([$empresaId], $paramsBnc));
 $sistemaPendentes = $stmtBnc->fetchAll(PDO::FETCH_ASSOC);
 
 $sugestoes = [];
-if ($cbcontador > 0 && $dataIni !== '' && $dataFim !== '') {
+if ($situacaoFiltro !== 'conciliados' && $cbcontador > 0 && $dataIni !== '' && $dataFim !== '') {
     $whereSugestoesFiltros = '';
     $paramsSugestoesFiltros = [];
 
@@ -1694,6 +1714,14 @@ require '../../layout/header.php';
             <div class="col-lg-3">
                 <label class="form-label">Historico</label>
                 <input type="text" name="historico" class="form-control" value="<?= htmlspecialchars($historicoFiltro) ?>" placeholder="Buscar no historico">
+            </div>
+            <div class="col-md-3 col-lg-2">
+                <label class="form-label">Situacao</label>
+                <select name="situacao" class="form-select">
+                    <option value="pendentes" <?= $situacaoFiltro === 'pendentes' ? 'selected' : '' ?>>Nao conciliados</option>
+                    <option value="conciliados" <?= $situacaoFiltro === 'conciliados' ? 'selected' : '' ?>>Conciliados</option>
+                    <option value="todos" <?= $situacaoFiltro === 'todos' ? 'selected' : '' ?>>Todos</option>
+                </select>
             </div>
             <div class="col-md-3 col-lg-1">
                 <button type="submit" class="btn btn-primary w-100">Filtrar</button>
@@ -1856,7 +1884,7 @@ require '../../layout/header.php';
     </div>
 </section>
 
-<?php if ($cbcontador > 0): ?>
+<?php if ($cbcontador > 0 && $situacaoFiltro !== 'conciliados'): ?>
     <section class="mb-4">
         <div class="bg-white border rounded-2 shadow-sm overflow-hidden">
             <div class="p-3 border-bottom bg-light">
@@ -2012,8 +2040,17 @@ require '../../layout/header.php';
                 <div class="p-3 border-bottom bg-light">
                     <div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-center gap-2">
                         <div>
-                            <h2 class="h6 fw-bold mb-1">Extrato bancario nao conciliado</h2>
-                            <div class="text-muted small">Marque creditos pagos direto na conta para gerar recebiveis e conciliar com vendas.</div>
+                            <h2 class="h6 fw-bold mb-1">
+                                Extrato bancario
+                                <?php if ($situacaoFiltro === 'conciliados'): ?>
+                                    conciliado
+                                <?php elseif ($situacaoFiltro === 'todos'): ?>
+                                    todos
+                                <?php else: ?>
+                                    nao conciliado
+                                <?php endif; ?>
+                            </h2>
+                            <div class="text-muted small">Use o filtro de situacao para consultar pendentes, conciliados ou todos os lancamentos.</div>
                         </div>
                         <div class="d-flex gap-2 align-items-center">
                             <select name="cm_recebivel" form="form-gerar-recebiveis" class="form-select form-select-sm" style="width: 120px;">
@@ -2043,6 +2080,8 @@ require '../../layout/header.php';
                                     <th>Historico</th>
                                     <th>D/C</th>
                                     <th class="text-end">Valor</th>
+                                    <th>Status</th>
+                                    <th>Sistema</th>
                                     <th>Recebivel</th>
                                 </tr>
                             </thead>
@@ -2050,7 +2089,7 @@ require '../../layout/header.php';
                                 <?php foreach ($extratosPendentes as $item): ?>
                                     <tr>
                                         <td>
-                                            <?php if (($item['tipo'] ?? '') === 'C' && empty($item['recebimento_id'])): ?>
+                                            <?php if (($item['conciliado'] ?? 'N') === 'N' && ($item['tipo'] ?? '') === 'C' && empty($item['recebimento_id'])): ?>
                                                 <input type="checkbox" name="extratos_recebiveis[]" value="<?= (int)$item['id'] ?>">
                                             <?php endif; ?>
                                         </td>
@@ -2060,6 +2099,22 @@ require '../../layout/header.php';
                                         <td><?= htmlspecialchars($item['historico'] ?: '-') ?></td>
                                         <td><?= htmlspecialchars($item['tipo']) ?></td>
                                         <td class="text-end"><?= moedaExtratoBanco($item['valor']) ?></td>
+                                        <td>
+                                            <?php if (($item['conciliado'] ?? 'N') === 'S'): ?>
+                                                <span class="badge text-bg-success">Conciliado</span>
+                                            <?php else: ?>
+                                                <span class="badge text-bg-warning">Pendente</span>
+                                            <?php endif; ?>
+                                        </td>
+                                        <td>
+                                            <?php if (!empty($item['bnc001_movcontador'])): ?>
+                                                <div class="fw-semibold">MOV <?= (int)$item['bnc001_movcontador'] ?></div>
+                                                <div class="small text-muted"><?= dataHoraExtratoBanco($item['data_sistema'] ?? null) ?></div>
+                                                <div class="small"><?= htmlspecialchars(mb_substr((string)($item['historico_sistema'] ?? ''), 0, 70) ?: '-') ?></div>
+                                            <?php else: ?>
+                                                <span class="text-muted">-</span>
+                                            <?php endif; ?>
+                                        </td>
                                         <td>
                                             <?php if (!empty($item['recebimento_id'])): ?>
                                                 <span class="badge text-bg-success">Gerado #<?= (int)$item['recebimento_id'] ?></span>
@@ -2072,7 +2127,7 @@ require '../../layout/header.php';
                                     </tr>
                                 <?php endforeach; ?>
                                 <?php if (empty($extratosPendentes)): ?>
-                                    <tr><td colspan="8" class="text-center text-muted py-3">Nenhum extrato bancario pendente.</td></tr>
+                                    <tr><td colspan="10" class="text-center text-muted py-3">Nenhum extrato bancario encontrado para os filtros atuais.</td></tr>
                                 <?php endif; ?>
                             </tbody>
                         </table>
