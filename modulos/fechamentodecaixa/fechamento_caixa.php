@@ -146,6 +146,7 @@ $total_diferenca_geral = 0;
                   $filtroVendaTotal
             ) e ON e.VENDACONTADOR = c.NUMDOCORIGEM
             WHERE c.EMPRESA = ?
+              AND COALESCE(c.excluido_firebird, 'N') <> 'S'
         ");
         $stmt->execute([$data_inicio, $data_fim, $usuario, $empresa_id, $empresa_id]);
         $total_prazo = (float)$stmt->fetchColumn();
