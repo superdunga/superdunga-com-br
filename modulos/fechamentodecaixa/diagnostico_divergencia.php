@@ -41,8 +41,13 @@ $stmtPendSistema->execute([$inicio, $fim, $empresa_id, $empresa_id, $inicio, $fi
 $pendentesSistema = $stmtPendSistema->fetchAll(PDO::FETCH_ASSOC);
 
 $stmtPendCR = $pdo_master->prepare("
-    SELECT c.*
+    SELECT
+        c.*,
+        COALESCE(NULLIF(cli.NOME, ''), NULLIF(cli.APELIDO, ''), '') AS cliente_nome
     FROM armazem_cr001 c
+    LEFT JOIN armazem_cr002 cli
+        ON cli.EMPRESA = c.EMPRESA
+       AND cli.CLICONTADOR = c.CLICONTADOR
     WHERE c.DTLANC BETWEEN ? AND ?
       AND c.EMPRESA = ?
       AND c.CMCONTADOR <> 9
@@ -237,7 +242,7 @@ $diferencaPendentes = $totalPendenteSistema - $totalPendenteCR001;
                         <table class="table table-sm table-bordered text-center mb-0">
                             <thead>
                                 <tr>
-                                    <th>NUMDOCORIGEM</th>
+                                    <th style="min-width: 180px;">NUMDOCORIGEM / Cliente</th>
                                     <th>Data</th>
                                     <th>Valor</th>
                                     <th>CM</th>
@@ -252,9 +257,18 @@ $diferencaPendentes = $totalPendenteSistema - $totalPendenteCR001;
                                         <?php
                                             $vendaOrigem = (int)($c['NUMDOCORIGEM'] ?? 0);
                                             $collapseId = 'itens-cr-' . (int)$c['CRCONTADOR'];
+                                            $clienteNome = trim((string)($c['cliente_nome'] ?? ''));
+                                            $clienteLabel = $clienteNome !== ''
+                                                ? $clienteNome
+                                                : (!empty($c['CLICONTADOR']) ? 'Cliente ' . (int)$c['CLICONTADOR'] : '-');
                                         ?>
                                         <tr>
-                                            <td><?= htmlspecialchars($c['NUMDOCORIGEM'] ?? '') ?></td>
+                                            <td class="text-start">
+                                                <div class="fw-semibold"><?= htmlspecialchars($c['NUMDOCORIGEM'] ?? '') ?></div>
+                                                <div class="small text-truncate" style="max-width: 240px;" title="<?= htmlspecialchars($clienteLabel) ?>">
+                                                    <?= htmlspecialchars($clienteLabel) ?>
+                                                </div>
+                                            </td>
                                             <td><?= date('d/m/Y H:i', strtotime($c['DTLANC'])) ?></td>
                                             <td>R$ <?= number_format($c['VLRPARCELA'], 2, ',', '.') ?></td>
                                             <td><?= $c['CMCONTADOR'] ?></td>
