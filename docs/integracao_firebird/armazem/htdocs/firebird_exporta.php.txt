@@ -1,0 +1,33 @@
+<?php
+
+echo "Iniciando conexão...<br>";
+
+try {
+
+    $host = "localhost";
+    $banco = "C:\Adm_EmporioDunga\Data\ESTOQUE.FDB"; // já configurado por você
+    $usuario = "SYSDBA";
+    $senha = "masterkey";
+
+    $pdo = new PDO("firebird:dbname=$host:$banco;charset=UTF8", $usuario, $senha);
+
+    echo "? Conectado!<br><br>";
+
+    echo "<b>Testando consulta...</b><br><br>";
+
+    // ?? CONSULTA SIMPLES (AJUSTAMOS DEPOIS)
+    $sql = "SELECT FIRST 10 * FROM EST007";
+
+    $stmt = $pdo->query($sql);
+
+    while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
+        echo "<pre>";
+        print_r($row);
+        echo "</pre>";
+    }
+
+} catch (Exception $e) {
+
+    echo "? Erro: " . $e->getMessage();
+
+}

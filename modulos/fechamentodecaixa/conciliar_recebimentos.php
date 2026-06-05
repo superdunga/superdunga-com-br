@@ -364,10 +364,15 @@ if (!$modoLeveAuto) {
     SELECT
         c.CRCONTADOR,
         c.NUMDOCORIGEM,
+        c.CLICONTADOR,
+        COALESCE(NULLIF(cli.NOME, ''), NULLIF(cli.APELIDO, ''), '') AS cliente_nome,
         c.DTLANC,
         c.VLRPARCELA,
         c.CMCONTADOR
     FROM armazem_cr001 c
+    LEFT JOIN armazem_cr002 cli
+        ON cli.EMPRESA = c.EMPRESA
+       AND cli.CLICONTADOR = c.CLICONTADOR
     WHERE c.DTLANC BETWEEN ? AND ?
       AND c.EMPRESA = $empresa_id
       AND c.recebimento_id IS NULL
@@ -858,7 +863,7 @@ function renderizarItensVendaRecebimentos(array $itens): void
                 <table class="table table-sm table-bordered mb-0">
                     <thead>
                         <tr>
-                            <th>ID</th>
+                            <th style="min-width: 170px;">ID / Venda / Cliente</th>
                             <th>Data</th>
                             <th>Valor</th>
                             <th>CM</th>
@@ -875,9 +880,19 @@ function renderizarItensVendaRecebimentos(array $itens): void
                                 <?php
                                     $vendaOrigem = (int)($c['NUMDOCORIGEM'] ?? 0);
                                     $collapseId = 'itens-cr001-' . (int)$c['CRCONTADOR'];
+                                    $clienteNome = trim((string)($c['cliente_nome'] ?? ''));
+                                    $clienteLabel = $clienteNome !== ''
+                                        ? $clienteNome
+                                        : (!empty($c['CLICONTADOR']) ? 'Cliente ' . (int)$c['CLICONTADOR'] : '-');
                                 ?>
                                 <tr>
-                                    <td><?= $c['CRCONTADOR'] ?></td>
+                                    <td>
+                                        <div class="fw-semibold">ID <?= (int)$c['CRCONTADOR'] ?></div>
+                                        <div class="small text-muted">Venda <?= $vendaOrigem > 0 ? $vendaOrigem : '-' ?></div>
+                                        <div class="small text-truncate" style="max-width: 220px;" title="<?= htmlspecialchars($clienteLabel) ?>">
+                                            <?= htmlspecialchars($clienteLabel) ?>
+                                        </div>
+                                    </td>
                                     <td><?= !empty($c['DTLANC']) ? date('d/m/Y H:i', strtotime($c['DTLANC'])) : '-' ?></td>
                                     <td>R$ <?= number_format((float)$c['VLRPARCELA'], 2, ',', '.') ?></td>
                                     <td><?= $c['CMCONTADOR'] ?? '-' ?></td>
