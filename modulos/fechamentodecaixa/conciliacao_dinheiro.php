@@ -679,7 +679,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     $queryRedirect = http_build_query([
         'mes' => $_POST['mes'] ?? date('Y-m'),
-        'finalizado' => $_POST['finalizado'] ?? 'todos',
+        'finalizado' => $_POST['finalizado'] ?? 'nao_finalizado',
     ]);
     header('Location: conciliacao_dinheiro.php?' . $queryRedirect);
     exit;
@@ -690,9 +690,9 @@ if (!preg_match('/^\d{4}-\d{2}$/', $mes)) {
     $mes = date('Y-m');
 }
 
-$filtroFinalizado = $_GET['finalizado'] ?? 'todos';
+$filtroFinalizado = $_GET['finalizado'] ?? 'nao_finalizado';
 if (!in_array($filtroFinalizado, ['todos', 'finalizado', 'nao_finalizado'], true)) {
-    $filtroFinalizado = 'todos';
+    $filtroFinalizado = 'nao_finalizado';
 }
 
 $inicio = $mes . '-01 07:00:00';
