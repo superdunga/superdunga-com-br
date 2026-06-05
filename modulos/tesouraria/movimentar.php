@@ -184,7 +184,9 @@ foreach ($tiposDinheiro as $t) {
     }
 }
 
-$linhas = max(count($moedas), count($cedulas));
+$moedas = array_merge($moedas, $cedulas);
+$cedulas = [];
+$linhas = count($moedas);
 
 /* =========================
    BACKEND COMPLETO
@@ -875,6 +877,264 @@ input[type="file"] {
         font-size: 11px;
     }
 }
+
+/* UX mobile-first para tesouraria */
+.card.shadow-sm {
+    max-width: 1180px;
+    margin: 0 auto 88px;
+    border: 0;
+    border-radius: 8px;
+    overflow: hidden;
+}
+
+.card.shadow-sm > .card-body {
+    padding: 16px;
+    background: #f4f7fb;
+}
+
+.card.shadow-sm h4.mb-1 {
+    margin: -16px -16px 16px;
+    padding: 16px 18px;
+    background: #143b78;
+    color: #fff;
+    font-size: 20px;
+    font-weight: 800;
+}
+
+.card.shadow-sm form > .mb-2:first-child,
+.card.shadow-sm form > .row,
+.card.shadow-sm form > .text-center,
+.card.shadow-sm form > .mt-2 {
+    background: #fff;
+    border: 1px solid #dfe6ef;
+    border-radius: 8px;
+    padding: 14px;
+    margin-bottom: 14px;
+}
+
+.card.shadow-sm label {
+    font-size: 13px;
+    margin-bottom: 5px;
+    font-weight: 700;
+    color: #263646;
+}
+
+.btn-tipo {
+    font-size: 14px;
+    padding: 11px 8px;
+    background: #f8fafc;
+    color: #263646;
+    border: 1px solid #cfd8e3;
+    border-radius: 8px;
+    font-weight: 800;
+}
+
+.btn-tipo.ativo {
+    background: #143b78;
+    color: #fff;
+    border-color: #143b78;
+    box-shadow: 0 0 0 3px rgba(20, 59, 120, .12);
+}
+
+.titulo-secao {
+    font-size: 16px;
+    font-weight: 800;
+    margin-bottom: 10px;
+}
+
+.subcabecalho {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 10px;
+    margin-bottom: 6px;
+    color: #5a6877;
+    font-size: 12px;
+    font-weight: 800;
+    text-transform: uppercase;
+}
+
+.subcabecalho .coluna {
+    width: auto;
+}
+
+.subcabecalho .coluna:nth-child(2) {
+    display: none;
+}
+
+.linha-dupla {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 10px;
+    margin-bottom: 8px;
+}
+
+.linha-dupla .bloco-dinheiro:nth-child(2) {
+    display: none;
+}
+
+.bloco-dinheiro {
+    width: auto;
+    display: grid;
+    grid-template-columns: 76px 34px 48px 34px 42px minmax(76px, 1fr);
+    align-items: center;
+    gap: 5px;
+    min-height: 42px;
+    padding: 6px;
+    background: #f8fafc;
+    border: 1px solid #e3e9f0;
+    border-radius: 8px;
+}
+
+.valor-label {
+    width: auto;
+    min-width: 0;
+    font-size: 14px;
+    font-weight: 800;
+    text-align: right;
+    color: #1f2d3d;
+    white-space: nowrap;
+}
+
+.qtd {
+    width: 100%;
+    min-width: 0;
+    height: 34px;
+    text-align: center;
+    background-color: #fff;
+    font-size: 16px;
+    font-weight: 800;
+    padding: 2px 4px;
+    border: 1px solid #cfd8e3;
+}
+
+.btn-ajuste {
+    width: 100%;
+    height: 34px;
+    padding: 0;
+    font-size: 13px;
+    line-height: 1;
+    border-radius: 7px;
+    font-weight: 800;
+}
+
+.total-denominacao {
+    min-width: 0;
+    font-size: 13px;
+    font-weight: 800;
+    text-align: right;
+    color: #243447;
+    background: #eef4fb;
+    border: 0;
+    border-radius: 7px;
+    padding: 6px 7px;
+    white-space: nowrap;
+}
+
+.total-secao {
+    font-size: 15px;
+    font-weight: 800;
+    margin-top: 10px;
+    padding: 10px 12px;
+    background: #f8fafc;
+    border-radius: 8px;
+    text-align: right;
+}
+
+.card.shadow-sm form > .text-center {
+    position: sticky;
+    bottom: 10px;
+    z-index: 5;
+    border-left: 5px solid #143b78;
+    box-shadow: 0 10px 24px rgba(17, 33, 54, .12);
+}
+
+.card.shadow-sm form > .text-center h5 {
+    font-size: 13px;
+    font-weight: 800;
+    margin: 0;
+    color: #5a6877;
+    text-transform: uppercase;
+}
+
+#saldoFinal {
+    font-size: 24px;
+    margin: 2px 0 0;
+    font-weight: 900;
+}
+
+#msgSaldo {
+    font-size: 13px;
+    font-weight: 800;
+}
+
+textarea {
+    font-size: 14px;
+    min-height: 86px;
+}
+
+#btnSalvar {
+    min-height: 48px;
+    font-size: 16px;
+    font-weight: 800;
+}
+
+@media (max-width: 992px) {
+    .card.shadow-sm form > .row > [class*="col-"] {
+        flex: 0 0 100%;
+        max-width: 100%;
+    }
+
+    .linha-dupla,
+    .subcabecalho {
+        grid-template-columns: 1fr;
+    }
+
+    .subcabecalho .coluna:nth-child(2) {
+        display: none;
+    }
+}
+
+@media (max-width: 576px) {
+    .card.shadow-sm {
+        margin-bottom: 96px;
+    }
+
+    .card.shadow-sm > .card-body {
+        padding: 10px;
+    }
+
+    .card.shadow-sm h4.mb-1 {
+        margin: -10px -10px 12px;
+        padding: 14px;
+        font-size: 18px;
+    }
+
+    .card.shadow-sm form > .mb-2:first-child,
+    .card.shadow-sm form > .row,
+    .card.shadow-sm form > .text-center,
+    .card.shadow-sm form > .mt-2 {
+        padding: 10px;
+    }
+
+    .bloco-dinheiro {
+        grid-template-columns: 72px 34px 44px 34px 42px minmax(66px, 1fr);
+        gap: 4px;
+        padding: 5px;
+    }
+
+    .valor-label {
+        font-size: 13px;
+    }
+
+    .total-denominacao {
+        font-size: 12px;
+        padding: 6px 5px;
+    }
+
+    #saldoFinal {
+        font-size: 22px;
+    }
+}
 </style>
 
 <div class="card shadow-sm">
@@ -921,7 +1181,7 @@ input[type="file"] {
                     <div class="titulo-secao text-success">Entrada de dinheiro</div>
 
                     <div class="subcabecalho">
-                        <div class="coluna">Moedas</div>
+                        <div class="coluna">Valores</div>
                         <div class="coluna">Cédulas</div>
                     </div>
 
@@ -987,7 +1247,7 @@ input[type="file"] {
                     <div class="titulo-secao text-danger">Saída de dinheiro</div>
 
                     <div class="subcabecalho">
-                        <div class="coluna">Moedas</div>
+                        <div class="coluna">Valores</div>
                         <div class="coluna">Cédulas</div>
                     </div>
 
@@ -1285,6 +1545,24 @@ document.getElementById('formMovimentacao').addEventListener('submit', function(
     const btnSalvar = document.getElementById('btnSalvar');
 
     if (btnSalvar.disabled) {
+        e.preventDefault();
+        return false;
+    }
+
+    const tipo = document.getElementById('tipoMovimentacao').value;
+    const tipoTexto = {
+        C: 'Crédito',
+        D: 'Débito',
+        T: 'Troca'
+    }[tipo] || 'Movimentação';
+    const valor = document.getElementById('saldoFinal').innerText;
+    const confirmado = confirm(
+        'Confirma salvar esta movimentação?\n\n' +
+        'Tipo: ' + tipoTexto + '\n' +
+        'Valor: ' + valor
+    );
+
+    if (!confirmado) {
         e.preventDefault();
         return false;
     }
