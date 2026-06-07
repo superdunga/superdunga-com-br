@@ -1659,6 +1659,71 @@ foreach ($sugestoesManuais as $sugestaoManual) {
 require '../../layout/header.php';
 ?>
 
+<style>
+.extrato-bancario-quadro {
+    overflow-x: visible;
+}
+
+.extrato-bancario-quadro table {
+    table-layout: fixed;
+    width: 100%;
+    font-size: 12px;
+}
+
+.extrato-bancario-quadro th,
+.extrato-bancario-quadro td {
+    white-space: normal;
+    overflow-wrap: anywhere;
+    vertical-align: middle;
+}
+
+.extrato-bancario-quadro th:nth-child(1),
+.extrato-bancario-quadro td:nth-child(1) {
+    width: 34px;
+}
+
+.extrato-bancario-quadro th:nth-child(2),
+.extrato-bancario-quadro td:nth-child(2) {
+    width: 46px;
+}
+
+.extrato-bancario-quadro th:nth-child(3),
+.extrato-bancario-quadro td:nth-child(3) {
+    width: 126px;
+}
+
+.extrato-bancario-quadro th:nth-child(5),
+.extrato-bancario-quadro td:nth-child(5) {
+    width: 42px;
+    text-align: center;
+}
+
+.extrato-bancario-quadro th:nth-child(6),
+.extrato-bancario-quadro td:nth-child(6) {
+    width: 78px;
+    white-space: nowrap;
+}
+
+.extrato-bancario-quadro th:nth-child(7),
+.extrato-bancario-quadro td:nth-child(7) {
+    width: 102px;
+}
+
+.historico-extrato {
+    min-width: 0;
+}
+
+.extrato-bancario-quadro .badge {
+    white-space: normal;
+}
+
+@media (max-width: 768px) {
+    .extrato-bancario-quadro {
+        overflow-x: auto;
+    }
+}
+</style>
+
 <section class="mb-4">
     <div class="p-4 p-lg-5 bg-white border rounded-2 shadow-sm">
         <div class="row align-items-center g-3">
@@ -2067,7 +2132,7 @@ require '../../layout/header.php';
                         </div>
                     </div>
                 </div>
-                <div class="table-responsive">
+                <div class="table-responsive extrato-bancario-quadro">
                     <form method="POST" id="form-gerar-recebiveis">
                         <input type="hidden" name="acao" value="gerar_recebiveis_banco">
                         <table class="table table-sm table-hover align-middle mb-0">
@@ -2075,14 +2140,11 @@ require '../../layout/header.php';
                                 <tr>
                                     <th style="width: 34px;"></th>
                                     <th>ID</th>
-                                    <th>Conta</th>
-                                    <th>Data</th>
+                                    <th>Conta / Data</th>
                                     <th>Historico</th>
                                     <th>D/C</th>
                                     <th class="text-end">Valor</th>
-                                    <th>Status</th>
-                                    <th>Sistema</th>
-                                    <th>Recebivel</th>
+                                    <th>Status / Vinculos</th>
                                 </tr>
                             </thead>
                             <tbody>
@@ -2094,9 +2156,16 @@ require '../../layout/header.php';
                                             <?php endif; ?>
                                         </td>
                                         <td><?= (int)$item['id'] ?></td>
-                                        <td><?= (int)$item['cbcontador'] ?> - <?= htmlspecialchars($item['nome_conta'] ?: 'Conta') ?></td>
-                                        <td><?= dataHoraExtratoBanco($item['data_movimento']) ?></td>
-                                        <td><?= htmlspecialchars($item['historico'] ?: '-') ?></td>
+                                        <td>
+                                            <div class="fw-semibold"><?= (int)$item['cbcontador'] ?> - <?= htmlspecialchars($item['nome_conta'] ?: 'Conta') ?></div>
+                                            <div class="small text-muted"><?= dataHoraExtratoBanco($item['data_movimento']) ?></div>
+                                        </td>
+                                        <td class="historico-extrato">
+                                            <div><?= htmlspecialchars($item['historico'] ?: '-') ?></div>
+                                            <?php if (!empty($item['documento'])): ?>
+                                                <div class="small text-muted">Doc: <?= htmlspecialchars($item['documento']) ?></div>
+                                            <?php endif; ?>
+                                        </td>
                                         <td><?= htmlspecialchars($item['tipo']) ?></td>
                                         <td class="text-end"><?= moedaExtratoBanco($item['valor']) ?></td>
                                         <td>
@@ -2105,29 +2174,25 @@ require '../../layout/header.php';
                                             <?php else: ?>
                                                 <span class="badge text-bg-warning">Pendente</span>
                                             <?php endif; ?>
-                                        </td>
-                                        <td>
+
                                             <?php if (!empty($item['bnc001_movcontador'])): ?>
-                                                <div class="fw-semibold">MOV <?= (int)$item['bnc001_movcontador'] ?></div>
+                                                <div class="small fw-semibold mt-1">MOV <?= (int)$item['bnc001_movcontador'] ?></div>
                                                 <div class="small text-muted"><?= dataHoraExtratoBanco($item['data_sistema'] ?? null) ?></div>
                                                 <div class="small"><?= htmlspecialchars(mb_substr((string)($item['historico_sistema'] ?? ''), 0, 70) ?: '-') ?></div>
-                                            <?php else: ?>
-                                                <span class="text-muted">-</span>
                                             <?php endif; ?>
-                                        </td>
-                                        <td>
+
                                             <?php if (!empty($item['recebimento_id'])): ?>
-                                                <span class="badge text-bg-success">Gerado #<?= (int)$item['recebimento_id'] ?></span>
+                                                <div class="mt-1"><span class="badge text-bg-success">Recebivel #<?= (int)$item['recebimento_id'] ?></span></div>
                                             <?php elseif (($item['tipo'] ?? '') !== 'C'): ?>
-                                                <span class="badge text-bg-secondary">Nao aplicavel</span>
+                                                <div class="mt-1"><span class="badge text-bg-secondary">Recebivel nao aplicavel</span></div>
                                             <?php else: ?>
-                                                <span class="badge text-bg-light border text-dark">Pendente</span>
+                                                <div class="mt-1"><span class="badge text-bg-light border text-dark">Recebivel pendente</span></div>
                                             <?php endif; ?>
                                         </td>
                                     </tr>
                                 <?php endforeach; ?>
                                 <?php if (empty($extratosPendentes)): ?>
-                                    <tr><td colspan="10" class="text-center text-muted py-3">Nenhum extrato bancario encontrado para os filtros atuais.</td></tr>
+                                    <tr><td colspan="7" class="text-center text-muted py-3">Nenhum extrato bancario encontrado para os filtros atuais.</td></tr>
                                 <?php endif; ?>
                             </tbody>
                         </table>
