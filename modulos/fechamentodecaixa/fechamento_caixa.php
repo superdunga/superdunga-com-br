@@ -127,6 +127,7 @@ $total_diferenca_geral = 0;
             WHERE b.DTLANC BETWEEN ? AND ?
               AND b.EMPRESA = ?
               AND b.TIPODOCORIGEM = 'VENDA'
+              AND COALESCE(b.deletado, 'N') <> 'S'
         ");
         $stmt->execute([$data_inicio, $data_fim, $usuario, $empresa_id, $data_inicio, $data_fim, $empresa_id]);
         $total_vista = (float)$stmt->fetchColumn();
