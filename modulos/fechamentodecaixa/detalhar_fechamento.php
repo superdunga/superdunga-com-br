@@ -206,6 +206,7 @@ $stmt = $pdo_master->prepare("
     WHERE b.DTLANC BETWEEN ? AND ?
       AND b.EMPRESA = ?
       AND b.TIPODOCORIGEM = 'VENDA'
+      AND COALESCE(b.deletado, 'N') <> 'S'
     ORDER BY b.NUMDOCORIGEM
 ");
 $stmt->execute([$data_inicio, $data_fim, $usuario, $empresa_id, $data_inicio, $data_fim, $empresa_id]);
