@@ -358,6 +358,7 @@ if ($gerarRecibos && empty($errosFolha)) {
         WHERE EMPRESA = ?
           AND CLICONTADOR = ?
           AND DATE(DTEMISSAO) <= ?
+          AND CMCONTADOR = 9
           AND STATUS <> 'QT'
           AND COALESCE(excluido_firebird, 0) = 0
         ORDER BY DTEMISSAO, CRCONTADOR
