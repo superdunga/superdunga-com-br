@@ -273,6 +273,7 @@ function validarPermissaoModuloAtual(): void
         'modulos/rotinas_operacionais/recebimento_mercadorias.php' => 'recebimento_mercadorias',
         'modulos/rotinas_operacionais/lista_recebimentos.php' => 'lista_recebimentos_mercadorias',
         'modulos/colaboradores/cadastro.php' => 'colaboradores_cadastro',
+        'modulos/colaboradores/folha_pagamento.php' => 'colaboradores_folha_pagamento',
     ];
 
     $codigoModulo = $aliases[$caminho] ?? null;

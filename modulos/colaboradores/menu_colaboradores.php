@@ -15,6 +15,14 @@ $opcoes = [
         'icone' => 'CD',
         'botao' => 'btn-primary',
     ],
+    [
+        'titulo' => 'Folha de Pagamento',
+        'descricao' => 'Consulte os vales e lancamentos dos colaboradores sincronizados da FUNC001.',
+        'href' => 'folha_pagamento.php',
+        'modulo' => 'colaboradores_folha_pagamento',
+        'icone' => 'FP',
+        'botao' => 'btn-success',
+    ],
 ];
 
 $opcoes = filtrarOpcoesPorModulo($pdo_master, $empresaId, $opcoes);

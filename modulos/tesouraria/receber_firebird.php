@@ -278,6 +278,22 @@ function garantirIndiceUnicoPorEmpresa(PDO $pdo, string $nomeTabela, string $nom
     }
 }
 
+function removerIndiceSeExistir(PDO $pdo, string $nomeTabela, string $nomeIndice): void
+{
+    $stmt = $pdo->prepare("
+        SELECT COUNT(*)
+        FROM information_schema.STATISTICS
+        WHERE TABLE_SCHEMA = DATABASE()
+          AND TABLE_NAME = ?
+          AND INDEX_NAME = ?
+    ");
+    $stmt->execute([$nomeTabela, $nomeIndice]);
+
+    if ((int)$stmt->fetchColumn() > 0) {
+        $pdo->exec("ALTER TABLE `$nomeTabela` DROP INDEX `$nomeIndice`");
+    }
+}
+
 function garantirChavesMultiEmpresaFirebird(PDO $pdo, ?string $tabela = null): void
 {
     $configs = [
@@ -296,12 +312,18 @@ function garantirChavesMultiEmpresaFirebird(PDO $pdo, ?string $tabela = null): v
     if ($tabela !== null) {
         if (isset($configs[$tabela])) {
             garantirIndiceUnicoPorEmpresa($pdo, ...$configs[$tabela]);
+            if ($tabela === 'func001') {
+                removerIndiceSeExistir($pdo, 'armazem_FUNC001', 'uniq_func001_empresa_funccontador');
+            }
         }
         return;
     }
 
-    foreach ($configs as $config) {
+    foreach ($configs as $tabelaConfig => $config) {
         garantirIndiceUnicoPorEmpresa($pdo, ...$config);
+        if ($tabelaConfig === 'func001') {
+            removerIndiceSeExistir($pdo, 'armazem_FUNC001', 'uniq_func001_empresa_funccontador');
+        }
     }
 }
 

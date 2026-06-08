@@ -52,18 +52,22 @@ def registrar_log(tabela, registros, status, mensagem):
         print("Erro ao registrar log:", str(e))
 
 
-def processar_tabela(nome, url_api, tabela_php):
+def processar_tabela(nome, url_api, tabela_php, forcar_completo=False):
     try:
         print(f"\nProcessando {nome}...")
 
         url_ultima = f"{BASE_SITE}/modulos/tesouraria/ultimo_regstamp.php"
 
-        resp_ultima = requests.get(url_ultima, params=params_site({"tabela": tabela_php}), timeout=60)
-        resp_ultima.raise_for_status()
-
-        ultima_regstamp = resp_ultima.json().get("ultima_regstamp", "1900-01-01 00:00:00")
+        if forcar_completo:
+            ultima_regstamp = "1900-01-01 00:00:00"
+        else:
+            resp_ultima = requests.get(url_ultima, params=params_site({"tabela": tabela_php}), timeout=60)
+            resp_ultima.raise_for_status()
+            ultima_regstamp = resp_ultima.json().get("ultima_regstamp", "1900-01-01 00:00:00")
 
         print(f"Ultima REGSTAMP: {ultima_regstamp}")
+        if forcar_completo:
+            print("Carga completa forcada para manter o espelho igual ao Firebird.")
 
         resposta = requests.get(
             url_api,
@@ -621,13 +625,15 @@ try:
     processar_tabela(
         "REP001",
         "http://127.0.0.1:5000/dados/rep001",
-        "rep001"
+        "rep001",
+        forcar_completo=True
     )
 
     processar_tabela(
         "FUNC001",
         "http://127.0.0.1:5000/dados/func001",
-        "func001"
+        "func001",
+        forcar_completo=True
     )
 
     processar_tabela(
