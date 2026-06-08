@@ -23,6 +23,14 @@ $opcoes = [
         'icone' => 'FP',
         'botao' => 'btn-success',
     ],
+    [
+        'titulo' => 'Historico de Folhas',
+        'descricao' => 'Consulte versoes atuais e historicas das folhas geradas no SuperDunga.',
+        'href' => 'historico_folhas.php',
+        'modulo' => 'colaboradores_historico_folhas',
+        'icone' => 'HF',
+        'botao' => 'btn-outline-primary',
+    ],
 ];
 
 $opcoes = filtrarOpcoesPorModulo($pdo_master, $empresaId, $opcoes);

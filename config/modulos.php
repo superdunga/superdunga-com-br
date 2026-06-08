@@ -44,6 +44,7 @@ function sistemaModulosPadrao(): array
         ['codigo' => 'colaboradores', 'grupo' => 'Colaboradores', 'nome' => 'Colaboradores', 'url' => 'modulos/colaboradores/menu_colaboradores.php', 'ordem' => 311],
         ['codigo' => 'colaboradores_cadastro', 'grupo' => 'Colaboradores', 'nome' => 'Cadastro', 'url' => 'modulos/colaboradores/cadastro.php', 'ordem' => 312],
         ['codigo' => 'colaboradores_folha_pagamento', 'grupo' => 'Colaboradores', 'nome' => 'Folha de Pagamento', 'url' => 'modulos/colaboradores/folha_pagamento.php', 'ordem' => 313],
+        ['codigo' => 'colaboradores_historico_folhas', 'grupo' => 'Colaboradores', 'nome' => 'Historico de Folhas', 'url' => 'modulos/colaboradores/historico_folhas.php', 'ordem' => 314],
 
         ['codigo' => 'whatsapp', 'grupo' => 'Administracao', 'nome' => 'Mensagens WhatsApp', 'url' => 'modulos/whatsapp/index.php', 'ordem' => 310],
         ['codigo' => 'usuarios', 'grupo' => 'Administracao', 'nome' => 'Gerenciar Usuarios', 'url' => 'modulos/usuarios/listar.php', 'ordem' => 320],
