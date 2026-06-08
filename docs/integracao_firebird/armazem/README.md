@@ -83,4 +83,7 @@ Get-Content C:\integracao_superdunga\logs\sincronizacao_completa.log -Tail 200
 
 - A rapida do `enviar_dados.py` pula `EST004`, `EST005` e `EST006`.
 - Por isso, `atualizar_produtos_firebird.py` foi adicionada ao final da rapida para atualizar produtos, compras e itens alterados sem esperar a completa.
+- `REP001` e `FUNC001` entram na rotina rapida porque sao tabelas pequenas e com `REGSTAMP`.
+- `REP001` grava no SuperDunga como `armazem_REP001`.
+- `FUNC001` grava no SuperDunga como `armazem_FUNC001`.
 - Os logs grandes da pasta `logs` nao foram copiados para o projeto.

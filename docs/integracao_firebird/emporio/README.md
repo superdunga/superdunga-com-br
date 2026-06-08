@@ -24,6 +24,13 @@ C:\Integracao_Emporio
 - `atualizar_produtos_firebird.py`: atualiza `EST004`, `EST005` e `EST006` no SuperDunga pela API local.
 - `SuperDunga - Sincronizacao Completa EMPORIO.xml`: exportacao da tarefa agendada completa.
 
+## Tabelas sincronizadas na rotina rapida
+
+Alem das tabelas financeiras e de vendas, a rotina rapida tambem envia:
+
+- `REP001`: cadastro de funcionarios, gravado no SuperDunga como `armazem_REP001`.
+- `FUNC001`: vales dos funcionarios, gravado no SuperDunga como `armazem_FUNC001`.
+
 ## Tarefa completa
 
 Arquivo chamado:

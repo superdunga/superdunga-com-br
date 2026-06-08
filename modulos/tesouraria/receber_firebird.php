@@ -26,6 +26,8 @@ $tabelas_permitidas = [
     'est005',
     'est006',
     'est008',
+    'rep001',
+    'func001',
     'zconfig005',
     'bnc002_ativos',
     'bnc005_ativos',
@@ -287,6 +289,8 @@ function garantirChavesMultiEmpresaFirebird(PDO $pdo, ?string $tabela = null): v
         'est005' => ['armazem_est005', 'uniq_est005_compracontador', 'uniq_est005_empresa_compracontador', ['COMPRACONTADOR']],
         'est006' => ['armazem_est006', 'uniq_est006_item_compra', 'uniq_est006_empresa_item_compra', ['ITEMCOMPRACONTADOR', 'COMPRACONTA']],
         'est007' => ['armazem_est007', 'VENDACONTADOR', 'uniq_est007_empresa_vendacontador', ['VENDACONTADOR']],
+        'rep001' => ['armazem_REP001', 'uniq_rep001_repcontador', 'uniq_rep001_empresa_repcontador', ['REPCONTADOR']],
+        'func001' => ['armazem_FUNC001', 'uniq_func001_funccontador', 'uniq_func001_empresa_funccontador', ['FUNCCONTADOR']],
     ];
 
     if ($tabela !== null && isset($configs[$tabela])) {
@@ -296,6 +300,118 @@ function garantirChavesMultiEmpresaFirebird(PDO $pdo, ?string $tabela = null): v
 
     foreach ($configs as $config) {
         garantirIndiceUnicoPorEmpresa($pdo, ...$config);
+    }
+}
+
+function normalizarNomeColunaFirebird(string $coluna): string
+{
+    $coluna = strtoupper(trim($coluna));
+    $coluna = preg_replace('/[^A-Z0-9_]/', '_', $coluna);
+    return substr($coluna, 0, 64);
+}
+
+function inferirTipoColunaFirebird(string $coluna, array $valores): string
+{
+    $coluna = strtoupper($coluna);
+
+    if ($coluna === 'EMPRESA') {
+        return 'INT NULL';
+    }
+
+    if ($coluna === 'REGSTAMP' || preg_match('/^(DT|DATA)/', $coluna) || strpos($coluna, 'DATA') !== false) {
+        return 'DATETIME NULL';
+    }
+
+    $temValor = false;
+    $todosInteiros = true;
+    $todosNumericos = true;
+    $maiorTexto = 0;
+
+    foreach ($valores as $valor) {
+        if ($valor === null || $valor === '') {
+            continue;
+        }
+
+        $temValor = true;
+        $texto = trim((string)$valor);
+        $maiorTexto = max($maiorTexto, strlen($texto));
+
+        if (!preg_match('/^-?\d+$/', $texto)) {
+            $todosInteiros = false;
+        }
+
+        if (!is_numeric($texto)) {
+            $todosNumericos = false;
+        }
+    }
+
+    if ($temValor && $todosInteiros) {
+        return 'BIGINT NULL';
+    }
+
+    if ($temValor && $todosNumericos) {
+        return 'DECIMAL(18,4) NULL';
+    }
+
+    if ($maiorTexto > 255) {
+        return 'TEXT NULL';
+    }
+
+    return 'VARCHAR(255) NULL';
+}
+
+function garantirTabelaFirebirdEspelho(PDO $pdo, string $nomeTabela, array $dados, array $chavesObrigatorias): void
+{
+    $colunasPayload = [];
+    foreach ($dados as $registro) {
+        if (!is_array($registro)) {
+            continue;
+        }
+
+        foreach (array_keys($registro) as $coluna) {
+            $colunaNormalizada = normalizarNomeColunaFirebird((string)$coluna);
+            if ($colunaNormalizada !== '') {
+                $colunasPayload[$colunaNormalizada] = true;
+            }
+        }
+    }
+
+    $colunasPayload['EMPRESA'] = true;
+    $colunasPayload['REGSTAMP'] = true;
+    foreach ($chavesObrigatorias as $chave) {
+        $colunasPayload[normalizarNomeColunaFirebird($chave)] = true;
+    }
+
+    $pdo->exec("
+        CREATE TABLE IF NOT EXISTS `$nomeTabela` (
+            EMPRESA INT NULL,
+            REGSTAMP DATETIME NULL
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    ");
+
+    $stmtColunas = $pdo->prepare("
+        SELECT COLUMN_NAME
+        FROM information_schema.COLUMNS
+        WHERE TABLE_SCHEMA = DATABASE()
+          AND TABLE_NAME = ?
+    ");
+    $stmtColunas->execute([$nomeTabela]);
+    $existentes = array_fill_keys($stmtColunas->fetchAll(PDO::FETCH_COLUMN), true);
+
+    foreach (array_keys($colunasPayload) as $coluna) {
+        if (isset($existentes[$coluna])) {
+            continue;
+        }
+
+        $valores = [];
+        foreach ($dados as $registro) {
+            if (is_array($registro) && array_key_exists($coluna, $registro)) {
+                $valores[] = $registro[$coluna];
+            }
+        }
+
+        $tipo = in_array($coluna, $chavesObrigatorias, true) ? 'VARCHAR(100) NULL' : inferirTipoColunaFirebird($coluna, $valores);
+        $pdo->exec("ALTER TABLE `$nomeTabela` ADD `$coluna` $tipo");
     }
 }
 
@@ -756,6 +872,8 @@ $configTabelasGenericas = [
     'cp004' => ['tabela_mysql' => 'armazem_cp004', 'chaves' => ['QTCPCONTADOR']],
     'est005' => ['tabela_mysql' => 'armazem_est005', 'chaves' => ['COMPRACONTADOR']],
     'est006' => ['tabela_mysql' => 'armazem_est006', 'chaves' => ['ITEMCOMPRACONTADOR', 'COMPRACONTA']],
+    'rep001' => ['tabela_mysql' => 'armazem_REP001', 'chaves' => ['REPCONTADOR'], 'espelho' => true],
+    'func001' => ['tabela_mysql' => 'armazem_FUNC001', 'chaves' => ['FUNCCONTADOR'], 'espelho' => true],
 ];
 
 if (isset($configTabelasGenericas[$tabela])) {
@@ -765,6 +883,15 @@ if (isset($configTabelasGenericas[$tabela])) {
 
     if ($tabela === 'est006') {
         garantirChaveEst006($pdo_master);
+    }
+
+    if (!empty($configTabelasGenericas[$tabela]['espelho'])) {
+        garantirTabelaFirebirdEspelho(
+            $pdo_master,
+            $configTabelasGenericas[$tabela]['tabela_mysql'],
+            $dados,
+            $configTabelasGenericas[$tabela]['chaves']
+        );
     }
 
     garantirChavesMultiEmpresaFirebird($pdo_master, $tabela);

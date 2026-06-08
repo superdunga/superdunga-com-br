@@ -659,6 +659,18 @@ try:
     )
 
     processar_tabela(
+        "REP001",
+        "http://127.0.0.1:5000/dados/rep001",
+        "rep001"
+    )
+
+    processar_tabela(
+        "FUNC001",
+        "http://127.0.0.1:5000/dados/func001",
+        "func001"
+    )
+
+    processar_tabela(
         "EST007",
         "http://127.0.0.1:5000/dados/est007",
         "est007"

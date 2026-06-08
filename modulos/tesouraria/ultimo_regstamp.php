@@ -28,7 +28,9 @@ $tabelas_permitidas = [
     'est004',
     'est005',
     'est006',
-    'est008'
+    'est008',
+    'rep001',
+    'func001'
 ];
 
 if (!in_array($tabela, $tabelas_permitidas)) {
@@ -39,7 +41,12 @@ if (!in_array($tabela, $tabelas_permitidas)) {
 /* =========================
    NOME REAL DA TABELA
 ========================= */
-$nome_tabela = "armazem_" . $tabela;
+$nomes_tabelas = [
+    'rep001' => 'armazem_REP001',
+    'func001' => 'armazem_FUNC001',
+];
+
+$nome_tabela = $nomes_tabelas[$tabela] ?? ("armazem_" . $tabela);
 
 /* =========================
    CONSULTA
