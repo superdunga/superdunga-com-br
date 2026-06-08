@@ -10,22 +10,113 @@ $mes = isset($_GET['mes']) && $_GET['mes'] != '' ? $_GET['mes'] : date('Y-m');
 
 $inicio = $mes . '-01 07:00:00';
 $fim    = date('Y-m-d 03:00:00', strtotime($mes . '-01 +1 month'));
+$dataCaixaSql = "DATE(CASE WHEN TIME(DTLANC) < '03:00:00' THEN DATE_SUB(DTLANC, INTERVAL 1 DAY) ELSE DTLANC END)";
 
-$sql = "
-SELECT 
-    DATE(DTLANC) AS data,
-    USERLANC
-FROM armazem_est007
-WHERE DTLANC >= '$inicio'
-  AND DTLANC <= '$fim'
-  AND EMPRESA = $empresa_id
-  AND CANCELADO = 'N'
-  AND COALESCE(excluido_firebird, 'N') <> 'S'
-GROUP BY DATE(DTLANC), USERLANC
-ORDER BY data DESC
-";
+$paramsMes = [$inicio, $fim, $empresa_id];
 
-$caixas = $pdo_master->query($sql)->fetchAll(PDO::FETCH_ASSOC);
+$stmtVenda = $pdo_master->prepare("
+    SELECT data, USERLANC, SUM(valor) AS total_venda
+    FROM (
+        SELECT $dataCaixaSql AS data, USERLANC, NUMDOC, MAX(TOTGERAL) AS valor
+        FROM armazem_est007
+        WHERE DTLANC >= ?
+          AND DTLANC <= ?
+          AND EMPRESA = ?
+          AND CANCELADO = 'N'
+          AND COALESCE(excluido_firebird, 'N') <> 'S'
+          AND (TIME(DTLANC) >= '07:00:00' OR TIME(DTLANC) < '03:00:00')
+          $filtroVendaTotal
+        GROUP BY $dataCaixaSql, USERLANC, NUMDOC
+    ) x
+    GROUP BY data, USERLANC
+");
+$stmtVenda->execute($paramsMes);
+$resumos = [];
+
+while ($row = $stmtVenda->fetch(PDO::FETCH_ASSOC)) {
+    $key = $row['data'] . '|' . $row['USERLANC'];
+    $resumos[$key] = [
+        'data' => $row['data'],
+        'USERLANC' => $row['USERLANC'],
+        'total_venda' => (float)$row['total_venda'],
+        'total_vista' => 0.0,
+        'total_prazo' => 0.0,
+    ];
+}
+
+$stmtVista = $pdo_master->prepare("
+    SELECT e.data, e.USERLANC,
+           COALESCE(SUM(
+               CASE
+                   WHEN b.TIPOMOV = 'C' THEN b.VALORMOV
+                   WHEN b.TIPOMOV = 'D' THEN -b.VALORMOV
+                   ELSE 0
+               END
+           ), 0) AS total_vista
+    FROM (
+        SELECT DISTINCT $dataCaixaSql AS data, USERLANC, VENDACONTADOR
+        FROM armazem_est007
+        WHERE DTLANC >= ?
+          AND DTLANC <= ?
+          AND EMPRESA = ?
+          AND CANCELADO = 'N'
+          AND COALESCE(excluido_firebird, 'N') <> 'S'
+          AND (TIME(DTLANC) >= '07:00:00' OR TIME(DTLANC) < '03:00:00')
+          $filtroVendaTotal
+    ) e
+    INNER JOIN armazem_bnc001 b
+        ON b.EMPRESA = ?
+       AND b.NUMDOCORIGEM = e.VENDACONTADOR
+       AND b.TIPODOCORIGEM = 'VENDA'
+       AND COALESCE(b.deletado, 'N') <> 'S'
+    GROUP BY e.data, e.USERLANC
+");
+$stmtVista->execute([$inicio, $fim, $empresa_id, $empresa_id]);
+
+while ($row = $stmtVista->fetch(PDO::FETCH_ASSOC)) {
+    $key = $row['data'] . '|' . $row['USERLANC'];
+    if (!isset($resumos[$key])) {
+        continue;
+    }
+    $resumos[$key]['total_vista'] = (float)$row['total_vista'];
+}
+
+$stmtPrazo = $pdo_master->prepare("
+    SELECT e.data, e.USERLANC, COALESCE(SUM(c.VLRPARCELA), 0) AS total_prazo
+    FROM (
+        SELECT DISTINCT $dataCaixaSql AS data, USERLANC, VENDACONTADOR
+        FROM armazem_est007
+        WHERE DTLANC >= ?
+          AND DTLANC <= ?
+          AND EMPRESA = ?
+          AND CANCELADO = 'N'
+          AND COALESCE(excluido_firebird, 'N') <> 'S'
+          AND (TIME(DTLANC) >= '07:00:00' OR TIME(DTLANC) < '03:00:00')
+          $filtroVendaTotal
+    ) e
+    INNER JOIN armazem_cr001 c
+        ON c.EMPRESA = ?
+       AND c.NUMDOCORIGEM = e.VENDACONTADOR
+       AND COALESCE(c.excluido_firebird, 'N') <> 'S'
+    GROUP BY e.data, e.USERLANC
+");
+$stmtPrazo->execute([$inicio, $fim, $empresa_id, $empresa_id]);
+
+while ($row = $stmtPrazo->fetch(PDO::FETCH_ASSOC)) {
+    $key = $row['data'] . '|' . $row['USERLANC'];
+    if (!isset($resumos[$key])) {
+        continue;
+    }
+    $resumos[$key]['total_prazo'] = (float)$row['total_prazo'];
+}
+
+$caixas = array_values($resumos);
+usort($caixas, function ($a, $b) {
+    if ($a['data'] === $b['data']) {
+        return ((int)$a['USERLANC']) <=> ((int)$b['USERLANC']);
+    }
+    return strcmp($b['data'], $a['data']);
+});
 
 /* =========================
    TOTAIS
@@ -86,71 +177,9 @@ $total_diferenca_geral = 0;
 
     try {
 
-        /* VENDA */
-        $stmt = $pdo_master->prepare("
-            SELECT COALESCE(SUM(valor),0)
-            FROM (
-                SELECT MAX(TOTGERAL) AS valor
-                FROM armazem_est007
-                WHERE DTLANC BETWEEN ? AND ?
-                  AND USERLANC = ?
-                  AND EMPRESA = ?
-                  AND CANCELADO = 'N'
-                  AND COALESCE(excluido_firebird, 'N') <> 'S'
-                  $filtroVendaTotal
-                GROUP BY NUMDOC
-            ) x
-        ");
-        $stmt->execute([$data_inicio, $data_fim, $usuario, $empresa_id]);
-        $total_venda = (float)$stmt->fetchColumn();
-
-        /* VISTA */
-        $stmt = $pdo_master->prepare("
-            SELECT COALESCE(SUM(
-                CASE 
-                    WHEN TIPOMOV = 'C' THEN VALORMOV
-                    WHEN TIPOMOV = 'D' THEN -VALORMOV
-                    ELSE 0
-                END
-            ),0)
-            FROM armazem_bnc001 b
-            INNER JOIN (
-                SELECT DISTINCT VENDACONTADOR
-                FROM armazem_est007
-                WHERE DTLANC BETWEEN ? AND ?
-                  AND USERLANC = ?
-                  AND EMPRESA = ?
-                  AND CANCELADO = 'N'
-                  AND COALESCE(excluido_firebird, 'N') <> 'S'
-                  $filtroVendaTotal
-            ) e ON e.VENDACONTADOR = b.NUMDOCORIGEM
-            WHERE b.DTLANC BETWEEN ? AND ?
-              AND b.EMPRESA = ?
-              AND b.TIPODOCORIGEM = 'VENDA'
-              AND COALESCE(b.deletado, 'N') <> 'S'
-        ");
-        $stmt->execute([$data_inicio, $data_fim, $usuario, $empresa_id, $data_inicio, $data_fim, $empresa_id]);
-        $total_vista = (float)$stmt->fetchColumn();
-
-        /* PRAZO */
-        $stmt = $pdo_master->prepare("
-            SELECT COALESCE(SUM(c.VLRPARCELA),0)
-            FROM armazem_cr001 c
-            INNER JOIN (
-                SELECT DISTINCT VENDACONTADOR
-                FROM armazem_est007
-                WHERE DTLANC BETWEEN ? AND ?
-                  AND USERLANC = ?
-                  AND EMPRESA = ?
-                  AND CANCELADO = 'N'
-                  AND COALESCE(excluido_firebird, 'N') <> 'S'
-                  $filtroVendaTotal
-            ) e ON e.VENDACONTADOR = c.NUMDOCORIGEM
-            WHERE c.EMPRESA = ?
-              AND COALESCE(c.excluido_firebird, 'N') <> 'S'
-        ");
-        $stmt->execute([$data_inicio, $data_fim, $usuario, $empresa_id, $empresa_id]);
-        $total_prazo = (float)$stmt->fetchColumn();
+        $total_venda = (float)($cx['total_venda'] ?? 0);
+        $total_vista = (float)($cx['total_vista'] ?? 0);
+        $total_prazo = (float)($cx['total_prazo'] ?? 0);
 
         /* FINAL */
         $calculado = $total_vista + $total_prazo;

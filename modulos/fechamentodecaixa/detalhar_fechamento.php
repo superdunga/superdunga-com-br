@@ -203,13 +203,12 @@ $stmt = $pdo_master->prepare("
           AND CANCELADO = 'N'
           AND COALESCE(excluido_firebird, 'N') <> 'S'
     ) e ON e.VENDACONTADOR = b.NUMDOCORIGEM
-    WHERE b.DTLANC BETWEEN ? AND ?
-      AND b.EMPRESA = ?
+    WHERE b.EMPRESA = ?
       AND b.TIPODOCORIGEM = 'VENDA'
       AND COALESCE(b.deletado, 'N') <> 'S'
     ORDER BY b.NUMDOCORIGEM
 ");
-$stmt->execute([$data_inicio, $data_fim, $usuario, $empresa_id, $data_inicio, $data_fim, $empresa_id]);
+$stmt->execute([$data_inicio, $data_fim, $usuario, $empresa_id, $empresa_id]);
 
 $total_vista = 0;
 
@@ -282,6 +281,94 @@ while ($p = $stmt->fetch(PDO::FETCH_ASSOC)) {
     <td colspan="2">Total</td>
     <td>R$ <?php echo number_format($total_prazo, 2, ',', '.'); ?></td>
 </tr>
+
+            </tbody>
+        </table>
+
+        <!-- =========================
+             VENDAS SEM PAGAMENTO
+        ========================== -->
+        <h6 class="mt-4">Vendas sem pagamento completo</h6>
+
+        <table class="table table-sm table-bordered">
+            <thead class="table-dark">
+                <tr>
+                    <th>Venda</th>
+                    <th>Data/Hora</th>
+                    <th>CM</th>
+                    <th>Cliente</th>
+                    <th>Valor da Venda</th>
+                    <th>Recebido</th>
+                    <th>Diferença</th>
+                </tr>
+            </thead>
+            <tbody>
+
+<?php
+$stmt = $pdo_master->prepare("
+    SELECT
+        e.VENDACONTADOR,
+        e.DTLANC,
+        e.CMCONTADOR,
+        e.CLIENTE,
+        e.TOTGERAL,
+        COALESCE(v.vista, 0) AS vista,
+        COALESCE(p.prazo, 0) AS prazo,
+        e.TOTGERAL - (COALESCE(v.vista, 0) + COALESCE(p.prazo, 0)) AS diferenca
+    FROM armazem_est007 e
+    LEFT JOIN (
+        SELECT
+            EMPRESA,
+            NUMDOCORIGEM,
+            SUM(
+                CASE
+                    WHEN TIPOMOV = 'C' THEN VALORMOV
+                    WHEN TIPOMOV = 'D' THEN -VALORMOV
+                    ELSE 0
+                END
+            ) AS vista
+        FROM armazem_bnc001
+        WHERE TIPODOCORIGEM = 'VENDA'
+          AND COALESCE(deletado, 'N') <> 'S'
+        GROUP BY EMPRESA, NUMDOCORIGEM
+    ) v ON v.EMPRESA = e.EMPRESA
+       AND v.NUMDOCORIGEM = e.VENDACONTADOR
+    LEFT JOIN (
+        SELECT EMPRESA, NUMDOCORIGEM, SUM(VLRPARCELA) AS prazo
+        FROM armazem_cr001
+        WHERE COALESCE(excluido_firebird, 'N') <> 'S'
+        GROUP BY EMPRESA, NUMDOCORIGEM
+    ) p ON p.EMPRESA = e.EMPRESA
+       AND p.NUMDOCORIGEM = e.VENDACONTADOR
+    WHERE e.DTLANC BETWEEN ? AND ?
+      AND e.USERLANC = ?
+      AND e.EMPRESA = ?
+      AND e.CANCELADO = 'N'
+      AND COALESCE(e.excluido_firebird, 'N') <> 'S'
+      AND COALESCE(e.CMCONTADOR, 0) <> 10
+    HAVING ABS(diferenca) >= 0.01
+    ORDER BY e.DTLANC, e.VENDACONTADOR
+");
+$stmt->execute([$data_inicio, $data_fim, $usuario, $empresa_id]);
+$vendasSemPagamento = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+if (empty($vendasSemPagamento)) {
+    echo '<tr><td colspan="7" class="text-center text-muted">Nenhuma venda sem pagamento completo.</td></tr>';
+} else {
+    foreach ($vendasSemPagamento as $pendente) {
+        $recebido = (float)$pendente['vista'] + (float)$pendente['prazo'];
+        echo '<tr>
+                <td>' . (int)$pendente['VENDACONTADOR'] . '</td>
+                <td>' . (!empty($pendente['DTLANC']) ? date('d/m/Y H:i', strtotime($pendente['DTLANC'])) : '') . '</td>
+                <td>' . htmlspecialchars($pendente['CMCONTADOR'] ?? '') . '</td>
+                <td>' . htmlspecialchars($pendente['CLIENTE'] ?? '') . '</td>
+                <td>R$ ' . number_format((float)$pendente['TOTGERAL'], 2, ',', '.') . '</td>
+                <td>R$ ' . number_format($recebido, 2, ',', '.') . '</td>
+                <td class="fw-bold text-danger">R$ ' . number_format((float)$pendente['diferenca'], 2, ',', '.') . '</td>
+              </tr>';
+    }
+}
+?>
 
             </tbody>
         </table>
