@@ -262,7 +262,6 @@ $stmt = $pdo_master->prepare("
     ) e ON e.VENDACONTADOR = c.NUMDOCORIGEM
     WHERE c.EMPRESA = ?
       AND COALESCE(c.excluido_firebird, 'N') <> 'S'
-      AND COALESCE(c.STATUS, '') <> 'QT'
 ");
 $stmt->execute([$data_inicio, $data_fim, $usuario, $empresa_id, $empresa_id]);
 
