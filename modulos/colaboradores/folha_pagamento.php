@@ -503,8 +503,12 @@ if ($gerarRecibos && empty($errosFolha)) {
             $comprasPagasVenda = $stmtComprasPagasVenda->fetchAll(PDO::FETCH_ASSOC);
         }
 
-        $totalComprasAberto = array_sum(array_map(static fn($c) => (float)($c['VLRRESTANTE'] ?? $c['VLRPARCELA'] ?? 0), $comprasAberto));
-        $totalComprasPagas = array_sum(array_map(static fn($c) => (float)($c['VLRPAGO'] ?? $c['VLRPARCELA'] ?? 0), $comprasPagas));
+        $totalComprasAberto = array_sum(array_map(static function ($c) {
+            return (float)($c['VLRRESTANTE'] ?? $c['VLRPARCELA'] ?? 0);
+        }, $comprasAberto));
+        $totalComprasPagas = array_sum(array_map(static function ($c) {
+            return (float)($c['VLRPAGO'] ?? $c['VLRPARCELA'] ?? 0);
+        }, $comprasPagas));
 
         $descontos = array_merge($descontosVales, [
             [
