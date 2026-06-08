@@ -7,6 +7,7 @@ import sys
 MODO = (sys.argv[1] if len(sys.argv) > 1 else "rapido").lower()
 EXECUTAR_COMPLETO = MODO in ["completo", "full", "diario"]
 EMPRESA_DESTINO = 4
+FIREBIRD_EMPRESA_ORIGEM = 1
 BASE_SITE = "https://www.superdunga.com.br"
 
 
@@ -19,6 +20,14 @@ def params_site(params=None):
 
 def aplicar_empresa(registro):
     if isinstance(registro, dict):
+        empresa_origem = registro.get("EMPRESA")
+        if empresa_origem not in (None, ""):
+            try:
+                if int(empresa_origem) != FIREBIRD_EMPRESA_ORIGEM:
+                    return None
+            except (TypeError, ValueError):
+                return None
+
         ajustado = dict(registro)
         ajustado["EMPRESA"] = EMPRESA_DESTINO
         for chave, valor in list(ajustado.items()):
@@ -30,7 +39,7 @@ def aplicar_empresa(registro):
 
 def aplicar_empresa_lista(dados):
     if isinstance(dados, list):
-        return [aplicar_empresa(item) for item in dados]
+        return [item for item in (aplicar_empresa(item) for item in dados) if item is not None]
     return dados
 
 
