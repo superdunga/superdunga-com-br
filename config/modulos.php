@@ -41,6 +41,9 @@ function sistemaModulosPadrao(): array
         ['codigo' => 'recebimento_mercadorias', 'grupo' => 'Rotinas Operacionais', 'nome' => 'Recebimento de Mercadorias', 'url' => 'modulos/rotinas_operacionais/recebimento_mercadorias.php', 'ordem' => 308],
         ['codigo' => 'lista_recebimentos_mercadorias', 'grupo' => 'Rotinas Operacionais', 'nome' => 'Lista dos Recebimentos', 'url' => 'modulos/rotinas_operacionais/lista_recebimentos.php', 'ordem' => 309],
 
+        ['codigo' => 'colaboradores', 'grupo' => 'Colaboradores', 'nome' => 'Colaboradores', 'url' => 'modulos/colaboradores/menu_colaboradores.php', 'ordem' => 311],
+        ['codigo' => 'colaboradores_cadastro', 'grupo' => 'Colaboradores', 'nome' => 'Cadastro', 'url' => 'modulos/colaboradores/cadastro.php', 'ordem' => 312],
+
         ['codigo' => 'whatsapp', 'grupo' => 'Administracao', 'nome' => 'Mensagens WhatsApp', 'url' => 'modulos/whatsapp/index.php', 'ordem' => 310],
         ['codigo' => 'usuarios', 'grupo' => 'Administracao', 'nome' => 'Gerenciar Usuarios', 'url' => 'modulos/usuarios/listar.php', 'ordem' => 320],
         ['codigo' => 'usuarios_permissoes', 'grupo' => 'Administracao', 'nome' => 'Permissoes por Perfil', 'url' => 'modulos/usuarios/permissoes.php', 'ordem' => 325],

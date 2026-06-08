@@ -72,6 +72,15 @@ $atalhos = [
         'visivel' => grupoPermitido($pdo_master, $empresaId, 'Rotinas Operacionais', $nivelUsuario),
     ],
     [
+        'titulo' => 'Colaboradores',
+        'descricao' => 'Cadastro de funcionarios e acompanhamento dos dados integrados do Firebird.',
+        'href' => 'modulos/colaboradores/menu_colaboradores.php',
+        'classe' => 'border-primary',
+        'botao' => 'btn-primary',
+        'icone' => 'CO',
+        'visivel' => grupoPermitido($pdo_master, $empresaId, 'Colaboradores', $nivelUsuario),
+    ],
+    [
         'titulo' => 'Sincronizar Dados',
         'descricao' => 'Atualize dados integrados antes das rotinas operacionais.',
         'href' => 'modulos/tesouraria/sincronizacao.php',

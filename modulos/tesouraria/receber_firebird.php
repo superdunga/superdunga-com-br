@@ -289,12 +289,14 @@ function garantirChavesMultiEmpresaFirebird(PDO $pdo, ?string $tabela = null): v
         'est005' => ['armazem_est005', 'uniq_est005_compracontador', 'uniq_est005_empresa_compracontador', ['COMPRACONTADOR']],
         'est006' => ['armazem_est006', 'uniq_est006_item_compra', 'uniq_est006_empresa_item_compra', ['ITEMCOMPRACONTADOR', 'COMPRACONTA']],
         'est007' => ['armazem_est007', 'VENDACONTADOR', 'uniq_est007_empresa_vendacontador', ['VENDACONTADOR']],
-        'rep001' => ['armazem_REP001', 'uniq_rep001_repcontador', 'uniq_rep001_empresa_repcontador', ['REPCONTADOR']],
-        'func001' => ['armazem_FUNC001', 'uniq_func001_funccontador', 'uniq_func001_empresa_funccontador', ['FUNCCONTADOR']],
+        'rep001' => ['armazem_REP001', 'uniq_rep001_funccontador', 'uniq_rep001_empresa_funccontador', ['FUNCCONTADOR']],
+        'func001' => ['armazem_FUNC001', 'uniq_func001_valecontador', 'uniq_func001_empresa_valecontador', ['VALECONTADOR']],
     ];
 
-    if ($tabela !== null && isset($configs[$tabela])) {
-        garantirIndiceUnicoPorEmpresa($pdo, ...$configs[$tabela]);
+    if ($tabela !== null) {
+        if (isset($configs[$tabela])) {
+            garantirIndiceUnicoPorEmpresa($pdo, ...$configs[$tabela]);
+        }
         return;
     }
 
@@ -353,11 +355,7 @@ function inferirTipoColunaFirebird(string $coluna, array $valores): string
         return 'DECIMAL(18,4) NULL';
     }
 
-    if ($maiorTexto > 255) {
-        return 'TEXT NULL';
-    }
-
-    return 'VARCHAR(255) NULL';
+    return 'TEXT NULL';
 }
 
 function garantirTabelaFirebirdEspelho(PDO $pdo, string $nomeTabela, array $dados, array $chavesObrigatorias): void
@@ -397,6 +395,27 @@ function garantirTabelaFirebirdEspelho(PDO $pdo, string $nomeTabela, array $dado
     ");
     $stmtColunas->execute([$nomeTabela]);
     $existentes = array_fill_keys($stmtColunas->fetchAll(PDO::FETCH_COLUMN), true);
+
+    $stmtTipos = $pdo->prepare("
+        SELECT COLUMN_NAME, DATA_TYPE
+        FROM information_schema.COLUMNS
+        WHERE TABLE_SCHEMA = DATABASE()
+          AND TABLE_NAME = ?
+    ");
+    $stmtTipos->execute([$nomeTabela]);
+    foreach ($stmtTipos->fetchAll(PDO::FETCH_ASSOC) as $colunaInfo) {
+        $colunaAtual = $colunaInfo['COLUMN_NAME'];
+        $tipoAtual = strtolower((string)$colunaInfo['DATA_TYPE']);
+
+        if (
+            $tipoAtual === 'varchar'
+            && !in_array($colunaAtual, $chavesObrigatorias, true)
+            && $colunaAtual !== 'EMPRESA'
+            && $colunaAtual !== 'REGSTAMP'
+        ) {
+            $pdo->exec("ALTER TABLE `$nomeTabela` MODIFY `$colunaAtual` TEXT NULL");
+        }
+    }
 
     foreach (array_keys($colunasPayload) as $coluna) {
         if (isset($existentes[$coluna])) {
@@ -872,8 +891,8 @@ $configTabelasGenericas = [
     'cp004' => ['tabela_mysql' => 'armazem_cp004', 'chaves' => ['QTCPCONTADOR']],
     'est005' => ['tabela_mysql' => 'armazem_est005', 'chaves' => ['COMPRACONTADOR']],
     'est006' => ['tabela_mysql' => 'armazem_est006', 'chaves' => ['ITEMCOMPRACONTADOR', 'COMPRACONTA']],
-    'rep001' => ['tabela_mysql' => 'armazem_REP001', 'chaves' => ['REPCONTADOR'], 'espelho' => true],
-    'func001' => ['tabela_mysql' => 'armazem_FUNC001', 'chaves' => ['FUNCCONTADOR'], 'espelho' => true],
+    'rep001' => ['tabela_mysql' => 'armazem_REP001', 'chaves' => ['FUNCCONTADOR'], 'espelho' => true],
+    'func001' => ['tabela_mysql' => 'armazem_FUNC001', 'chaves' => ['VALECONTADOR'], 'espelho' => true],
 ];
 
 if (isset($configTabelasGenericas[$tabela])) {

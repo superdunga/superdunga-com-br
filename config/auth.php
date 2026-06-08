@@ -192,6 +192,7 @@ function validarPermissaoModuloAtual(): void
         'modulos/estoque/menu_estoque.php' => 'Estoque',
         'modulos/gestao/menu_gestao.php' => 'Gestao',
         'modulos/rotinas_operacionais/menu_rotinas_operacionais.php' => 'Rotinas Operacionais',
+        'modulos/colaboradores/menu_colaboradores.php' => 'Colaboradores',
     ];
 
     if (isset($menusPorGrupo[$caminho])) {
@@ -271,6 +272,7 @@ function validarPermissaoModuloAtual(): void
         'modulos/estoque/posicao_estoque.php' => 'estoque_posicao',
         'modulos/rotinas_operacionais/recebimento_mercadorias.php' => 'recebimento_mercadorias',
         'modulos/rotinas_operacionais/lista_recebimentos.php' => 'lista_recebimentos_mercadorias',
+        'modulos/colaboradores/cadastro.php' => 'colaboradores_cadastro',
     ];
 
     $codigoModulo = $aliases[$caminho] ?? null;
