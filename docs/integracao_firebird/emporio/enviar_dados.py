@@ -78,9 +78,13 @@ def processar_tabela(nome, url_api, tabela_php, forcar_completo=False):
         if forcar_completo:
             print("Carga completa forcada para manter o espelho igual ao Firebird.")
 
+        params_api = {"ultima_regstamp": ultima_regstamp}
+        if tabela_php in ["rep001", "func001"]:
+            params_api["empresa"] = FIREBIRD_EMPRESA_ORIGEM
+
         resposta = requests.get(
             url_api,
-            params={"ultima_regstamp": ultima_regstamp},
+            params=params_api,
             timeout=300
         )
         resposta.raise_for_status()

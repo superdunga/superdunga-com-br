@@ -74,16 +74,23 @@ def buscar_ativos(tabela, colunas, order_by=None, limit=None, offset=0):
     return dados
 
 
-def buscar_por_regstamp(tabela, ultima_regstamp, order_by="REGSTAMP"):
+def buscar_por_regstamp(tabela, ultima_regstamp, order_by="REGSTAMP", empresa=None):
     con = conectar()
     cursor = con.cursor()
+
+    filtro_empresa = ""
+    parametros = [ultima_regstamp]
+    if empresa is not None:
+        filtro_empresa = " AND EMPRESA = ?"
+        parametros.append(int(empresa))
 
     cursor.execute(f"""
         SELECT *
         FROM {tabela}
         WHERE REGSTAMP > ?
+        {filtro_empresa}
         ORDER BY {order_by}
-    """, (ultima_regstamp,))
+    """, tuple(parametros))
 
     colunas = [desc[0] for desc in cursor.description]
     dados = []
@@ -266,7 +273,8 @@ def dados_cr002_ativos():
 def dados_rep001():
     try:
         ultima_regstamp = request.args.get("ultima_regstamp", default="1900-01-01 00:00:00", type=str)
-        return jsonify(buscar_por_regstamp("REP001", ultima_regstamp, "REGSTAMP, EMPRESA"))
+        empresa = request.args.get("empresa", default=None, type=int)
+        return jsonify(buscar_por_regstamp("REP001", ultima_regstamp, "REGSTAMP, EMPRESA", empresa))
     except Exception as e:
         return jsonify({"erro": str(e)}), 500
 
@@ -275,7 +283,8 @@ def dados_rep001():
 def dados_func001():
     try:
         ultima_regstamp = request.args.get("ultima_regstamp", default="1900-01-01 00:00:00", type=str)
-        return jsonify(buscar_por_regstamp("FUNC001", ultima_regstamp, "REGSTAMP, EMPRESA"))
+        empresa = request.args.get("empresa", default=None, type=int)
+        return jsonify(buscar_por_regstamp("FUNC001", ultima_regstamp, "REGSTAMP, EMPRESA", empresa))
     except Exception as e:
         return jsonify({"erro": str(e)}), 500
 
