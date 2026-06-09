@@ -302,14 +302,12 @@ function extrairTextoPdfUnimed(string $arquivoPdf): string
         throw new RuntimeException('Nao foi possivel criar script temporario para conversao do PDF.');
     }
 
-    file_put_contents($pythonScript, <<<'PY'
-import sys
-from pypdf import PdfReader
-
-reader = PdfReader(sys.argv[1])
-for page in reader.pages:
-    print(page.extract_text() or "")
-PY);
+    $pythonCodigo = "import sys\n"
+        . "from pypdf import PdfReader\n\n"
+        . "reader = PdfReader(sys.argv[1])\n"
+        . "for page in reader.pages:\n"
+        . "    print(page.extract_text() or \"\")\n";
+    file_put_contents($pythonScript, $pythonCodigo);
 
     $pythonCandidates = array_filter([
         getenv('UNIMED_PYTHON') ?: '',
