@@ -46,6 +46,10 @@ function sistemaModulosPadrao(): array
         ['codigo' => 'colaboradores_folha_pagamento', 'grupo' => 'Colaboradores', 'nome' => 'Folha de Pagamento', 'url' => 'modulos/colaboradores/folha_pagamento.php', 'ordem' => 313],
         ['codigo' => 'colaboradores_historico_folhas', 'grupo' => 'Colaboradores', 'nome' => 'Historico de Folhas', 'url' => 'modulos/colaboradores/historico_folhas.php', 'ordem' => 314],
 
+        ['codigo' => 'unimed', 'grupo' => 'Unimed', 'nome' => 'Unimed', 'url' => 'modulos/unimed/menu_unimed.php', 'ordem' => 315, 'somente_master' => true],
+        ['codigo' => 'unimed_cadastro', 'grupo' => 'Unimed', 'nome' => 'Cadastro de Usuarios', 'url' => 'modulos/unimed/cadastro.php', 'ordem' => 316, 'somente_master' => true],
+        ['codigo' => 'unimed_faturas', 'grupo' => 'Unimed', 'nome' => 'Faturas Mensais', 'url' => 'modulos/unimed/faturas.php', 'ordem' => 317, 'somente_master' => true],
+
         ['codigo' => 'whatsapp', 'grupo' => 'Administracao', 'nome' => 'Mensagens WhatsApp', 'url' => 'modulos/whatsapp/index.php', 'ordem' => 310],
         ['codigo' => 'usuarios', 'grupo' => 'Administracao', 'nome' => 'Gerenciar Usuarios', 'url' => 'modulos/usuarios/listar.php', 'ordem' => 320],
         ['codigo' => 'usuarios_permissoes', 'grupo' => 'Administracao', 'nome' => 'Permissoes por Perfil', 'url' => 'modulos/usuarios/permissoes.php', 'ordem' => 325],
@@ -376,6 +380,12 @@ function moduloPermitido(PDO $pdo, int $empresaId, string $codigo, ?string $perf
 
     if ($perfil === 'MASTER') {
         return true;
+    }
+
+    foreach (sistemaModulosPadrao() as $moduloPadrao) {
+        if (($moduloPadrao['codigo'] ?? '') === $codigo && !empty($moduloPadrao['somente_master'])) {
+            return false;
+        }
     }
 
     if ($codigo === 'tesouraria_movimentacao') {

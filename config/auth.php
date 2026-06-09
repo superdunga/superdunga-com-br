@@ -193,6 +193,7 @@ function validarPermissaoModuloAtual(): void
         'modulos/gestao/menu_gestao.php' => 'Gestao',
         'modulos/rotinas_operacionais/menu_rotinas_operacionais.php' => 'Rotinas Operacionais',
         'modulos/colaboradores/menu_colaboradores.php' => 'Colaboradores',
+        'modulos/unimed/menu_unimed.php' => 'Unimed',
     ];
 
     if (isset($menusPorGrupo[$caminho])) {

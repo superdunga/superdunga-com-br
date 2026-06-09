@@ -81,6 +81,15 @@ $atalhos = [
         'visivel' => grupoPermitido($pdo_master, $empresaId, 'Colaboradores', $nivelUsuario),
     ],
     [
+        'titulo' => 'Unimed',
+        'descricao' => 'Central para rotinas e controles relacionados a Unimed.',
+        'href' => 'modulos/unimed/menu_unimed.php',
+        'classe' => 'border-success',
+        'botao' => 'btn-success',
+        'icone' => 'UN',
+        'visivel' => grupoPermitido($pdo_master, $empresaId, 'Unimed', $nivelUsuario),
+    ],
+    [
         'titulo' => 'Sincronizar Dados',
         'descricao' => 'Atualize dados integrados antes das rotinas operacionais.',
         'href' => 'modulos/tesouraria/sincronizacao.php',
