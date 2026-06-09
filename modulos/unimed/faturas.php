@@ -78,6 +78,7 @@ if ($faturaId <= 0 && !empty($faturas)) {
 $faturaAtual = null;
 $itens = [];
 $familias = [];
+$utilizacoes = [];
 
 if ($faturaId > 0) {
     $stmtFatura = $pdo_master->prepare("SELECT * FROM unimed_faturas WHERE id = ? AND empresa_id = ?");
@@ -127,6 +128,385 @@ if ($faturaId > 0) {
         $stmtUtilizacoes->execute([$faturaId]);
         $utilizacoes = $stmtUtilizacoes->fetchAll(PDO::FETCH_ASSOC);
     }
+}
+
+if (($_GET['relatorio_responsaveis'] ?? '') === 'pdf' && $faturaAtual) {
+    $stmtMensalidadesResp = $pdo_master->prepare("
+        SELECT
+            i.*,
+            COALESCE(resp.id, b.id, i.beneficiario_id, 0) AS responsavel_id,
+            COALESCE(resp.nome, b.nome, 'Responsavel nao informado') AS responsavel_nome,
+            COALESCE(resp.codigo_completo, b.codigo_completo, '') AS responsavel_codigo,
+            COALESCE(resp.telefone_whatsapp, '') AS responsavel_telefone
+        FROM unimed_fatura_itens i
+        LEFT JOIN unimed_beneficiarios b
+            ON b.id = i.beneficiario_id
+        LEFT JOIN unimed_beneficiarios resp
+            ON resp.id = COALESCE(b.responsavel_pagamento_id, b.id)
+        WHERE i.fatura_id = ?
+        ORDER BY responsavel_nome, i.familia, i.dependente, i.nome
+    ");
+    $stmtMensalidadesResp->execute([$faturaId]);
+    $mensalidadesResp = $stmtMensalidadesResp->fetchAll(PDO::FETCH_ASSOC);
+
+    $stmtUtilizacoesResp = $pdo_master->prepare("
+        SELECT
+            u.*,
+            COALESCE(resp.id, b.id, u.beneficiario_id, 0) AS responsavel_id,
+            COALESCE(resp.nome, b.nome, 'Responsavel nao informado') AS responsavel_nome,
+            COALESCE(resp.codigo_completo, b.codigo_completo, '') AS responsavel_codigo,
+            COALESCE(resp.telefone_whatsapp, '') AS responsavel_telefone
+        FROM unimed_utilizacoes u
+        LEFT JOIN unimed_beneficiarios b
+            ON b.id = u.beneficiario_id
+        LEFT JOIN unimed_beneficiarios resp
+            ON resp.id = COALESCE(b.responsavel_pagamento_id, b.id)
+        WHERE u.fatura_id = ?
+        ORDER BY responsavel_nome, u.familia, u.dependente, u.nome, u.data_atendimento, u.id
+    ");
+    $stmtUtilizacoesResp->execute([$faturaId]);
+    $utilizacoesResp = $stmtUtilizacoesResp->fetchAll(PDO::FETCH_ASSOC);
+
+    $responsaveisRelatorio = [];
+    $inicializarResponsavel = static function (array $linha) use (&$responsaveisRelatorio): int {
+        $responsavelId = (int)($linha['responsavel_id'] ?? 0);
+        if (!isset($responsaveisRelatorio[$responsavelId])) {
+            $responsaveisRelatorio[$responsavelId] = [
+                'id' => $responsavelId,
+                'nome' => (string)($linha['responsavel_nome'] ?? 'Responsavel nao informado'),
+                'codigo' => (string)($linha['responsavel_codigo'] ?? ''),
+                'telefone' => (string)($linha['responsavel_telefone'] ?? ''),
+                'mensalidade' => 0.0,
+                'utilizacao' => 0.0,
+                'beneficiarios' => [],
+                'mensalidades' => [],
+                'utilizacoes' => [],
+            ];
+        }
+
+        return $responsavelId;
+    };
+
+    foreach ($mensalidadesResp as $linha) {
+        $responsavelId = $inicializarResponsavel($linha);
+        $codigoBeneficiario = (string)$linha['codigo_completo'];
+        if (!isset($responsaveisRelatorio[$responsavelId]['beneficiarios'][$codigoBeneficiario])) {
+            $responsaveisRelatorio[$responsavelId]['beneficiarios'][$codigoBeneficiario] = [
+                'codigo' => $codigoBeneficiario,
+                'nome' => (string)$linha['nome'],
+                'familia' => (string)$linha['familia'],
+                'mensalidade' => 0.0,
+                'utilizacao' => 0.0,
+            ];
+        }
+
+        $valor = (float)$linha['valor_mensalidade'];
+        $responsaveisRelatorio[$responsavelId]['mensalidade'] += $valor;
+        $responsaveisRelatorio[$responsavelId]['beneficiarios'][$codigoBeneficiario]['mensalidade'] += $valor;
+        $responsaveisRelatorio[$responsavelId]['mensalidades'][] = $linha;
+    }
+
+    foreach ($utilizacoesResp as $linha) {
+        $responsavelId = $inicializarResponsavel($linha);
+        $codigoBeneficiario = (string)$linha['codigo_completo'];
+        if (!isset($responsaveisRelatorio[$responsavelId]['beneficiarios'][$codigoBeneficiario])) {
+            $responsaveisRelatorio[$responsavelId]['beneficiarios'][$codigoBeneficiario] = [
+                'codigo' => $codigoBeneficiario,
+                'nome' => (string)$linha['nome'],
+                'familia' => (string)$linha['familia'],
+                'mensalidade' => 0.0,
+                'utilizacao' => 0.0,
+            ];
+        }
+
+        $valor = (float)$linha['valor_total'];
+        $responsaveisRelatorio[$responsavelId]['utilizacao'] += $valor;
+        $responsaveisRelatorio[$responsavelId]['beneficiarios'][$codigoBeneficiario]['utilizacao'] += $valor;
+        $responsaveisRelatorio[$responsavelId]['utilizacoes'][] = $linha;
+    }
+
+    uasort($responsaveisRelatorio, static function (array $a, array $b): int {
+        return strcasecmp($a['nome'], $b['nome']);
+    });
+
+    require '../../layout/header.php';
+?>
+<style>
+    .unimed-relatorio {
+        max-width: 980px;
+        margin: 0 auto;
+        background: #fff;
+        color: #182033;
+        font-size: 12px;
+    }
+
+    .unimed-relatorio .no-print {
+        margin: 0 0 14px;
+    }
+
+    .unimed-recibo {
+        border: 1px solid #cbd5e1;
+        margin-bottom: 18px;
+        page-break-after: always;
+    }
+
+    .unimed-recibo:last-child {
+        page-break-after: auto;
+    }
+
+    .unimed-topo {
+        background: #123a78;
+        color: #fff;
+        padding: 16px 18px;
+        border-bottom: 4px solid #f0b429;
+    }
+
+    .unimed-topo h1 {
+        font-size: 19px;
+        margin: 0 0 6px;
+        font-weight: 800;
+        letter-spacing: .02em;
+    }
+
+    .unimed-topo .sub {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 6px 18px;
+    }
+
+    .unimed-bloco {
+        padding: 12px 18px;
+        border-bottom: 1px solid #d7dee8;
+    }
+
+    .unimed-titulo {
+        background: #e8eef7;
+        color: #0f2d68;
+        font-weight: 800;
+        padding: 7px 9px;
+        margin: 0 0 8px;
+        text-transform: uppercase;
+    }
+
+    .unimed-resumo {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 8px;
+    }
+
+    .unimed-box {
+        border: 1px solid #d7dee8;
+        padding: 8px;
+        background: #f8fafc;
+    }
+
+    .unimed-box .label {
+        color: #64748b;
+        font-size: 11px;
+        text-transform: uppercase;
+    }
+
+    .unimed-box .valor {
+        font-size: 16px;
+        font-weight: 800;
+    }
+
+    .unimed-relatorio table {
+        width: 100%;
+        border-collapse: collapse;
+    }
+
+    .unimed-relatorio th,
+    .unimed-relatorio td {
+        border-bottom: 1px solid #e2e8f0;
+        padding: 5px 6px;
+        vertical-align: top;
+    }
+
+    .unimed-relatorio th {
+        background: #f1f5f9;
+        color: #0f2d68;
+        font-weight: 800;
+    }
+
+    .unimed-relatorio .text-end {
+        text-align: right;
+    }
+
+    .unimed-total-final {
+        text-align: right;
+        font-size: 18px;
+        font-weight: 900;
+        color: #0f2d68;
+        padding: 14px 18px 18px;
+    }
+
+    @media print {
+        header, nav, .navbar, .topbar, .no-print, .btn {
+            display: none !important;
+        }
+
+        body {
+            background: #fff !important;
+        }
+
+        .container, .container-fluid {
+            max-width: none !important;
+            width: 100% !important;
+            padding: 0 !important;
+        }
+
+        .unimed-relatorio {
+            max-width: none;
+            font-size: 11px;
+        }
+
+        .unimed-recibo {
+            border: 0;
+            margin: 0;
+        }
+    }
+</style>
+
+<div class="unimed-relatorio">
+    <div class="no-print d-flex gap-2 mb-3">
+        <button type="button" class="btn btn-primary" onclick="window.print()">Salvar em PDF</button>
+        <a href="faturas.php?fatura_id=<?= (int)$faturaId ?>" class="btn btn-outline-secondary">Voltar</a>
+    </div>
+
+    <?php if (empty($responsaveisRelatorio)): ?>
+        <div class="alert alert-info">Nenhum responsavel encontrado para esta fatura.</div>
+    <?php endif; ?>
+
+    <?php foreach ($responsaveisRelatorio as $responsavel): ?>
+        <?php
+            $totalResponsavel = (float)$responsavel['mensalidade'] + (float)$responsavel['utilizacao'];
+            $beneficiariosResp = $responsavel['beneficiarios'];
+            uasort($beneficiariosResp, static function (array $a, array $b): int {
+                return strcasecmp($a['nome'], $b['nome']);
+            });
+        ?>
+        <section class="unimed-recibo">
+            <div class="unimed-topo">
+                <h1>DEMONSTRATIVO UNIMED POR RESPONSAVEL</h1>
+                <div class="sub">
+                    <div><strong>Responsavel:</strong> <?= htmlspecialchars($responsavel['nome']) ?></div>
+                    <div><strong>Telefone:</strong> <?= htmlspecialchars($responsavel['telefone'] !== '' ? $responsavel['telefone'] : '-') ?></div>
+                    <div><strong>Fatura mensal:</strong> <?= htmlspecialchars($faturaAtual['numero_fatura']) ?> - <?= htmlspecialchars(competenciaUnimed($faturaAtual['competencia'])) ?></div>
+                    <div><strong>Fatura utilizacao:</strong> <?= htmlspecialchars((string)($faturaAtual['numero_fatura_utilizacao'] ?: '-')) ?><?= !empty($faturaAtual['competencia_utilizacao']) ? ' - ' . htmlspecialchars(competenciaUnimed($faturaAtual['competencia_utilizacao'])) : '' ?></div>
+                </div>
+            </div>
+
+            <div class="unimed-bloco">
+                <div class="unimed-resumo">
+                    <div class="unimed-box"><div class="label">Beneficiarios</div><div class="valor"><?= count($beneficiariosResp) ?></div></div>
+                    <div class="unimed-box"><div class="label">Mensalidade</div><div class="valor"><?= moedaUnimed($responsavel['mensalidade']) ?></div></div>
+                    <div class="unimed-box"><div class="label">Utilizacao</div><div class="valor"><?= moedaUnimed($responsavel['utilizacao']) ?></div></div>
+                    <div class="unimed-box"><div class="label">Total a pagar</div><div class="valor"><?= moedaUnimed($totalResponsavel) ?></div></div>
+                </div>
+            </div>
+
+            <div class="unimed-bloco">
+                <div class="unimed-titulo">Resumo por beneficiario</div>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Codigo</th>
+                            <th>Beneficiario</th>
+                            <th>Familia</th>
+                            <th class="text-end">Mensalidade</th>
+                            <th class="text-end">Utilizacao</th>
+                            <th class="text-end">Total</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <?php foreach ($beneficiariosResp as $beneficiarioResumo): ?>
+                            <tr>
+                                <td><?= htmlspecialchars($beneficiarioResumo['codigo']) ?></td>
+                                <td><?= htmlspecialchars($beneficiarioResumo['nome']) ?></td>
+                                <td><?= htmlspecialchars($beneficiarioResumo['familia']) ?></td>
+                                <td class="text-end"><?= moedaUnimed($beneficiarioResumo['mensalidade']) ?></td>
+                                <td class="text-end"><?= moedaUnimed($beneficiarioResumo['utilizacao']) ?></td>
+                                <td class="text-end"><strong><?= moedaUnimed((float)$beneficiarioResumo['mensalidade'] + (float)$beneficiarioResumo['utilizacao']) ?></strong></td>
+                            </tr>
+                        <?php endforeach; ?>
+                    </tbody>
+                </table>
+            </div>
+
+            <div class="unimed-bloco">
+                <div class="unimed-titulo">Mensalidades</div>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Codigo</th>
+                            <th>Beneficiario</th>
+                            <th>Lancamento</th>
+                            <th class="text-end">Valor</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <?php if (empty($responsavel['mensalidades'])): ?>
+                            <tr><td colspan="4">Nenhuma mensalidade.</td></tr>
+                        <?php endif; ?>
+                        <?php foreach ($responsavel['mensalidades'] as $mensalidade): ?>
+                            <tr>
+                                <td><?= htmlspecialchars($mensalidade['codigo_completo']) ?></td>
+                                <td><?= htmlspecialchars($mensalidade['nome']) ?></td>
+                                <td><?= htmlspecialchars($mensalidade['lancamento']) ?></td>
+                                <td class="text-end"><?= moedaUnimed($mensalidade['valor_mensalidade']) ?></td>
+                            </tr>
+                        <?php endforeach; ?>
+                    </tbody>
+                </table>
+            </div>
+
+            <div class="unimed-bloco">
+                <div class="unimed-titulo">Utilizacoes do plano</div>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Data</th>
+                            <th>Codigo</th>
+                            <th>Beneficiario</th>
+                            <th>Prestador</th>
+                            <th>Doc.</th>
+                            <th class="text-end">Valor</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <?php if (empty($responsavel['utilizacoes'])): ?>
+                            <tr><td colspan="6">Nenhuma utilizacao.</td></tr>
+                        <?php endif; ?>
+                        <?php foreach ($responsavel['utilizacoes'] as $utilizacaoLinha): ?>
+                            <tr>
+                                <td><?= !empty($utilizacaoLinha['data_atendimento']) ? date('d/m/Y', strtotime($utilizacaoLinha['data_atendimento'])) : '-' ?></td>
+                                <td><?= htmlspecialchars($utilizacaoLinha['codigo_completo']) ?></td>
+                                <td><?= htmlspecialchars($utilizacaoLinha['nome']) ?></td>
+                                <td><?= htmlspecialchars((string)$utilizacaoLinha['prestador']) ?></td>
+                                <td><?= htmlspecialchars((string)$utilizacaoLinha['documento']) ?></td>
+                                <td class="text-end"><?= moedaUnimed($utilizacaoLinha['valor_total']) ?></td>
+                            </tr>
+                        <?php endforeach; ?>
+                    </tbody>
+                </table>
+            </div>
+
+            <div class="unimed-total-final">
+                TOTAL A PAGAR: <?= moedaUnimed($totalResponsavel) ?>
+            </div>
+        </section>
+    <?php endforeach; ?>
+</div>
+
+<script>
+    window.addEventListener('load', function () {
+        setTimeout(function () { window.print(); }, 350);
+    });
+</script>
+<?php
+    require '../../layout/footer.php';
+    exit;
 }
 
 require '../../layout/header.php';
@@ -250,6 +630,14 @@ require '../../layout/header.php';
             </div>
         </section>
     <?php endif; ?>
+
+    <section class="mb-3">
+        <div class="d-flex justify-content-end">
+            <a href="faturas.php?fatura_id=<?= (int)$faturaId ?>&relatorio_responsaveis=pdf" target="_blank" class="btn btn-danger">
+                PDF por responsavel
+            </a>
+        </div>
+    </section>
 
     <section class="card shadow-sm mb-3">
         <div class="card-header"><h2 class="h6 mb-0">Resumo por familia</h2></div>
