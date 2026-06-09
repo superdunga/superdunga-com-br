@@ -79,6 +79,7 @@ $faturaAtual = null;
 $itens = [];
 $familias = [];
 $utilizacoes = [];
+$responsaveisPdf = [];
 
 if ($faturaId > 0) {
     $stmtFatura = $pdo_master->prepare("SELECT * FROM unimed_faturas WHERE id = ? AND empresa_id = ?");
@@ -127,10 +128,70 @@ if ($faturaId > 0) {
         ");
         $stmtUtilizacoes->execute([$faturaId]);
         $utilizacoes = $stmtUtilizacoes->fetchAll(PDO::FETCH_ASSOC);
+
+        $stmtResponsaveisPdf = $pdo_master->prepare("
+            SELECT
+                responsavel_id,
+                responsavel_nome,
+                responsavel_codigo,
+                responsavel_telefone,
+                SUM(mensalidade) AS mensalidade,
+                SUM(utilizacao) AS utilizacao,
+                SUM(mensalidade + utilizacao) AS total,
+                COUNT(DISTINCT codigo_completo) AS beneficiarios
+            FROM (
+                SELECT
+                    COALESCE(resp.id, b.id, i.beneficiario_id, 0) AS responsavel_id,
+                    COALESCE(resp.nome, b.nome, 'Responsavel nao informado') AS responsavel_nome,
+                    COALESCE(resp.codigo_completo, b.codigo_completo, '') AS responsavel_codigo,
+                    COALESCE(resp.telefone_whatsapp, '') AS responsavel_telefone,
+                    i.codigo_completo,
+                    i.valor_mensalidade AS mensalidade,
+                    0 AS utilizacao
+                FROM unimed_fatura_itens i
+                LEFT JOIN unimed_beneficiarios b
+                    ON b.id = i.beneficiario_id
+                LEFT JOIN unimed_beneficiarios resp
+                    ON resp.id = COALESCE(b.responsavel_pagamento_id, b.id)
+                WHERE i.fatura_id = ?
+                UNION ALL
+                SELECT
+                    COALESCE(resp.id, b.id, u.beneficiario_id, 0) AS responsavel_id,
+                    COALESCE(resp.nome, b.nome, 'Responsavel nao informado') AS responsavel_nome,
+                    COALESCE(resp.codigo_completo, b.codigo_completo, '') AS responsavel_codigo,
+                    COALESCE(resp.telefone_whatsapp, '') AS responsavel_telefone,
+                    u.codigo_completo,
+                    0 AS mensalidade,
+                    u.valor_total AS utilizacao
+                FROM unimed_utilizacoes u
+                LEFT JOIN unimed_beneficiarios b
+                    ON b.id = u.beneficiario_id
+                LEFT JOIN unimed_beneficiarios resp
+                    ON resp.id = COALESCE(b.responsavel_pagamento_id, b.id)
+                WHERE u.fatura_id = ?
+            ) x
+            GROUP BY responsavel_id, responsavel_nome, responsavel_codigo, responsavel_telefone
+            ORDER BY responsavel_nome
+        ");
+        $stmtResponsaveisPdf->execute([$faturaId, $faturaId]);
+        $responsaveisPdf = $stmtResponsaveisPdf->fetchAll(PDO::FETCH_ASSOC);
     }
 }
 
 if (($_GET['relatorio_responsaveis'] ?? '') === 'pdf' && $faturaAtual) {
+    $responsavelFiltroId = (int)($_GET['responsavel_id'] ?? 0);
+    $filtroResponsavelMensalidade = '';
+    $filtroResponsavelUtilizacao = '';
+    $paramsMensalidadesResp = [$faturaId];
+    $paramsUtilizacoesResp = [$faturaId];
+
+    if ($responsavelFiltroId > 0) {
+        $filtroResponsavelMensalidade = " AND COALESCE(resp.id, b.id, i.beneficiario_id, 0) = ?";
+        $filtroResponsavelUtilizacao = " AND COALESCE(resp.id, b.id, u.beneficiario_id, 0) = ?";
+        $paramsMensalidadesResp[] = $responsavelFiltroId;
+        $paramsUtilizacoesResp[] = $responsavelFiltroId;
+    }
+
     $stmtMensalidadesResp = $pdo_master->prepare("
         SELECT
             i.*,
@@ -144,9 +205,10 @@ if (($_GET['relatorio_responsaveis'] ?? '') === 'pdf' && $faturaAtual) {
         LEFT JOIN unimed_beneficiarios resp
             ON resp.id = COALESCE(b.responsavel_pagamento_id, b.id)
         WHERE i.fatura_id = ?
+        $filtroResponsavelMensalidade
         ORDER BY responsavel_nome, i.familia, i.dependente, i.nome
     ");
-    $stmtMensalidadesResp->execute([$faturaId]);
+    $stmtMensalidadesResp->execute($paramsMensalidadesResp);
     $mensalidadesResp = $stmtMensalidadesResp->fetchAll(PDO::FETCH_ASSOC);
 
     $stmtUtilizacoesResp = $pdo_master->prepare("
@@ -162,9 +224,10 @@ if (($_GET['relatorio_responsaveis'] ?? '') === 'pdf' && $faturaAtual) {
         LEFT JOIN unimed_beneficiarios resp
             ON resp.id = COALESCE(b.responsavel_pagamento_id, b.id)
         WHERE u.fatura_id = ?
+        $filtroResponsavelUtilizacao
         ORDER BY responsavel_nome, u.familia, u.dependente, u.nome, u.data_atendimento, u.id
     ");
-    $stmtUtilizacoesResp->execute([$faturaId]);
+    $stmtUtilizacoesResp->execute($paramsUtilizacoesResp);
     $utilizacoesResp = $stmtUtilizacoesResp->fetchAll(PDO::FETCH_ASSOC);
 
     $responsaveisRelatorio = [];
@@ -228,6 +291,18 @@ if (($_GET['relatorio_responsaveis'] ?? '') === 'pdf' && $faturaAtual) {
     uasort($responsaveisRelatorio, static function (array $a, array $b): int {
         return strcasecmp($a['nome'], $b['nome']);
     });
+
+    $nomeArquivoRelatorio = 'unimed' . preg_replace('/\D/', '', (string)$faturaAtual['competencia']) . 'responsaveis';
+    if ($responsavelFiltroId > 0 && count($responsaveisRelatorio) === 1) {
+        $responsavelTitulo = reset($responsaveisRelatorio);
+        $nomeResponsavelArquivo = iconv('UTF-8', 'ASCII//TRANSLIT//IGNORE', (string)$responsavelTitulo['nome']);
+        if ($nomeResponsavelArquivo === false) {
+            $nomeResponsavelArquivo = (string)$responsavelTitulo['nome'];
+        }
+        $nomeResponsavelArquivo = strtolower($nomeResponsavelArquivo);
+        $nomeResponsavelArquivo = preg_replace('/[^a-z0-9]+/', '', $nomeResponsavelArquivo);
+        $nomeArquivoRelatorio = 'unimed' . preg_replace('/\D/', '', (string)$faturaAtual['competencia']) . $nomeResponsavelArquivo;
+    }
 
     require '../../layout/header.php';
 ?>
@@ -500,6 +575,7 @@ if (($_GET['relatorio_responsaveis'] ?? '') === 'pdf' && $faturaAtual) {
 </div>
 
 <script>
+    document.title = <?= json_encode($nomeArquivoRelatorio, JSON_UNESCAPED_UNICODE) ?>;
     window.addEventListener('load', function () {
         setTimeout(function () { window.print(); }, 350);
     });
@@ -632,10 +708,55 @@ require '../../layout/header.php';
     <?php endif; ?>
 
     <section class="mb-3">
-        <div class="d-flex justify-content-end">
-            <a href="faturas.php?fatura_id=<?= (int)$faturaId ?>&relatorio_responsaveis=pdf" target="_blank" class="btn btn-danger">
-                PDF por responsavel
-            </a>
+        <div class="card shadow-sm">
+            <div class="card-header d-flex justify-content-between align-items-center gap-3">
+                <h2 class="h6 mb-0">PDFs por responsavel de pagamento</h2>
+                <a href="faturas.php?fatura_id=<?= (int)$faturaId ?>&relatorio_responsaveis=pdf" target="_blank" class="btn btn-sm btn-outline-danger">
+                    PDF geral
+                </a>
+            </div>
+            <div class="card-body p-0">
+                <div class="table-responsive">
+                    <table class="table table-sm table-hover mb-0">
+                        <thead>
+                            <tr>
+                                <th>Responsavel</th>
+                                <th>Telefone</th>
+                                <th class="text-end">Beneficiarios</th>
+                                <th class="text-end">Mensalidade</th>
+                                <th class="text-end">Utilizacao</th>
+                                <th class="text-end">Total</th>
+                                <th class="text-end">PDF</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <?php if (empty($responsaveisPdf)): ?>
+                                <tr><td colspan="7" class="text-center text-muted py-3">Nenhum responsavel encontrado.</td></tr>
+                            <?php endif; ?>
+                            <?php foreach ($responsaveisPdf as $responsavelPdf): ?>
+                                <tr>
+                                    <td>
+                                        <strong><?= htmlspecialchars($responsavelPdf['responsavel_nome']) ?></strong>
+                                        <?php if (!empty($responsavelPdf['responsavel_codigo'])): ?>
+                                            <small class="d-block text-muted"><?= htmlspecialchars($responsavelPdf['responsavel_codigo']) ?></small>
+                                        <?php endif; ?>
+                                    </td>
+                                    <td><?= htmlspecialchars((string)($responsavelPdf['responsavel_telefone'] ?: '-')) ?></td>
+                                    <td class="text-end"><?= (int)$responsavelPdf['beneficiarios'] ?></td>
+                                    <td class="text-end"><?= moedaUnimed($responsavelPdf['mensalidade']) ?></td>
+                                    <td class="text-end"><?= moedaUnimed($responsavelPdf['utilizacao']) ?></td>
+                                    <td class="text-end fw-semibold"><?= moedaUnimed($responsavelPdf['total']) ?></td>
+                                    <td class="text-end">
+                                        <a href="faturas.php?fatura_id=<?= (int)$faturaId ?>&relatorio_responsaveis=pdf&responsavel_id=<?= (int)$responsavelPdf['responsavel_id'] ?>" target="_blank" class="btn btn-sm btn-danger">
+                                            PDF
+                                        </a>
+                                    </td>
+                                </tr>
+                            <?php endforeach; ?>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
         </div>
     </section>
 
