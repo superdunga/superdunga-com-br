@@ -263,7 +263,7 @@ function extrairTextoDocumentoDC(string $arquivo, string $nomeOriginal = ''): ar
         if ($texto === '') {
             $avisos[] = 'Nao foi possivel extrair texto do PDF. Se for PDF escaneado, instale OCR no servidor.';
         }
-    } elseif (str_starts_with($mime, 'image/') || in_array($ext, ['jpg', 'jpeg', 'png', 'webp', 'bmp', 'tif', 'tiff'], true)) {
+    } elseif (strpos($mime, 'image/') === 0 || in_array($ext, ['jpg', 'jpeg', 'png', 'webp', 'bmp', 'tif', 'tiff'], true)) {
         $texto = extrairTextoImagemDC($arquivo);
         $metodo = $texto !== '' ? 'OCR imagem' : '';
         if ($texto === '') {
@@ -355,7 +355,7 @@ function interpretarTextoDocumentoDC(string $texto): array
     if (!$numeroDocumento && preg_match_all('/\b\d{5,20}\b/', $textoPlano, $numeros, PREG_SET_ORDER)) {
         foreach ($numeros as $numero) {
             $n = $numero[0];
-            if ($data && str_contains(str_replace('-', '', $data), $n)) {
+            if ($data && strpos(str_replace('-', '', $data), $n) !== false) {
                 continue;
             }
             $numeroDocumento = $n;
