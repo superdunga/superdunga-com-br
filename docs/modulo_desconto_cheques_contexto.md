@@ -211,6 +211,7 @@ Dependencias tecnicas:
 
 - PDF com texto: usa `pdftotext` quando disponivel ou Python com `pypdf`.
 - Foto/imagem: usa `tesseract` quando disponivel no servidor.
+- Foto/imagem no celular: quando o servidor nao tem OCR, a tela tenta OCR no proprio navegador usando `tesseract.js`.
 - Sem essas ferramentas, o arquivo continua sendo anexado normalmente e o operador preenche os campos manualmente.
 
 ## Pendencias de definicao

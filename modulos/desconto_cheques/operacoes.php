@@ -740,6 +740,7 @@ require '../../layout/header.php';
     </div>
 </section>
 
+<script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
 <script>
 document.addEventListener('DOMContentLoaded', function () {
     const container = document.getElementById('documentosContainer');
@@ -840,6 +841,134 @@ document.addEventListener('DOMContentLoaded', function () {
     function escaparHtml(texto) {
         return String(texto).replace(/[&<>"']/g, function (char) {
             return {'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;'}[char];
+        });
+    }
+
+    function arquivoEhImagem(arquivo) {
+        return arquivo && (
+            (arquivo.type && arquivo.type.indexOf('image/') === 0)
+            || /\.(jpe?g|png|webp|bmp|tiff?)$/i.test(arquivo.name || '')
+        );
+    }
+
+    function decimalOCR(valor) {
+        valor = String(valor || '').trim().replace(/[R$\s]/g, '');
+        if (!valor) {
+            return null;
+        }
+        valor = valor.replace(/\./g, '').replace(',', '.');
+        const numero = Number(valor);
+        return Number.isFinite(numero) && numero > 0 ? numero : null;
+    }
+
+    function valorBR(numero) {
+        return Number(numero).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    }
+
+    function interpretarTextoOCR(texto) {
+        texto = String(texto || '').replace(/\r\n|\r/g, '\n').replace(/[ \t]+/g, ' ');
+        const textoPlano = texto.split('\n').map(function (linha) {
+            return linha.trim();
+        }).filter(Boolean).join(' ');
+
+        const datas = [];
+        const dataRegex = /\b(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{2,4})\b/g;
+        let dataMatch;
+        while ((dataMatch = dataRegex.exec(textoPlano)) !== null) {
+            let ano = Number(dataMatch[3]);
+            ano = ano < 100 ? 2000 + ano : ano;
+            const mes = Number(dataMatch[2]);
+            const dia = Number(dataMatch[1]);
+            if (mes >= 1 && mes <= 12 && dia >= 1 && dia <= 31) {
+                datas.push(String(ano).padStart(4, '0') + '-' + String(mes).padStart(2, '0') + '-' + String(dia).padStart(2, '0'));
+            }
+        }
+        datas.sort();
+
+        const valores = [];
+        const valorRegex = /(?:R\$\s*)?(\d{1,3}(?:\.\d{3})*,\d{2}|\d+,\d{2})\b/g;
+        let valorMatch;
+        while ((valorMatch = valorRegex.exec(textoPlano)) !== null) {
+            const numero = decimalOCR(valorMatch[1]);
+            if (numero && numero < 100000000) {
+                valores.push(numero);
+            }
+        }
+
+        let numeroDocumento = null;
+        const linhaDigitavel = textoPlano.match(/\b(\d[\d .-]{42,60}\d)\b/);
+        if (linhaDigitavel) {
+            numeroDocumento = linhaDigitavel[1].replace(/\D+/g, '');
+        }
+        if (!numeroDocumento) {
+            const rotuloNumero = textoPlano.match(/(?:cheque|boleto|documento|doc\.?|numero|no\.?|n\.?)[^\d]{0,20}(\d{4,20})/i);
+            if (rotuloNumero) {
+                numeroDocumento = rotuloNumero[1];
+            }
+        }
+
+        let cnpjCpf = null;
+        const cpf = textoPlano.match(/\b(\d{3}\.?\d{3}\.?\d{3}-?\d{2})\b/);
+        const cnpj = textoPlano.match(/\b(\d{2}\.?\d{3}\.?\d{3}\/?\d{4}-?\d{2})\b/);
+        if (cpf) {
+            cnpjCpf = cpf[1].replace(/\D+/g, '');
+        } else if (cnpj) {
+            cnpjCpf = cnpj[1].replace(/\D+/g, '');
+        }
+
+        let nomeEmissor = null;
+        const nomeMatch = textoPlano.match(/(?:emissor|emitente|sacado|pagador|cliente|cedente|beneficiario)\s*[:\-]?\s*([A-Z0-9][A-Z0-9 .,&\-]{4,120})/i);
+        if (nomeMatch) {
+            nomeEmissor = nomeMatch[1].replace(/\s+/g, ' ').replace(/\s+(CPF|CNPJ|VALOR|VENCIMENTO|DATA|DOCUMENTO|NUMERO|N)\b.*$/i, '').trim();
+        }
+
+        const maiorValor = valores.length ? Math.max.apply(null, valores) : null;
+        return {
+            numero_documento: numeroDocumento,
+            cnpj_cpf_emissor: cnpjCpf,
+            nome_emissor: nomeEmissor || null,
+            valor: maiorValor,
+            valor_formatado: maiorValor ? valorBR(maiorValor) : null,
+            data_vencimento: datas.length ? datas[datas.length - 1] : null,
+            avisos: []
+        };
+    }
+
+    function temSugestaoLeitura(dados) {
+        return !!(dados && (dados.numero_documento || dados.cnpj_cpf_emissor || dados.nome_emissor || dados.valor_formatado || dados.data_vencimento));
+    }
+
+    function lerImagemNoCelular(linha, arquivo, status) {
+        if (!window.Tesseract || typeof window.Tesseract.recognize !== 'function') {
+            status.className = 'small mt-1 dc-leitura-status text-warning';
+            status.textContent = 'OCR indisponivel no navegador. Confira manualmente.';
+            return Promise.resolve();
+        }
+
+        status.className = 'small mt-1 dc-leitura-status text-muted';
+        status.textContent = 'Tentando OCR no celular. A primeira leitura pode demorar...';
+
+        return window.Tesseract.recognize(arquivo, 'por+eng', {
+            logger: function (mensagem) {
+                if (mensagem && mensagem.status === 'recognizing text' && mensagem.progress) {
+                    status.textContent = 'Lendo foto no celular... ' + Math.round(mensagem.progress * 100) + '%';
+                }
+            }
+        }).then(function (resultado) {
+            const texto = resultado && resultado.data ? resultado.data.text : '';
+            const dados = interpretarTextoOCR(texto);
+            aplicarSugestoes(linha, dados, false);
+            const resumo = montarResumoLeitura(dados);
+            if (resumo) {
+                status.className = 'small mt-1 dc-leitura-status text-success';
+                status.innerHTML = 'Leitura pelo celular: ' + escaparHtml(resumo);
+            } else {
+                status.className = 'small mt-1 dc-leitura-status text-warning';
+                status.textContent = 'OCR do celular nao identificou os dados. Confira manualmente.';
+            }
+        }).catch(function () {
+            status.className = 'small mt-1 dc-leitura-status text-warning';
+            status.textContent = 'Nao foi possivel ler a foto no celular. Confira manualmente.';
         });
     }
 
@@ -976,6 +1105,8 @@ document.addEventListener('DOMContentLoaded', function () {
                 if (resumo) {
                     status.className = 'small mt-1 dc-leitura-status text-success';
                     status.innerHTML = 'Leitura: ' + escaparHtml(resumo + avisos);
+                } else if (arquivoEhImagem(arquivo)) {
+                    return lerImagemNoCelular(linha, arquivo, status);
                 } else {
                     status.className = 'small mt-1 dc-leitura-status text-warning';
                     status.textContent = 'Nao consegui identificar valor, vencimento ou numero. Confira manualmente.' + avisos;

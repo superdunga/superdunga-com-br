@@ -10,10 +10,12 @@ Exemplos que ja causaram erro 500 em producao:
 
 - `str_starts_with`
 - `str_contains`
+- `fn` / `static fn` (arrow functions)
 
 Preferir alternativas compativeis:
 
 - `strpos($texto, $prefixo) === 0` no lugar de `str_starts_with`.
 - `strpos($texto, $busca) !== false` no lugar de `str_contains`.
+- `function (...) { ... }` no lugar de `fn (...) => ...`.
 
 Antes de FTP, sempre rodar `php -l` nos arquivos alterados e procurar uso dessas funcoes quando o codigo novo for para producao.
