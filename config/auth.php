@@ -194,6 +194,7 @@ function validarPermissaoModuloAtual(): void
         'modulos/rotinas_operacionais/menu_rotinas_operacionais.php' => 'Rotinas Operacionais',
         'modulos/colaboradores/menu_colaboradores.php' => 'Colaboradores',
         'modulos/unimed/menu_unimed.php' => 'Unimed',
+        'modulos/desconto_cheques/menu_desconto_cheques.php' => 'Desconto de Cheques',
     ];
 
     if (isset($menusPorGrupo[$caminho])) {

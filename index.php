@@ -90,6 +90,15 @@ $atalhos = [
         'visivel' => grupoPermitido($pdo_master, $empresaId, 'Unimed', $nivelUsuario),
     ],
     [
+        'titulo' => 'Desconto de Cheques',
+        'descricao' => 'Controle de clientes, limites e operacoes de desconto.',
+        'href' => 'modulos/desconto_cheques/menu_desconto_cheques.php',
+        'classe' => 'border-warning',
+        'botao' => 'btn-warning',
+        'icone' => 'DC',
+        'visivel' => grupoPermitido($pdo_master, $empresaId, 'Desconto de Cheques', $nivelUsuario),
+    ],
+    [
         'titulo' => 'Sincronizar Dados',
         'descricao' => 'Atualize dados integrados antes das rotinas operacionais.',
         'href' => 'modulos/tesouraria/sincronizacao.php',

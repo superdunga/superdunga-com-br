@@ -10,6 +10,7 @@ Centralizar o controle da Unimed no SuperDunga para:
 - importar mensalidades por beneficiario;
 - importar utilizacoes do plano;
 - fechar valores por usuario, familia e responsavel;
+- gerar demonstrativos em PDF por responsavel de pagamento;
 - futuramente enviar informacoes por WhatsApp.
 
 ## Regra de acesso
@@ -137,6 +138,56 @@ Quando esse arquivo e enviado, o sistema deve avisar que ele e recibo/boleto e p
   - documentos com espaco interno;
   - linhas repetidas legitimas.
 
+## Demonstrativos em PDF
+
+Na tela:
+
+`modulos/unimed/faturas.php`
+
+Foi criado o bloco:
+
+`PDFs por responsavel de pagamento`
+
+Ele mostra uma linha para cada responsavel de pagamento da fatura selecionada, com:
+
+- responsavel;
+- telefone;
+- quantidade de beneficiarios;
+- total de mensalidade;
+- total de utilizacao;
+- total a pagar;
+- botao `PDF` individual.
+
+Tambem existe o botao `PDF geral`, que gera um relatorio unico com todos os responsaveis, cada um em sua propria pagina.
+
+### PDF individual por responsavel
+
+URL:
+
+`modulos/unimed/faturas.php?fatura_id=ID_DA_FATURA&relatorio_responsaveis=pdf&responsavel_id=ID_DO_RESPONSAVEL`
+
+O demonstrativo individual contem:
+
+- cabecalho com responsavel, telefone, fatura mensal e fatura de utilizacao;
+- resumo de beneficiarios;
+- mensalidades;
+- utilizacoes do plano;
+- total a pagar.
+
+### Nome sugerido do arquivo
+
+Ao salvar pelo navegador como PDF, o sistema altera o `document.title` para sugerir o nome:
+
+`unimedAAAAMMnomeresponsavel`
+
+Exemplo:
+
+`unimed202606silviohenriquesilveira`
+
+No PDF geral, o nome sugerido fica:
+
+`unimedAAAAMMresponsaveis`
+
 ## Ajustes feitos manualmente no banco
 
 ### Transferencia de utilizacoes
@@ -170,13 +221,36 @@ Correcao:
 - banco reimportado;
 - fatura 7 ficou com 15 itens e total `R$ 448,07`.
 
+## Problemas corrigidos em producao
+
+### HTTP 500 no modulo Unimed
+
+Em producao, `cadastro.php` e `faturas.php` retornaram `HTTP ERROR 500`.
+
+Log encontrado:
+
+`PHP Parse error ... _lib.php ... expecting variable ... heredoc end`
+
+Causa:
+
+- o servidor de producao nao aceitou o trecho `heredoc/nowdoc` usado para gerar o script temporario do Python.
+
+Correcao:
+
+- o codigo Python temporario passou a ser montado com string comum;
+- arquivo corrigido: `modulos/unimed/_lib.php`;
+- producao voltou a responder `HTTP 200`.
+
 ## Ultimo commit relacionado
 
-Commit:
+Commits relevantes:
 
-`0550a69 Adiciona modulo Unimed`
+- `0550a69 Adiciona modulo Unimed`
+- `e5955d0 Adiciona PDF Unimed por responsavel`
+- `708e77c Corrige compatibilidade do parser Unimed`
+- `7bb2082 Adiciona PDFs individuais da Unimed`
 
-Esse commit foi enviado ao GitHub e por FTP.
+Esses commits foram enviados ao GitHub. As alteracoes funcionais tambem foram enviadas por FTP quando autorizado.
 
 ## Observacao operacional
 

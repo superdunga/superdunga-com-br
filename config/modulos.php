@@ -50,6 +50,11 @@ function sistemaModulosPadrao(): array
         ['codigo' => 'unimed_cadastro', 'grupo' => 'Unimed', 'nome' => 'Cadastro de Usuarios', 'url' => 'modulos/unimed/cadastro.php', 'ordem' => 316, 'somente_master' => true],
         ['codigo' => 'unimed_faturas', 'grupo' => 'Unimed', 'nome' => 'Faturas Mensais', 'url' => 'modulos/unimed/faturas.php', 'ordem' => 317, 'somente_master' => true],
 
+        ['codigo' => 'desconto_cheques', 'grupo' => 'Desconto de Cheques', 'nome' => 'Desconto de Cheques', 'url' => 'modulos/desconto_cheques/menu_desconto_cheques.php', 'ordem' => 318, 'somente_master' => true],
+        ['codigo' => 'desconto_cheques_clientes', 'grupo' => 'Desconto de Cheques', 'nome' => 'Clientes', 'url' => 'modulos/desconto_cheques/clientes.php', 'ordem' => 319, 'somente_master' => true],
+        ['codigo' => 'desconto_cheques_operacoes', 'grupo' => 'Desconto de Cheques', 'nome' => 'Operacoes', 'url' => 'modulos/desconto_cheques/operacoes.php', 'ordem' => 320, 'somente_master' => true],
+        ['codigo' => 'desconto_cheques_feriados', 'grupo' => 'Desconto de Cheques', 'nome' => 'Feriados', 'url' => 'modulos/desconto_cheques/feriados.php', 'ordem' => 321, 'somente_master' => true],
+
         ['codigo' => 'whatsapp', 'grupo' => 'Administracao', 'nome' => 'Mensagens WhatsApp', 'url' => 'modulos/whatsapp/index.php', 'ordem' => 310],
         ['codigo' => 'usuarios', 'grupo' => 'Administracao', 'nome' => 'Gerenciar Usuarios', 'url' => 'modulos/usuarios/listar.php', 'ordem' => 320],
         ['codigo' => 'usuarios_permissoes', 'grupo' => 'Administracao', 'nome' => 'Permissoes por Perfil', 'url' => 'modulos/usuarios/permissoes.php', 'ordem' => 325],
