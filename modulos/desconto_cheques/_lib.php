@@ -639,6 +639,21 @@ function proximoDiaUtilDC(DateTimeImmutable $data, array $feriadosRecorrentes = 
     return $data;
 }
 
+function dataCompensacaoDescontoChequesDC(DateTimeImmutable $vencimento, int $diasUteisCompensacao, array $feriadosRecorrentes = [], array $feriadosEspecificos = []): DateTimeImmutable
+{
+    $data = $vencimento;
+    $diasContados = 0;
+
+    while ($diasContados < $diasUteisCompensacao) {
+        $data = $data->modify('+1 day');
+        if (ehDiaUtilDC($data, $feriadosRecorrentes, $feriadosEspecificos)) {
+            $diasContados++;
+        }
+    }
+
+    return proximoDiaUtilDC($data->modify('+1 day'), $feriadosRecorrentes, $feriadosEspecificos);
+}
+
 function buscarPrazosDescontoCheques(PDO $pdo, int $empresaId): array
 {
     $stmt = $pdo->prepare("
@@ -669,7 +684,7 @@ function calcularDocumentoDescontoCheques(float $valor, string $dataReferencia, 
 {
     $referencia = new DateTimeImmutable($dataReferencia);
     $vencimento = new DateTimeImmutable($dataVencimento);
-    $compensacao = proximoDiaUtilDC($vencimento->modify('+2 days'), $feriadosRecorrentes, $feriadosEspecificos);
+    $compensacao = dataCompensacaoDescontoChequesDC($vencimento, 2, $feriadosRecorrentes, $feriadosEspecificos);
     $prazoDias = max(0, (int)$referencia->diff($compensacao)->format('%r%a'));
     $taxaCliente = (float)$cliente['taxa_desconto'];
     $usaAdicional = ($cliente['usa_adicional_prazo'] ?? 'S') === 'S';
