@@ -297,7 +297,9 @@ function extrairTextoDocumentoDC(string $arquivo, string $nomeOriginal = ''): ar
 function interpretarTextoDocumentoDC(string $texto): array
 {
     $texto = normalizarTextoDC($texto);
-    $linhas = array_values(array_filter(array_map('trim', explode("\n", $texto)), static fn($linha) => $linha !== ''));
+    $linhas = array_values(array_filter(array_map('trim', explode("\n", $texto)), static function ($linha) {
+        return $linha !== '';
+    }));
     $textoPlano = implode(' ', $linhas);
 
     $data = null;
@@ -426,7 +428,9 @@ function garantirIndiceDC(PDO $pdo, string $tabela, string $indice, array $colun
         return;
     }
 
-    $colunasSql = implode(', ', array_map(static fn($coluna) => '`' . str_replace('`', '', $coluna) . '`', $colunas));
+    $colunasSql = implode(', ', array_map(static function ($coluna) {
+        return '`' . str_replace('`', '', $coluna) . '`';
+    }, $colunas));
     $pdo->exec("ALTER TABLE `{$tabela}` ADD INDEX `{$indice}` ({$colunasSql})");
 }
 
