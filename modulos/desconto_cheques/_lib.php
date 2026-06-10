@@ -98,6 +98,8 @@ function garantirTabelasDescontoCheques(PDO $pdo): void
             operacao_id INT NOT NULL,
             tipo_documento VARCHAR(20) NOT NULL DEFAULT 'CHEQUE',
             numero_documento VARCHAR(80) NULL,
+            cnpj_cpf_emissor VARCHAR(20) NULL,
+            nome_emissor VARCHAR(180) NULL,
             arquivo_nome VARCHAR(255) NULL,
             arquivo_caminho VARCHAR(255) NULL,
             valor DECIMAL(15,2) NOT NULL DEFAULT 0,
@@ -114,6 +116,283 @@ function garantirTabelasDescontoCheques(PDO $pdo): void
             INDEX idx_dc_documentos_vencimento (data_vencimento)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
     ");
+
+    garantirColunaDC($pdo, 'desconto_cheques_documentos', 'cnpj_cpf_emissor', "VARCHAR(20) NULL AFTER numero_documento");
+    garantirColunaDC($pdo, 'desconto_cheques_documentos', 'nome_emissor', "VARCHAR(180) NULL AFTER cnpj_cpf_emissor");
+    garantirIndiceDC($pdo, 'desconto_cheques_documentos', 'idx_dc_documentos_emissor_vencimento', ['cnpj_cpf_emissor', 'data_vencimento']);
+}
+
+function normalizarTextoDC(string $texto): string
+{
+    $texto = str_replace(["\r\n", "\r"], "\n", $texto);
+    $texto = preg_replace('/[ \t]+/', ' ', $texto) ?? $texto;
+    return trim($texto);
+}
+
+function localizarComandoDC(string $comando): ?string
+{
+    if (!function_exists('shell_exec')) {
+        return null;
+    }
+
+    $comandoSeguro = preg_replace('/[^a-zA-Z0-9_.-]/', '', $comando);
+    if (!$comandoSeguro) {
+        return null;
+    }
+
+    if (stripos(PHP_OS_FAMILY, 'Windows') !== false) {
+        $saida = trim((string)@shell_exec('where ' . $comandoSeguro . ' 2>NUL'));
+    } else {
+        $saida = trim((string)@shell_exec('command -v ' . escapeshellarg($comandoSeguro) . ' 2>/dev/null'));
+    }
+
+    if ($saida === '') {
+        return null;
+    }
+
+    $primeiro = strtok($saida, "\r\n");
+    return $primeiro ? $primeiro : null;
+}
+
+function executarComandoTextoDC(array $partes): string
+{
+    if (!function_exists('shell_exec')) {
+        return '';
+    }
+
+    $saida = (string)@shell_exec(implode(' ', $partes) . ' 2>&1');
+    if (
+        stripos($saida, 'not found') !== false
+        || stripos($saida, 'nao foi encontrado') !== false
+        || stripos($saida, 'Traceback') !== false
+    ) {
+        return '';
+    }
+
+    return $saida;
+}
+
+function extrairTextoPdfDC(string $arquivo): string
+{
+    $pdftotext = localizarComandoDC('pdftotext');
+    if ($pdftotext) {
+        $tmpTxt = tempnam(sys_get_temp_dir(), 'dc_pdf_');
+        if ($tmpTxt !== false) {
+            executarComandoTextoDC([
+                escapeshellarg($pdftotext),
+                '-layout',
+                escapeshellarg($arquivo),
+                escapeshellarg($tmpTxt),
+            ]);
+            $texto = is_file($tmpTxt) ? (string)file_get_contents($tmpTxt) : '';
+            @unlink($tmpTxt);
+            if (trim($texto) !== '') {
+                return normalizarTextoDC($texto);
+            }
+        }
+    }
+
+    $pythonScript = tempnam(sys_get_temp_dir(), 'dc_pdf_py_');
+    if ($pythonScript === false) {
+        return '';
+    }
+
+    $pythonCodigo = "import sys\n"
+        . "from pypdf import PdfReader\n"
+        . "reader = PdfReader(sys.argv[1])\n"
+        . "for page in reader.pages:\n"
+        . "    print(page.extract_text() or '')\n";
+    file_put_contents($pythonScript, $pythonCodigo);
+
+    $pythonCandidates = array_filter([
+        getenv('PYTHON_BIN') ?: '',
+        getenv('PYTHON') ?: '',
+        'python3',
+        'python',
+        'py',
+        'C:\\Users\\user\\.cache\\codex-runtimes\\codex-primary-runtime\\dependencies\\python\\python.exe',
+    ]);
+
+    foreach ($pythonCandidates as $python) {
+        $saida = executarComandoTextoDC([
+            escapeshellarg($python),
+            escapeshellarg($pythonScript),
+            escapeshellarg($arquivo),
+        ]);
+        if (trim($saida) !== '' && stripos($saida, 'No module named') === false) {
+            @unlink($pythonScript);
+            return normalizarTextoDC($saida);
+        }
+    }
+
+    @unlink($pythonScript);
+    return '';
+}
+
+function extrairTextoImagemDC(string $arquivo): string
+{
+    $tesseract = localizarComandoDC('tesseract');
+    if (!$tesseract) {
+        return '';
+    }
+
+    $saida = executarComandoTextoDC([
+        escapeshellarg($tesseract),
+        escapeshellarg($arquivo),
+        'stdout',
+        '-l',
+        'por+eng',
+        '--psm',
+        '6',
+    ]);
+
+    return normalizarTextoDC($saida);
+}
+
+function extrairTextoDocumentoDC(string $arquivo, string $nomeOriginal = ''): array
+{
+    $ext = strtolower(pathinfo($nomeOriginal ?: $arquivo, PATHINFO_EXTENSION));
+    $mime = function_exists('mime_content_type') ? (string)@mime_content_type($arquivo) : '';
+    $texto = '';
+    $metodo = '';
+    $avisos = [];
+
+    if ($ext === 'pdf' || stripos($mime, 'pdf') !== false) {
+        $texto = extrairTextoPdfDC($arquivo);
+        $metodo = $texto !== '' ? 'PDF texto' : '';
+        if ($texto === '') {
+            $avisos[] = 'Nao foi possivel extrair texto do PDF. Se for PDF escaneado, instale OCR no servidor.';
+        }
+    } elseif (str_starts_with($mime, 'image/') || in_array($ext, ['jpg', 'jpeg', 'png', 'webp', 'bmp', 'tif', 'tiff'], true)) {
+        $texto = extrairTextoImagemDC($arquivo);
+        $metodo = $texto !== '' ? 'OCR imagem' : '';
+        if ($texto === '') {
+            $avisos[] = 'OCR de imagem indisponivel no servidor. Instale Tesseract para ler fotos.';
+        }
+    } else {
+        $avisos[] = 'Tipo de arquivo nao suportado para leitura automatica.';
+    }
+
+    if ($texto === '' && $nomeOriginal !== '') {
+        $texto = $nomeOriginal;
+        $metodo = 'Nome do arquivo';
+        $avisos[] = 'Usei apenas o nome do arquivo como tentativa de leitura.';
+    }
+
+    $dados = interpretarTextoDocumentoDC($texto);
+    $dados['texto'] = function_exists('mb_substr') ? mb_substr($texto, 0, 2500) : substr($texto, 0, 2500);
+    $dados['metodo'] = $metodo;
+    $dados['avisos'] = $avisos;
+    $dados['sucesso'] = (
+        $dados['valor'] !== null
+        || $dados['data_vencimento'] !== null
+        || $dados['numero_documento'] !== null
+        || $dados['cnpj_cpf_emissor'] !== null
+        || $dados['nome_emissor'] !== null
+    );
+
+    return $dados;
+}
+
+function interpretarTextoDocumentoDC(string $texto): array
+{
+    $texto = normalizarTextoDC($texto);
+    $linhas = array_values(array_filter(array_map('trim', explode("\n", $texto)), static fn($linha) => $linha !== ''));
+    $textoPlano = implode(' ', $linhas);
+
+    $data = null;
+    if (preg_match_all('/\b(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{2,4})\b/', $textoPlano, $datas, PREG_SET_ORDER)) {
+        $datasValidas = [];
+        foreach ($datas as $d) {
+            $ano = (int)$d[3];
+            $ano = $ano < 100 ? 2000 + $ano : $ano;
+            $mes = (int)$d[2];
+            $dia = (int)$d[1];
+            if (checkdate($mes, $dia, $ano)) {
+                $datasValidas[] = sprintf('%04d-%02d-%02d', $ano, $mes, $dia);
+            }
+        }
+        if (!empty($datasValidas)) {
+            sort($datasValidas);
+            $data = end($datasValidas) ?: null;
+        }
+    } elseif (preg_match_all('/\b(20\d{2})-(\d{1,2})-(\d{1,2})\b/', $textoPlano, $datasIso, PREG_SET_ORDER)) {
+        $datasValidas = [];
+        foreach ($datasIso as $d) {
+            if (checkdate((int)$d[2], (int)$d[3], (int)$d[1])) {
+                $datasValidas[] = sprintf('%04d-%02d-%02d', (int)$d[1], (int)$d[2], (int)$d[3]);
+            }
+        }
+        if (!empty($datasValidas)) {
+            sort($datasValidas);
+            $data = end($datasValidas) ?: null;
+        }
+    }
+
+    $valor = null;
+    $candidatosValor = [];
+    if (preg_match_all('/(?:R\$\s*)?(\d{1,3}(?:\.\d{3})*,\d{2}|\d+,\d{2})\b/u', $textoPlano, $valores, PREG_SET_ORDER)) {
+        foreach ($valores as $match) {
+            $numero = decimalDC($match[1]);
+            if ($numero > 0 && $numero < 100000000) {
+                $candidatosValor[] = $numero;
+            }
+        }
+    }
+    if (!empty($candidatosValor)) {
+        $valor = max($candidatosValor);
+    }
+
+    $numeroDocumento = null;
+    if (preg_match('/\b(\d[\d .-]{42,60}\d)\b/', $textoPlano, $linhaDigitavel)) {
+        $numeroDocumento = preg_replace('/\D+/', '', $linhaDigitavel[1]);
+    }
+
+    if (!$numeroDocumento && preg_match('/(?:cheque|boleto|documento|doc\.?|numero|no\.?|n\.?)[^\d]{0,20}(\d{4,20})/iu', $textoPlano, $numeroComRotulo)) {
+        $numeroDocumento = $numeroComRotulo[1];
+    }
+
+    if (!$numeroDocumento && preg_match_all('/\b\d{5,20}\b/', $textoPlano, $numeros, PREG_SET_ORDER)) {
+        foreach ($numeros as $numero) {
+            $n = $numero[0];
+            if ($data && str_contains(str_replace('-', '', $data), $n)) {
+                continue;
+            }
+            $numeroDocumento = $n;
+            break;
+        }
+    }
+
+    $cnpjCpfEmissor = null;
+    if (preg_match('/\b(\d{3}\.?\d{3}\.?\d{3}-?\d{2})\b/', $textoPlano, $cpf)) {
+        $cnpjCpfEmissor = preg_replace('/\D+/', '', $cpf[1]);
+    }
+    if (!$cnpjCpfEmissor && preg_match('/\b(\d{2}\.?\d{3}\.?\d{3}\/?\d{4}-?\d{2})\b/', $textoPlano, $cnpj)) {
+        $cnpjCpfEmissor = preg_replace('/\D+/', '', $cnpj[1]);
+    }
+
+    $nomeEmissor = null;
+    $padroesNome = [
+        '/(?:emissor|emitente|sacado|pagador|cliente|cedente|beneficiario)\s*[:\-]?\s*([A-Z0-9][A-Z0-9 .,&\-]{4,120})/iu',
+        '/(?:nome)\s+(?:do\s+)?(?:emissor|emitente|sacado|pagador)\s*[:\-]?\s*([A-Z0-9][A-Z0-9 .,&\-]{4,120})/iu',
+    ];
+    foreach ($padroesNome as $padraoNome) {
+        if (preg_match($padraoNome, $textoPlano, $nomeMatch)) {
+            $nomeEmissor = trim(preg_replace('/\s+/', ' ', $nomeMatch[1]) ?? $nomeMatch[1]);
+            $nomeEmissor = preg_replace('/\s+(CPF|CNPJ|VALOR|VENCIMENTO|DATA|DOCUMENTO|NUMERO|N)\b.*$/iu', '', $nomeEmissor) ?? $nomeEmissor;
+            $nomeEmissor = trim($nomeEmissor, " \t\n\r\0\x0B:-");
+            break;
+        }
+    }
+
+    return [
+        'valor' => $valor,
+        'valor_formatado' => $valor !== null ? number_format($valor, 2, ',', '.') : null,
+        'data_vencimento' => $data,
+        'numero_documento' => $numeroDocumento,
+        'cnpj_cpf_emissor' => $cnpjCpfEmissor,
+        'nome_emissor' => $nomeEmissor ?: null,
+    ];
 }
 
 function garantirColunaDC(PDO $pdo, string $tabela, string $coluna, string $definicao): void
@@ -130,6 +409,25 @@ function garantirColunaDC(PDO $pdo, string $tabela, string $coluna, string $defi
     if ((int)$stmt->fetchColumn() === 0) {
         $pdo->exec("ALTER TABLE `{$tabela}` ADD COLUMN `{$coluna}` {$definicao}");
     }
+}
+
+function garantirIndiceDC(PDO $pdo, string $tabela, string $indice, array $colunas): void
+{
+    $stmt = $pdo->prepare("
+        SELECT COUNT(*)
+        FROM information_schema.STATISTICS
+        WHERE TABLE_SCHEMA = DATABASE()
+          AND TABLE_NAME = ?
+          AND INDEX_NAME = ?
+    ");
+    $stmt->execute([$tabela, $indice]);
+
+    if ((int)$stmt->fetchColumn() > 0) {
+        return;
+    }
+
+    $colunasSql = implode(', ', array_map(static fn($coluna) => '`' . str_replace('`', '', $coluna) . '`', $colunas));
+    $pdo->exec("ALTER TABLE `{$tabela}` ADD INDEX `{$indice}` ({$colunasSql})");
 }
 
 function garantirPrazosPadraoDescontoCheques(PDO $pdo, int $empresaId): void
@@ -241,6 +539,19 @@ function moedaDC($valor): string
 function percentualDC($valor): string
 {
     return number_format((float)$valor, 2, ',', '.') . '%';
+}
+
+function formatarCpfCnpjDC(?string $valor): string
+{
+    $digitos = preg_replace('/\D+/', '', (string)$valor);
+    if (strlen($digitos) === 11) {
+        return preg_replace('/(\d{3})(\d{3})(\d{3})(\d{2})/', '$1.$2.$3-$4', $digitos) ?? $digitos;
+    }
+    if (strlen($digitos) === 14) {
+        return preg_replace('/(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})/', '$1.$2.$3/$4-$5', $digitos) ?? $digitos;
+    }
+
+    return $digitos ?: (string)$valor;
 }
 
 function decimalDC($valor): float
@@ -396,6 +707,70 @@ function taxaTotalDocumentoDC(array $documento): float
     }
 
     return round(((float)($documento['desconto_valor'] ?? 0) / $valor) * 100, 4);
+}
+
+function buscarResumoEmissorAVencerDC(PDO $pdo, int $empresaId, string $cnpjCpf, int $ignorarDocumentoId = 0): array
+{
+    $digitos = preg_replace('/\D+/', '', $cnpjCpf);
+    if (!$digitos) {
+        return [
+            'cnpj_cpf' => '',
+            'quantidade' => 0,
+            'valor_total' => 0.0,
+            'valor_total_formatado' => moedaDC(0),
+            'proximo_vencimento' => null,
+            'documentos' => [],
+        ];
+    }
+
+    $params = [$empresaId, $digitos, date('Y-m-d')];
+    $filtroIgnorar = '';
+    if ($ignorarDocumentoId > 0) {
+        $filtroIgnorar = ' AND d.id <> ?';
+        $params[] = $ignorarDocumentoId;
+    }
+
+    $stmt = $pdo->prepare("
+        SELECT
+            d.id,
+            d.operacao_id,
+            d.tipo_documento,
+            d.numero_documento,
+            d.nome_emissor,
+            d.valor,
+            d.data_vencimento,
+            o.status
+        FROM desconto_cheques_documentos d
+        INNER JOIN desconto_cheques_operacoes o ON o.id = d.operacao_id
+        WHERE o.empresa_id = ?
+          AND d.cnpj_cpf_emissor = ?
+          AND d.data_vencimento >= ?
+          AND o.status IN ('ABERTA', 'CONFIRMADA')
+          {$filtroIgnorar}
+        ORDER BY d.data_vencimento, d.id
+    ");
+    $stmt->execute($params);
+    $documentos = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+    $total = 0.0;
+    foreach ($documentos as &$documento) {
+        $documento['valor'] = (float)$documento['valor'];
+        $documento['valor_formatado'] = moedaDC($documento['valor']);
+        $documento['data_vencimento_br'] = dataBRDC($documento['data_vencimento']);
+        $total += $documento['valor'];
+    }
+    unset($documento);
+
+    return [
+        'cnpj_cpf' => $digitos,
+        'cnpj_cpf_formatado' => formatarCpfCnpjDC($digitos),
+        'quantidade' => count($documentos),
+        'valor_total' => round($total, 2),
+        'valor_total_formatado' => moedaDC($total),
+        'proximo_vencimento' => $documentos[0]['data_vencimento'] ?? null,
+        'proximo_vencimento_br' => isset($documentos[0]) ? dataBRDC($documentos[0]['data_vencimento']) : null,
+        'documentos' => array_slice($documentos, 0, 5),
+    ];
 }
 
 function buscarResumoCreditoClienteDC(PDO $pdo, int $empresaId, int $clienteId, int $ignorarOperacaoId = 0): array

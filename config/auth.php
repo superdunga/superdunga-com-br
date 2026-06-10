@@ -276,6 +276,8 @@ function validarPermissaoModuloAtual(): void
         'modulos/rotinas_operacionais/lista_recebimentos.php' => 'lista_recebimentos_mercadorias',
         'modulos/colaboradores/cadastro.php' => 'colaboradores_cadastro',
         'modulos/colaboradores/folha_pagamento.php' => 'colaboradores_folha_pagamento',
+        'modulos/desconto_cheques/ler_documento.php' => 'desconto_cheques_operacoes',
+        'modulos/desconto_cheques/consultar_emissor.php' => 'desconto_cheques_operacoes',
     ];
 
     $codigoModulo = $aliases[$caminho] ?? null;

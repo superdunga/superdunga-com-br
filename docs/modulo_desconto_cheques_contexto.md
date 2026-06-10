@@ -191,6 +191,28 @@ Formula do valor final:
 
 No PDF da operacao, se taxas/tarifas ou valores a descontar forem zero, essas linhas/secoes nao devem aparecer.
 
+### Leitura automatica de documentos
+
+A tela de operacoes tenta ler o arquivo assim que o operador seleciona uma foto ou PDF.
+
+O sistema retorna sugestoes para:
+
+- numero do cheque/boleto;
+- CNPJ ou CPF do emissor;
+- nome do emissor;
+- valor;
+- data de vencimento.
+
+As sugestoes preenchem somente campos vazios, mantendo o operador responsavel por conferir e corrigir antes de salvar.
+
+Quando o CNPJ/CPF do emissor for preenchido, a tela consulta documentos ja cadastrados e ainda a vencer para o mesmo emissor, dentro da mesma empresa, em operacoes `ABERTA` ou `CONFIRMADA`. Na edicao, o proprio documento da linha e ignorado para nao inflar o alerta.
+
+Dependencias tecnicas:
+
+- PDF com texto: usa `pdftotext` quando disponivel ou Python com `pypdf`.
+- Foto/imagem: usa `tesseract` quando disponivel no servidor.
+- Sem essas ferramentas, o arquivo continua sendo anexado normalmente e o operador preenche os campos manualmente.
+
 ## Pendencias de definicao
 
 Antes de codar as rotinas internas, definir:

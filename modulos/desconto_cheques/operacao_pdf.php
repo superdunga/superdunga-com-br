@@ -233,6 +233,7 @@ $nomeArquivo = 'desconto_cheques_operacao_' . $operacaoId . '.pdf';
             <thead>
                 <tr>
                     <th>Documento</th>
+                    <th>Emissor</th>
                     <th>Vencimento</th>
                     <th>Compensacao</th>
                     <th class="text-end">Dias</th>
@@ -246,6 +247,12 @@ $nomeArquivo = 'desconto_cheques_operacao_' . $operacaoId . '.pdf';
                 <?php foreach ($documentos as $doc): ?>
                     <tr>
                         <td><?= htmlspecialchars($doc['tipo_documento']) ?> <?= htmlspecialchars((string)$doc['numero_documento']) ?></td>
+                        <td>
+                            <?= htmlspecialchars((string)($doc['nome_emissor'] ?: '-')) ?>
+                            <?php if (!empty($doc['cnpj_cpf_emissor'])): ?>
+                                <div><?= htmlspecialchars(formatarCpfCnpjDC($doc['cnpj_cpf_emissor'])) ?></div>
+                            <?php endif; ?>
+                        </td>
                         <td><?= dataBRDC($doc['data_vencimento']) ?></td>
                         <td><?= dataBRDC($doc['data_compensacao']) ?></td>
                         <td class="text-end"><?= (int)$doc['prazo_dias'] ?></td>
@@ -256,7 +263,7 @@ $nomeArquivo = 'desconto_cheques_operacao_' . $operacaoId . '.pdf';
                     </tr>
                 <?php endforeach; ?>
                 <tr class="total-row">
-                    <td colspan="4">Total</td>
+                    <td colspan="5">Total</td>
                     <td class="text-end"><?= moedaDC($operacao['valor_bruto']) ?></td>
                     <td></td>
                     <td class="text-end"><?= moedaDC($operacao['valor_desconto']) ?></td>
@@ -296,4 +303,3 @@ document.title = <?= json_encode($nomeArquivo) ?>;
 </script>
 </body>
 </html>
-

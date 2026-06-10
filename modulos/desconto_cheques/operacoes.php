@@ -71,6 +71,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $tipos = $_POST['tipo_documento'] ?? [];
     $documentoIds = $_POST['documento_id'] ?? [];
     $numeros = $_POST['numero_documento'] ?? [];
+    $cnpjsCpfsEmissores = $_POST['cnpj_cpf_emissor'] ?? [];
+    $nomesEmissores = $_POST['nome_emissor'] ?? [];
     $valores = $_POST['valor'] ?? [];
     $vencimentos = $_POST['data_vencimento'] ?? [];
     $arquivos = $_FILES['arquivo_documento'] ?? null;
@@ -128,6 +130,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 'id' => (int)($documentoIds[$idx] ?? 0),
                 'tipo_documento' => in_array(($tipos[$idx] ?? 'CHEQUE'), ['CHEQUE', 'BOLETO'], true) ? $tipos[$idx] : 'CHEQUE',
                 'numero_documento' => trim((string)($numeros[$idx] ?? '')),
+                'cnpj_cpf_emissor' => preg_replace('/\D+/', '', (string)($cnpjsCpfsEmissores[$idx] ?? '')),
+                'nome_emissor' => trim((string)($nomesEmissores[$idx] ?? '')),
                 'valor' => $valor,
                 'data_vencimento' => $vencimento,
                 'arquivo' => $arquivoLinha,
@@ -219,15 +223,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
                 $stmtDoc = $pdo_master->prepare("
                     INSERT INTO desconto_cheques_documentos
-                        (operacao_id, tipo_documento, numero_documento, arquivo_nome, arquivo_caminho, valor,
+                        (operacao_id, tipo_documento, numero_documento, cnpj_cpf_emissor, nome_emissor, arquivo_nome, arquivo_caminho, valor,
                          data_vencimento, data_compensacao, prazo_dias, taxa_cliente, adicional_percentual,
                          adicional_valor, desconto_valor, valor_liquido)
-                    VALUES (?, ?, NULLIF(?, ''), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    VALUES (?, ?, NULLIF(?, ''), NULLIF(?, ''), NULLIF(?, ''), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ");
                 $stmtDocUpdate = $pdo_master->prepare("
                     UPDATE desconto_cheques_documentos
                     SET tipo_documento = ?,
                         numero_documento = NULLIF(?, ''),
+                        cnpj_cpf_emissor = NULLIF(?, ''),
+                        nome_emissor = NULLIF(?, ''),
                         arquivo_nome = ?,
                         arquivo_caminho = ?,
                         valor = ?,
@@ -256,6 +262,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         $stmtDocUpdate->execute([
                             $documento['tipo_documento'],
                             $documento['numero_documento'],
+                            $documento['cnpj_cpf_emissor'],
+                            $documento['nome_emissor'],
                             $upload['nome'],
                             $upload['caminho'],
                             $documento['valor'],
@@ -276,6 +284,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                             $operacaoId,
                             $documento['tipo_documento'],
                             $documento['numero_documento'],
+                            $documento['cnpj_cpf_emissor'],
+                            $documento['nome_emissor'],
                             $upload['nome'],
                             $upload['caminho'],
                             $documento['valor'],
@@ -373,6 +383,8 @@ $formDocumentos = $documentosEditar ?: [[
     'id' => 0,
     'tipo_documento' => 'CHEQUE',
     'numero_documento' => '',
+    'cnpj_cpf_emissor' => '',
+    'nome_emissor' => '',
     'valor' => '',
     'data_vencimento' => '',
     'arquivo_nome' => '',
@@ -400,9 +412,17 @@ require '../../layout/header.php';
 
     .dc-doc-grid {
         display: grid;
-        grid-template-columns: 130px 1fr 140px 150px minmax(180px, 1fr) auto;
+        grid-template-columns: repeat(4, minmax(150px, 1fr));
         gap: .5rem;
         align-items: end;
+    }
+
+    .dc-doc-grid .dc-doc-file {
+        grid-column: span 2;
+    }
+
+    .dc-doc-grid .dc-doc-remove {
+        justify-self: end;
     }
 
     .dc-actions {
@@ -415,11 +435,23 @@ require '../../layout/header.php';
         .dc-doc-grid {
             grid-template-columns: 1fr 1fr;
         }
+
+        .dc-doc-grid .dc-doc-file {
+            grid-column: span 2;
+        }
     }
 
     @media (max-width: 575.98px) {
         .dc-doc-grid {
             grid-template-columns: 1fr;
+        }
+
+        .dc-doc-grid .dc-doc-file {
+            grid-column: auto;
+        }
+
+        .dc-doc-grid .dc-doc-remove {
+            justify-self: stretch;
         }
 
         .dc-actions .btn,
@@ -525,6 +557,15 @@ require '../../layout/header.php';
                                             <input type="text" name="numero_documento[]" class="form-control" value="<?= htmlspecialchars((string)($docForm['numero_documento'] ?? '')) ?>">
                                         </div>
                                         <div>
+                                            <label class="form-label small">CNPJ/CPF emissor</label>
+                                            <input type="text" name="cnpj_cpf_emissor[]" class="form-control" inputmode="numeric" value="<?= htmlspecialchars((string)($docForm['cnpj_cpf_emissor'] ?? '')) ?>">
+                                            <div class="small mt-1 dc-emissor-status text-muted"></div>
+                                        </div>
+                                        <div>
+                                            <label class="form-label small">Nome do emissor</label>
+                                            <input type="text" name="nome_emissor[]" class="form-control" value="<?= htmlspecialchars((string)($docForm['nome_emissor'] ?? '')) ?>">
+                                        </div>
+                                        <div>
                                             <label class="form-label small">Valor</label>
                                             <input type="text" name="valor[]" class="form-control" inputmode="decimal" required value="<?= ($docForm['valor'] ?? '') !== '' ? htmlspecialchars(number_format((float)$docForm['valor'], 2, ',', '.')) : '' ?>">
                                         </div>
@@ -532,16 +573,17 @@ require '../../layout/header.php';
                                             <label class="form-label small">Vencimento</label>
                                             <input type="date" name="data_vencimento[]" class="form-control" required value="<?= htmlspecialchars((string)($docForm['data_vencimento'] ?? '')) ?>">
                                         </div>
-                                        <div>
+                                        <div class="dc-doc-file">
                                             <label class="form-label small">Foto/arquivo</label>
                                             <input type="file" name="arquivo_documento[]" class="form-control" accept="image/*,.pdf">
+                                            <div class="small mt-1 dc-leitura-status text-muted"></div>
                                             <?php if (!empty($docForm['arquivo_caminho'])): ?>
                                                 <div class="small mt-1">
                                                     <a target="_blank" href="../../<?= htmlspecialchars($docForm['arquivo_caminho']) ?>">Anexo atual</a>
                                                 </div>
                                             <?php endif; ?>
                                         </div>
-                                        <div>
+                                        <div class="dc-doc-remove">
                                             <button type="button" class="btn btn-outline-danger btn-remover-doc">Remover</button>
                                         </div>
                                     </div>
@@ -661,6 +703,13 @@ require '../../layout/header.php';
                                 <td colspan="2">
                                     <?= htmlspecialchars($doc['tipo_documento']) ?>
                                     <?= $doc['numero_documento'] ? ' - ' . htmlspecialchars($doc['numero_documento']) : '' ?>
+                                    <?php if (!empty($doc['nome_emissor']) || !empty($doc['cnpj_cpf_emissor'])): ?>
+                                        <div class="small text-muted">
+                                            Emissor:
+                                            <?= htmlspecialchars((string)($doc['nome_emissor'] ?: '-')) ?>
+                                            <?= !empty($doc['cnpj_cpf_emissor']) ? ' | ' . htmlspecialchars(formatarCpfCnpjDC($doc['cnpj_cpf_emissor'])) : '' ?>
+                                        </div>
+                                    <?php endif; ?>
                                     <?php if ($doc['arquivo_caminho']): ?>
                                         <a class="ms-2 small" target="_blank" href="../../<?= htmlspecialchars($doc['arquivo_caminho']) ?>">Anexo</a>
                                     <?php endif; ?>
@@ -715,6 +764,14 @@ document.addEventListener('DOMContentLoaded', function () {
         clone.querySelectorAll('input').forEach(function (input) {
             input.value = '';
         });
+        clone.querySelectorAll('.dc-leitura-status').forEach(function (status) {
+            status.textContent = '';
+            status.className = 'small mt-1 dc-leitura-status text-muted';
+        });
+        clone.querySelectorAll('.dc-emissor-status').forEach(function (status) {
+            status.textContent = '';
+            status.className = 'small mt-1 dc-emissor-status text-muted';
+        });
         clone.querySelectorAll('select').forEach(function (select) {
             select.selectedIndex = 0;
         });
@@ -732,6 +789,209 @@ document.addEventListener('DOMContentLoaded', function () {
         }
         event.target.closest('.documento-row').remove();
         atualizarBotoes();
+    });
+
+    function aplicarSugestoes(linha, dados, sobrescrever) {
+        const numero = linha.querySelector('input[name="numero_documento[]"]');
+        const cnpjCpf = linha.querySelector('input[name="cnpj_cpf_emissor[]"]');
+        const nomeEmissor = linha.querySelector('input[name="nome_emissor[]"]');
+        const valor = linha.querySelector('input[name="valor[]"]');
+        const vencimento = linha.querySelector('input[name="data_vencimento[]"]');
+
+        if (dados.numero_documento && numero && (sobrescrever || !numero.value.trim())) {
+            numero.value = dados.numero_documento;
+        }
+        if (dados.cnpj_cpf_emissor && cnpjCpf && (sobrescrever || !cnpjCpf.value.trim())) {
+            cnpjCpf.value = dados.cnpj_cpf_emissor;
+            consultarEmissor(linha);
+        }
+        if (dados.nome_emissor && nomeEmissor && (sobrescrever || !nomeEmissor.value.trim())) {
+            nomeEmissor.value = dados.nome_emissor;
+        }
+        if (dados.valor_formatado && valor && (sobrescrever || !valor.value.trim())) {
+            valor.value = dados.valor_formatado;
+        }
+        if (dados.data_vencimento && vencimento && (sobrescrever || !vencimento.value.trim())) {
+            vencimento.value = dados.data_vencimento;
+        }
+    }
+
+    function montarResumoLeitura(dados) {
+        const partes = [];
+        if (dados.numero_documento) {
+            partes.push('numero ' + dados.numero_documento);
+        }
+        if (dados.cnpj_cpf_emissor) {
+            partes.push('CNPJ/CPF ' + dados.cnpj_cpf_emissor);
+        }
+        if (dados.nome_emissor) {
+            partes.push('emissor ' + dados.nome_emissor);
+        }
+        if (dados.valor_formatado) {
+            partes.push('valor R$ ' + dados.valor_formatado);
+        }
+        if (dados.data_vencimento) {
+            const pedacos = dados.data_vencimento.split('-');
+            partes.push('venc. ' + pedacos[2] + '/' + pedacos[1] + '/' + pedacos[0]);
+        }
+        return partes.join(' | ');
+    }
+
+    function escaparHtml(texto) {
+        return String(texto).replace(/[&<>"']/g, function (char) {
+            return {'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;'}[char];
+        });
+    }
+
+    function statusEmissor(linha) {
+        return linha ? linha.querySelector('.dc-emissor-status') : null;
+    }
+
+    function documentoIdLinha(linha) {
+        const input = linha ? linha.querySelector('input[name="documento_id[]"]') : null;
+        return input ? input.value || '0' : '0';
+    }
+
+    function consultarEmissor(linha) {
+        const input = linha ? linha.querySelector('input[name="cnpj_cpf_emissor[]"]') : null;
+        const status = statusEmissor(linha);
+        if (!input || !status) {
+            return;
+        }
+
+        const digitos = input.value.replace(/\D+/g, '');
+        if (digitos.length < 11) {
+            status.textContent = '';
+            status.className = 'small mt-1 dc-emissor-status text-muted';
+            return;
+        }
+
+        status.className = 'small mt-1 dc-emissor-status text-muted';
+        status.textContent = 'Consultando titulos a vencer deste emissor...';
+
+        const params = new URLSearchParams({
+            cnpj_cpf: digitos,
+            documento_id: documentoIdLinha(linha)
+        });
+
+        fetch('consultar_emissor.php?' + params.toString(), {
+            method: 'GET',
+            credentials: 'same-origin'
+        })
+            .then(function (response) {
+                return response.json().then(function (json) {
+                    if (!response.ok) {
+                        throw new Error(json.erro || 'Falha na consulta do emissor.');
+                    }
+                    return json;
+                });
+            })
+            .then(function (dados) {
+                if (!dados.quantidade) {
+                    status.className = 'small mt-1 dc-emissor-status text-success';
+                    status.textContent = 'Nenhum cheque/boleto a vencer ja cadastrado para este emissor.';
+                    return;
+                }
+
+                const detalhes = Array.isArray(dados.documentos)
+                    ? dados.documentos.map(function (doc) {
+                        const numero = doc.numero_documento ? ' ' + doc.numero_documento : '';
+                        return '#' + doc.operacao_id + numero + ' - ' + doc.data_vencimento_br + ' - ' + doc.valor_formatado;
+                    }).join('; ')
+                    : '';
+
+                status.className = 'small mt-1 dc-emissor-status text-warning';
+                status.textContent = 'Ja existem ' + dados.quantidade + ' documento(s) a vencer deste emissor, total ' + dados.valor_total_formatado + (detalhes ? '. ' + detalhes : '') + '.';
+            })
+            .catch(function (erro) {
+                status.className = 'small mt-1 dc-emissor-status text-warning';
+                status.textContent = erro.message || 'Nao foi possivel consultar titulos do emissor.';
+            });
+    }
+
+    const timersEmissor = new WeakMap();
+    container.addEventListener('input', function (event) {
+        const input = event.target;
+        if (!(input instanceof HTMLInputElement) || input.name !== 'cnpj_cpf_emissor[]') {
+            return;
+        }
+
+        const linha = input.closest('.documento-row');
+        if (!linha) {
+            return;
+        }
+
+        const timerAtual = timersEmissor.get(input);
+        if (timerAtual) {
+            clearTimeout(timerAtual);
+        }
+        timersEmissor.set(input, setTimeout(function () {
+            consultarEmissor(linha);
+        }, 500));
+    });
+
+    container.addEventListener('change', function (event) {
+        const input = event.target;
+        if (input instanceof HTMLInputElement && input.name === 'cnpj_cpf_emissor[]') {
+            consultarEmissor(input.closest('.documento-row'));
+        }
+    });
+
+    container.addEventListener('change', function (event) {
+        const input = event.target;
+        if (!(input instanceof HTMLInputElement) || input.type !== 'file' || input.name !== 'arquivo_documento[]') {
+            return;
+        }
+
+        const arquivo = input.files && input.files[0] ? input.files[0] : null;
+        const linha = input.closest('.documento-row');
+        const status = linha ? linha.querySelector('.dc-leitura-status') : null;
+        if (!arquivo || !linha || !status) {
+            return;
+        }
+
+        status.className = 'small mt-1 dc-leitura-status text-muted';
+        status.textContent = 'Lendo arquivo...';
+
+        const formData = new FormData();
+        formData.append('arquivo', arquivo);
+
+        fetch('ler_documento.php', {
+            method: 'POST',
+            body: formData,
+            credentials: 'same-origin'
+        })
+            .then(function (response) {
+                return response.json().then(function (json) {
+                    if (!response.ok) {
+                        throw new Error(json.erro || 'Falha na leitura do arquivo.');
+                    }
+                    return json;
+                });
+            })
+            .then(function (dados) {
+                aplicarSugestoes(linha, dados, false);
+                const resumo = montarResumoLeitura(dados);
+                const avisos = Array.isArray(dados.avisos) && dados.avisos.length ? ' ' + dados.avisos.join(' ') : '';
+                if (resumo) {
+                    status.className = 'small mt-1 dc-leitura-status text-success';
+                    status.innerHTML = 'Leitura: ' + escaparHtml(resumo + avisos);
+                } else {
+                    status.className = 'small mt-1 dc-leitura-status text-warning';
+                    status.textContent = 'Nao consegui identificar valor, vencimento ou numero. Confira manualmente.' + avisos;
+                }
+            })
+            .catch(function (erro) {
+                status.className = 'small mt-1 dc-leitura-status text-warning';
+                status.textContent = erro.message || 'Nao foi possivel ler o arquivo. Preencha manualmente.';
+            });
+    });
+
+    container.querySelectorAll('.documento-row').forEach(function (linha) {
+        const input = linha.querySelector('input[name="cnpj_cpf_emissor[]"]');
+        if (input && input.value.replace(/\D+/g, '').length >= 11) {
+            consultarEmissor(linha);
+        }
     });
 
     atualizarBotoes();
