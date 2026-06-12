@@ -99,6 +99,15 @@ $atalhos = [
         'visivel' => grupoPermitido($pdo_master, $empresaId, 'Desconto de Cheques', $nivelUsuario),
     ],
     [
+        'titulo' => 'Movimentacao/Baixa',
+        'descricao' => 'Lancamentos diretos em caixa/banco e base para baixas financeiras.',
+        'href' => 'modulos/movimentacao_baixa/menu_movimentacao_baixa.php',
+        'classe' => 'border-primary',
+        'botao' => 'btn-primary',
+        'icone' => 'MB',
+        'visivel' => grupoPermitido($pdo_master, $empresaId, 'Movimentacao/Baixa', $nivelUsuario),
+    ],
+    [
         'titulo' => 'Sincronizar Dados',
         'descricao' => 'Atualize dados integrados antes das rotinas operacionais.',
         'href' => 'modulos/tesouraria/sincronizacao.php',

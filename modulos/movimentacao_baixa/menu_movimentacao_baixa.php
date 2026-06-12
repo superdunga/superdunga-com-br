@@ -8,44 +8,28 @@ $empresaId = (int)($_SESSION['empresa_id'] ?? 0);
 
 $opcoes = [
     [
-        'titulo' => 'Contas a Receber',
-        'descricao' => 'Acompanhe carteiras e titulos em aberto por tipo de recebimento.',
-        'href' => 'contas_receber.php',
-        'modulo' => 'financeiro',
-        'icone' => 'CR',
+        'titulo' => 'Caixa/Banco',
+        'descricao' => 'Lance movimentacoes simples diretamente no extrato BNC001.',
+        'href' => 'caixa_banco.php',
+        'modulo' => 'movimentacao_baixa_caixa_banco',
+        'icone' => 'CB',
         'botao' => 'btn-primary',
     ],
     [
         'titulo' => 'Contas a Pagar',
-        'descricao' => 'Acompanhe compras e parcelas em aberto por fornecedor, documento e vencimento.',
+        'descricao' => 'Cadastre titulos a pagar diretamente em CP001 para baixa posterior.',
         'href' => 'contas_pagar.php',
-        'modulo' => 'financeiro',
+        'modulo' => 'movimentacao_baixa_contas_pagar',
         'icone' => 'CP',
         'botao' => 'btn-success',
     ],
     [
-        'titulo' => 'Contas',
-        'descricao' => 'Extrato financeiro por conta, com saldos, creditos, debitos e base para conciliacao bancaria.',
-        'href' => 'contas.php',
-        'modulo' => 'financeiro',
-        'icone' => 'BC',
+        'titulo' => 'Contas a Receber',
+        'descricao' => 'Cadastre titulos a receber diretamente em CR001 para baixa posterior.',
+        'href' => 'contas_receber.php',
+        'modulo' => 'movimentacao_baixa_contas_receber',
+        'icone' => 'CR',
         'botao' => 'btn-info',
-    ],
-    [
-        'titulo' => 'Conciliacao de Extratos',
-        'descricao' => 'Importe extratos bancarios e compare com os lancamentos das contas do sistema.',
-        'href' => 'conciliacao_extratos.php',
-        'modulo' => 'financeiro_conciliacao_extratos',
-        'icone' => 'EX',
-        'botao' => 'btn-warning',
-    ],
-    [
-        'titulo' => 'Cartao de Credito',
-        'descricao' => 'Controle de faturas, lancamentos e conferencias de cartoes de credito.',
-        'href' => 'cartao_credito.php',
-        'modulo' => 'financeiro_cartao_credito',
-        'icone' => 'CC',
-        'botao' => 'btn-secondary',
     ],
 ];
 
@@ -57,8 +41,8 @@ $opcoes = filtrarOpcoesPorModulo($pdo_master, $empresaId, $opcoes);
         <div class="row align-items-center g-3">
             <div class="col-lg-8">
                 <span class="badge text-bg-primary mb-3">Modulo</span>
-                <h1 class="h3 fw-bold mb-2">Financeiro</h1>
-                <p class="text-muted mb-0">Central para organizar contas, pagamentos, recebimentos e controles financeiros.</p>
+                <h1 class="h3 fw-bold mb-2">Movimentacao/Baixa</h1>
+                <p class="text-muted mb-0">Central para lancamentos diretos em caixa/banco e futuras rotinas de baixa.</p>
             </div>
             <div class="col-lg-4 text-lg-end">
                 <a href="../../index.php" class="btn btn-outline-secondary">Voltar ao painel</a>
@@ -80,18 +64,14 @@ $opcoes = filtrarOpcoesPorModulo($pdo_master, $empresaId, $opcoes);
                                 <p class="text-muted small mb-0"><?= htmlspecialchars($opcao['descricao']) ?></p>
                             </div>
                         </div>
-                        <?php if (!empty($opcao['desabilitado'])): ?>
-                            <button type="button" class="btn btn-outline-secondary mt-auto w-100" disabled>Em preparacao</button>
-                        <?php else: ?>
-                            <a href="<?= htmlspecialchars($opcao['href']) ?>" class="btn <?= htmlspecialchars($opcao['botao']) ?> mt-auto w-100">Acessar</a>
-                        <?php endif; ?>
+                        <a href="<?= htmlspecialchars($opcao['href']) ?>" class="btn <?= htmlspecialchars($opcao['botao']) ?> mt-auto w-100">Acessar</a>
                     </div>
                 </div>
             </div>
         <?php endforeach; ?>
         <?php if (empty($opcoes)): ?>
             <div class="col-12">
-                <div class="alert alert-info mb-0">Nenhum modulo financeiro liberado para esta empresa.</div>
+                <div class="alert alert-info mb-0">Nenhuma rotina de movimentacao/baixa liberada para esta empresa.</div>
             </div>
         <?php endif; ?>
     </div>

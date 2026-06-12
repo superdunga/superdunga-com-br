@@ -5,6 +5,7 @@ require_once '../../config/inter_extrato.php';
 
 $empresaId = (int)($_SESSION['empresa_id'] ?? 0);
 $usuarioId = (int)($_SESSION['usuario_id'] ?? 0);
+$usuarioMaster = strtoupper((string)($_SESSION['nivel'] ?? '')) === 'MASTER';
 $mensagemOk = '';
 $mensagemErro = '';
 
@@ -39,6 +40,7 @@ function garantirTabelasConciliacaoExtratos(PDO $pdo): void
             tipo CHAR(1) NOT NULL,
             valor DECIMAL(15,4) NOT NULL,
             identificador_banco VARCHAR(190) NOT NULL,
+            bnc001_empresa INT NULL,
             bnc001_movcontador INT NULL,
             recebimento_id INT NULL,
             conciliado CHAR(1) NOT NULL DEFAULT 'N',
@@ -66,6 +68,27 @@ function garantirTabelasConciliacaoExtratos(PDO $pdo): void
         ");
     }
 
+    $stmtColunaBncEmpresa = $pdo->query("
+        SELECT COUNT(*)
+        FROM information_schema.columns
+        WHERE table_schema = DATABASE()
+          AND table_name = 'financeiro_extrato_bancario'
+          AND column_name = 'bnc001_empresa'
+    ");
+    if ((int)$stmtColunaBncEmpresa->fetchColumn() === 0) {
+        $pdo->exec("
+            ALTER TABLE financeiro_extrato_bancario
+            ADD COLUMN bnc001_empresa INT NULL AFTER identificador_banco
+        ");
+    }
+
+    $pdo->exec("
+        UPDATE financeiro_extrato_bancario
+        SET bnc001_empresa = empresa_id
+        WHERE bnc001_movcontador IS NOT NULL
+          AND bnc001_empresa IS NULL
+    ");
+
     $pdo->exec("
         CREATE TABLE IF NOT EXISTS financeiro_extrato_conciliacoes_log (
             id INT AUTO_INCREMENT PRIMARY KEY,
@@ -82,9 +105,45 @@ function garantirTabelasConciliacaoExtratos(PDO $pdo): void
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
     ");
 
-    garantirIndiceConciliacaoExtratos($pdo, 'financeiro_extrato_bancario', 'idx_fin_ext_mov_empresa', "
-        CREATE INDEX idx_fin_ext_mov_empresa
-        ON financeiro_extrato_bancario (empresa_id, cbcontador, bnc001_movcontador, conciliado)
+    $pdo->exec("
+        CREATE TABLE IF NOT EXISTS financeiro_contas_extrato_regras (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            empresa_id INT NOT NULL,
+            cbcontador INT NOT NULL,
+            empresa_dona_extrato INT NOT NULL,
+            cbcontador_dona_extrato INT NOT NULL,
+            permitir_importacao CHAR(1) NOT NULL DEFAULT 'N',
+            observacao VARCHAR(255) NULL,
+            usuario_id INT NULL,
+            atualizado_em DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            UNIQUE KEY uniq_fin_conta_ext_regra (empresa_id, cbcontador),
+            INDEX idx_fin_conta_ext_dona (empresa_dona_extrato, cbcontador_dona_extrato)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    ");
+
+    $stmtColunaContaDona = $pdo->query("
+        SELECT COUNT(*)
+        FROM information_schema.columns
+        WHERE table_schema = DATABASE()
+          AND table_name = 'financeiro_contas_extrato_regras'
+          AND column_name = 'cbcontador_dona_extrato'
+    ");
+    if ((int)$stmtColunaContaDona->fetchColumn() === 0) {
+        $pdo->exec("
+            ALTER TABLE financeiro_contas_extrato_regras
+            ADD COLUMN cbcontador_dona_extrato INT NOT NULL DEFAULT 0 AFTER empresa_dona_extrato
+        ");
+    }
+
+    $pdo->exec("
+        UPDATE financeiro_contas_extrato_regras
+        SET cbcontador_dona_extrato = cbcontador
+        WHERE cbcontador_dona_extrato = 0
+    ");
+
+    garantirIndiceConciliacaoExtratos($pdo, 'financeiro_extrato_bancario', 'idx_fin_ext_mov_empresa_bnc', "
+        CREATE INDEX idx_fin_ext_mov_empresa_bnc
+        ON financeiro_extrato_bancario (empresa_id, cbcontador, bnc001_empresa, bnc001_movcontador, conciliado)
     ");
 
     garantirIndiceConciliacaoExtratos($pdo, 'armazem_bnc001', 'idx_bnc001_conta_data', "
@@ -170,6 +229,162 @@ function queryConciliacaoExtratos(array $extra = []): string
     }
 
     return http_build_query($params);
+}
+
+function empresasParaRegraExtrato(PDO $pdo): array
+{
+    return $pdo->query("
+        SELECT id, COALESCE(NULLIF(nome_fantasia, ''), NULLIF(razao_social, ''), CONCAT('Empresa ', id)) AS nome
+        FROM empresas
+        ORDER BY nome
+    ")->fetchAll(PDO::FETCH_ASSOC);
+}
+
+function contasParaRegraExtrato(PDO $pdo): array
+{
+    return $pdo->query("
+        SELECT
+            EMPRESA,
+            CBCONTADOR,
+            TRIM(COALESCE(NULLIF(TITULAR, ''), NULLIF(DESCABREV, ''), CONCAT('Conta ', CBCONTADOR))) AS nome_conta
+        FROM armazem_bnc002
+        WHERE COALESCE(excluido_firebird, 'N') <> 'S'
+          AND COALESCE(CONTABLOQUEADA, 'N') <> 'S'
+        ORDER BY EMPRESA, nome_conta, CBCONTADOR
+    ")->fetchAll(PDO::FETCH_ASSOC);
+}
+
+function buscarRegraContaExtrato(PDO $pdo, int $empresaId, int $cbcontador): ?array
+{
+    if ($empresaId <= 0 || $cbcontador <= 0) {
+        return null;
+    }
+
+    $stmt = $pdo->prepare("
+        SELECT
+            r.*,
+            COALESCE(NULLIF(e.nome_fantasia, ''), NULLIF(e.razao_social, ''), CONCAT('Empresa ', e.id)) AS nome_empresa_dona,
+            TRIM(COALESCE(NULLIF(c.TITULAR, ''), NULLIF(c.DESCABREV, ''), CONCAT('Conta ', r.cbcontador_dona_extrato))) AS nome_conta_dona
+        FROM financeiro_contas_extrato_regras r
+        LEFT JOIN empresas e ON e.id = r.empresa_dona_extrato
+        LEFT JOIN armazem_bnc002 c ON c.EMPRESA = r.empresa_dona_extrato AND c.CBCONTADOR = r.cbcontador_dona_extrato
+        WHERE r.empresa_id = ?
+          AND r.cbcontador = ?
+        LIMIT 1
+    ");
+    $stmt->execute([$empresaId, $cbcontador]);
+    $regra = $stmt->fetch(PDO::FETCH_ASSOC);
+
+    return $regra ?: null;
+}
+
+function listarRegrasContaExtrato(PDO $pdo, int $empresaDonaExtrato, int $cbcontadorDonaExtrato): array
+{
+    if ($empresaDonaExtrato <= 0 || $cbcontadorDonaExtrato <= 0) {
+        return [];
+    }
+
+    $stmt = $pdo->prepare("
+        SELECT
+            r.*,
+            COALESCE(NULLIF(e1.nome_fantasia, ''), NULLIF(e1.razao_social, ''), CONCAT('Empresa ', e1.id)) AS nome_empresa,
+            COALESCE(NULLIF(e2.nome_fantasia, ''), NULLIF(e2.razao_social, ''), CONCAT('Empresa ', e2.id)) AS nome_empresa_dona,
+            TRIM(COALESCE(NULLIF(c1.TITULAR, ''), NULLIF(c1.DESCABREV, ''), CONCAT('Conta ', r.cbcontador))) AS nome_conta,
+            TRIM(COALESCE(NULLIF(c2.TITULAR, ''), NULLIF(c2.DESCABREV, ''), CONCAT('Conta ', r.cbcontador_dona_extrato))) AS nome_conta_dona
+        FROM financeiro_contas_extrato_regras r
+        LEFT JOIN empresas e1 ON e1.id = r.empresa_id
+        LEFT JOIN empresas e2 ON e2.id = r.empresa_dona_extrato
+        LEFT JOIN armazem_bnc002 c1 ON c1.EMPRESA = r.empresa_id AND c1.CBCONTADOR = r.cbcontador
+        LEFT JOIN armazem_bnc002 c2 ON c2.EMPRESA = r.empresa_dona_extrato AND c2.CBCONTADOR = r.cbcontador_dona_extrato
+        WHERE r.empresa_dona_extrato = ?
+          AND r.cbcontador_dona_extrato = ?
+        ORDER BY nome_empresa
+    ");
+    $stmt->execute([$empresaDonaExtrato, $cbcontadorDonaExtrato]);
+
+    return $stmt->fetchAll(PDO::FETCH_ASSOC);
+}
+
+function conflitoDonoContaExtrato(PDO $pdo, int $empresaId, int $cbcontador): ?string
+{
+    if ($empresaId <= 0 || $cbcontador <= 0) {
+        return null;
+    }
+
+    $regraUsuario = buscarRegraContaExtrato($pdo, $empresaId, $cbcontador);
+    if ($regraUsuario
+        && ((int)$regraUsuario['empresa_dona_extrato'] !== $empresaId || (int)$regraUsuario['cbcontador_dona_extrato'] !== $cbcontador)
+    ) {
+        return 'Esta conta ja esta configurada para usar o extrato da ' .
+            (string)($regraUsuario['nome_empresa_dona'] ?? ('empresa ' . (int)$regraUsuario['empresa_dona_extrato'])) .
+            ' / conta ' . (int)$regraUsuario['cbcontador_dona_extrato'] . '.';
+    }
+
+    $stmtExtratoProprio = $pdo->prepare("
+        SELECT COUNT(*)
+        FROM financeiro_extrato_bancario
+        WHERE empresa_id = ?
+          AND cbcontador = ?
+    ");
+    $stmtExtratoProprio->execute([$empresaId, $cbcontador]);
+    if ((int)$stmtExtratoProprio->fetchColumn() > 0) {
+        return null;
+    }
+
+    $stmtExtratoOutraEmpresa = $pdo->prepare("
+        SELECT
+            e.empresa_id,
+            COUNT(*) AS qtd,
+            COALESCE(NULLIF(emp.nome_fantasia, ''), NULLIF(emp.razao_social, ''), CONCAT('Empresa ', emp.id)) AS nome_empresa
+        FROM financeiro_extrato_bancario e
+        LEFT JOIN empresas emp ON emp.id = e.empresa_id
+        WHERE e.cbcontador = ?
+          AND e.empresa_id <> ?
+        GROUP BY e.empresa_id, nome_empresa
+        ORDER BY qtd DESC
+        LIMIT 1
+    ");
+    $stmtExtratoOutraEmpresa->execute([$cbcontador, $empresaId]);
+    $extratoOutraEmpresa = $stmtExtratoOutraEmpresa->fetch(PDO::FETCH_ASSOC);
+
+    if ($extratoOutraEmpresa) {
+        return 'Ja existem extratos importados desta conta na ' .
+            (string)$extratoOutraEmpresa['nome_empresa'] .
+            '. A regra deve ser administrada pela empresa dona do extrato.';
+    }
+
+    return null;
+}
+
+function validarImportacaoContaExtrato(PDO $pdo, int $empresaId, int $cbcontador): void
+{
+    $regra = buscarRegraContaExtrato($pdo, $empresaId, $cbcontador);
+    if (!$regra) {
+        $conflitoDono = conflitoDonoContaExtrato($pdo, $empresaId, $cbcontador);
+        if ($conflitoDono !== null) {
+            throw new RuntimeException($conflitoDono);
+        }
+
+        return;
+    }
+
+    if (($regra['permitir_importacao'] ?? 'N') === 'S') {
+        return;
+    }
+
+    if ((int)$regra['empresa_dona_extrato'] === $empresaId && (int)$regra['cbcontador_dona_extrato'] === $cbcontador) {
+        return;
+    }
+
+    $nomeDona = trim((string)($regra['nome_empresa_dona'] ?? ''));
+    if ($nomeDona === '') {
+        $nomeDona = 'empresa ' . (int)$regra['empresa_dona_extrato'];
+    }
+
+    throw new RuntimeException(
+        'Esta conta esta configurada para usar o extrato da ' . $nomeDona .
+        '. Importe por essa empresa para evitar duplicidade entre empresas.'
+    );
 }
 
 function normalizarTextoExtrato($valor): string
@@ -507,6 +722,8 @@ function importarLinhasExtratoBanco(PDO $pdo, int $empresaId, int $usuarioId, in
         throw new RuntimeException('Selecione a conta antes de importar o extrato.');
     }
 
+    validarImportacaoContaExtrato($pdo, $empresaId, $cbcontador);
+
     $stmtImp = $pdo->prepare("
         INSERT INTO financeiro_extratos_importacoes
             (empresa_id, cbcontador, nome_arquivo, arquivo_salvo, formato, total_linhas, usuario_id)
@@ -683,7 +900,7 @@ function importarLinhasExtratoBanco(PDO $pdo, int $empresaId, int $usuarioId, in
     ];
 }
 
-function conciliarExtratoComMovimento(PDO $pdo, int $empresaId, int $usuarioId, int $extratoId, int $movcontador, string $tipoMatch = 'manual'): int
+function conciliarExtratoComMovimento(PDO $pdo, int $empresaId, int $empresaExtratoId, int $cbcontadorSistema, int $usuarioId, int $extratoId, int $movcontador, string $tipoMatch = 'manual'): int
 {
     if ($extratoId <= 0 || $movcontador <= 0) {
         throw new RuntimeException('Informe um match valido para conciliar.');
@@ -696,7 +913,7 @@ function conciliarExtratoComMovimento(PDO $pdo, int $empresaId, int $usuarioId, 
           AND empresa_id = ?
         FOR UPDATE
     ");
-    $stmtExtratoManual->execute([$extratoId, $empresaId]);
+    $stmtExtratoManual->execute([$extratoId, $empresaExtratoId]);
     $extratoManual = $stmtExtratoManual->fetch(PDO::FETCH_ASSOC);
 
     $stmtMovManual = $pdo->prepare("
@@ -718,8 +935,8 @@ function conciliarExtratoComMovimento(PDO $pdo, int $empresaId, int $usuarioId, 
         return 0;
     }
 
-    if ((int)$extratoManual['cbcontador'] !== (int)$movManual['CBCONTADOR']) {
-        throw new RuntimeException('A conta bancaria do extrato e do sistema nao confere.');
+    if ($cbcontadorSistema > 0 && (int)$movManual['CBCONTADOR'] !== $cbcontadorSistema) {
+        throw new RuntimeException('A conta bancaria do sistema nao confere com a conta selecionada.');
     }
 
     if ((string)$extratoManual['tipo'] !== (string)$movManual['TIPOMOV']) {
@@ -733,12 +950,11 @@ function conciliarExtratoComMovimento(PDO $pdo, int $empresaId, int $usuarioId, 
     $stmtMovJaConciliado = $pdo->prepare("
         SELECT COUNT(*)
         FROM financeiro_extrato_bancario
-        WHERE empresa_id = ?
-          AND cbcontador = ?
+        WHERE bnc001_empresa = ?
           AND bnc001_movcontador = ?
           AND conciliado = 'S'
     ");
-    $stmtMovJaConciliado->execute([$empresaId, (int)$movManual['CBCONTADOR'], $movcontador]);
+    $stmtMovJaConciliado->execute([$empresaId, $movcontador]);
 
     if ((int)$stmtMovJaConciliado->fetchColumn() > 0) {
         throw new RuntimeException('Este lancamento do sistema ja esta conciliado com outro extrato.');
@@ -747,13 +963,14 @@ function conciliarExtratoComMovimento(PDO $pdo, int $empresaId, int $usuarioId, 
     $stmtUpdateManual = $pdo->prepare("
         UPDATE financeiro_extrato_bancario
         SET conciliado = 'S',
+            bnc001_empresa = ?,
             bnc001_movcontador = ?
         WHERE id = ?
           AND empresa_id = ?
           AND conciliado = 'N'
           AND bnc001_movcontador IS NULL
     ");
-    $stmtUpdateManual->execute([$movcontador, $extratoId, $empresaId]);
+    $stmtUpdateManual->execute([$empresaId, $movcontador, $extratoId, $empresaExtratoId]);
 
     if ($stmtUpdateManual->rowCount() <= 0) {
         return 0;
@@ -822,6 +1039,9 @@ $diasJanelaMatchManual = 15;
 $dataIniSugestaoSql = $dataIni !== '' ? date('Y-m-d 00:00:00', strtotime($dataIni . " -{$diasJanelaMatchManual} days")) : '';
 $dataFimSugestaoSql = $dataFim !== '' ? date('Y-m-d 00:00:00', strtotime($dataFim . " +{$diasJanelaMatchManual} days")) : '';
 $configInterExtrato = buscarConfigInterExtrato($pdo_master, $empresaId) ?: [];
+$regraContaSelecionada = $cbcontador > 0 ? buscarRegraContaExtrato($pdo_master, $empresaId, $cbcontador) : null;
+$empresaExtratoId = $cbcontador > 0 && $regraContaSelecionada ? (int)$regraContaSelecionada['empresa_dona_extrato'] : $empresaId;
+$cbcontadorExtrato = $cbcontador > 0 && $regraContaSelecionada ? (int)$regraContaSelecionada['cbcontador_dona_extrato'] : $cbcontador;
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['acao'] ?? '') === 'salvar_inter_extrato') {
     $certPath = trim((string)($_POST['cert_path'] ?? ($configInterExtrato['cert_path'] ?? '')));
@@ -863,6 +1083,97 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['acao'] ?? '') === 'salvar_
     }
 }
 
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['acao'] ?? '') === 'salvar_regra_conta_extrato') {
+    try {
+        if (!$usuarioMaster) {
+            throw new RuntimeException('Somente usuario MASTER pode alterar a regra de importacao da conta.');
+        }
+
+        $cbcontadorRegra = (int)($_POST['cbcontador_regra'] ?? 0);
+        $empresaRegraExtrato = (int)($_POST['empresa_regra_extrato'] ?? $empresaId);
+        $cbcontadorDonaExtrato = (int)($_POST['cbcontador_dona_extrato'] ?? 0);
+        $empresaDonaExtrato = $empresaId;
+        $permitirImportacao = ($_POST['permitir_importacao'] ?? 'N') === 'S' ? 'S' : 'N';
+        $observacaoRegra = trim((string)($_POST['observacao_regra'] ?? ''));
+
+        if ($cbcontadorRegra <= 0) {
+            throw new RuntimeException('Selecione a conta para configurar a regra de importacao.');
+        }
+        if ($empresaRegraExtrato <= 0) {
+            throw new RuntimeException('Selecione a empresa que vai conciliar esta conta.');
+        }
+        if ($cbcontadorDonaExtrato <= 0) {
+            throw new RuntimeException('Selecione a conta dona do extrato.');
+        }
+
+        $conflitoDono = conflitoDonoContaExtrato($pdo_master, $empresaId, $cbcontadorDonaExtrato);
+        if ($conflitoDono !== null) {
+            throw new RuntimeException($conflitoDono);
+        }
+
+        $stmtContaDona = $pdo_master->prepare("
+            SELECT COUNT(*)
+            FROM armazem_bnc002
+            WHERE EMPRESA = ?
+              AND CBCONTADOR = ?
+              AND COALESCE(excluido_firebird, 'N') <> 'S'
+              AND COALESCE(CONTABLOQUEADA, 'N') <> 'S'
+        ");
+        $stmtContaDona->execute([$empresaId, $cbcontadorDonaExtrato]);
+        if ((int)$stmtContaDona->fetchColumn() === 0) {
+            throw new RuntimeException('A conta dona informada nao pertence a empresa logada.');
+        }
+
+        $stmtContaAutorizada = $pdo_master->prepare("
+            SELECT COUNT(*)
+            FROM armazem_bnc002
+            WHERE EMPRESA = ?
+              AND CBCONTADOR = ?
+              AND COALESCE(excluido_firebird, 'N') <> 'S'
+              AND COALESCE(CONTABLOQUEADA, 'N') <> 'S'
+        ");
+        $stmtContaAutorizada->execute([$empresaRegraExtrato, $cbcontadorRegra]);
+        if ((int)$stmtContaAutorizada->fetchColumn() === 0) {
+            throw new RuntimeException('A conta autorizada nao pertence a empresa selecionada.');
+        }
+
+        $stmtRegra = $pdo_master->prepare("
+            INSERT INTO financeiro_contas_extrato_regras
+                (empresa_id, cbcontador, empresa_dona_extrato, cbcontador_dona_extrato, permitir_importacao, observacao, usuario_id)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            ON DUPLICATE KEY UPDATE
+                empresa_dona_extrato = VALUES(empresa_dona_extrato),
+                cbcontador_dona_extrato = VALUES(cbcontador_dona_extrato),
+                permitir_importacao = VALUES(permitir_importacao),
+                observacao = VALUES(observacao),
+                usuario_id = VALUES(usuario_id),
+                atualizado_em = CURRENT_TIMESTAMP
+        ");
+        $stmtRegra->execute([
+            $empresaRegraExtrato,
+            $cbcontadorRegra,
+            $empresaDonaExtrato,
+            $cbcontadorDonaExtrato,
+            $permitirImportacao,
+            $observacaoRegra !== '' ? mb_substr($observacaoRegra, 0, 255) : null,
+            $usuarioId > 0 ? $usuarioId : null,
+        ]);
+
+        header('Location: conciliacao_extratos.php?' . http_build_query([
+            'cbcontador' => $cbcontadorDonaExtrato,
+            'data_ini' => $dataIni,
+            'data_fim' => $dataFim,
+            'dc' => $dcFiltro,
+            'historico' => $historicoFiltro,
+            'situacao' => $situacaoFiltro,
+            'ok_regra' => '1',
+        ]));
+        exit;
+    } catch (Throwable $e) {
+        $mensagemErro = 'Erro ao salvar regra da conta: ' . $e->getMessage();
+    }
+}
+
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['acao'] ?? '') === 'testar_inter_extrato') {
     try {
         $configTeste = buscarConfigInterExtrato($pdo_master, $empresaId);
@@ -891,6 +1202,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['acao'] ?? '') === 'consult
         if ((strtotime($dataFimPost) - strtotime($dataIniPost)) > 90 * 86400) {
             throw new RuntimeException('A API de extrato do Inter permite no maximo 90 dias por consulta.');
         }
+
+        validarImportacaoContaExtrato($pdo_master, $empresaId, $cbcontadorPost);
 
         $diagnosticoInterExtrato = [];
         $linhasInter = listarInterExtrato($pdo_master, $empresaId, $dataIniPost, $dataFimPost, $diagnosticoInterExtrato);
@@ -925,7 +1238,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['acao'] ?? '') === 'concili
 
     try {
         $pdo_master->beginTransaction();
-        conciliarExtratoComMovimento($pdo_master, $empresaId, $usuarioId, $extratoId, $movcontador, 'manual');
+        conciliarExtratoComMovimento($pdo_master, $empresaId, $empresaExtratoId, $cbcontador, $usuarioId, $extratoId, $movcontador, 'manual');
         $pdo_master->commit();
 
         header('Location: conciliacao_extratos.php?' . queryConciliacaoExtratos(['ok_match' => 'manual']));
@@ -960,6 +1273,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['acao'] ?? '') === 'concili
             $conciliadosLote += conciliarExtratoComMovimento(
                 $pdo_master,
                 $empresaId,
+                $empresaExtratoId,
+                $cbcontador,
                 $usuarioId,
                 $extratoIdLote,
                 $movcontadorLote,
@@ -1039,7 +1354,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['acao'] ?? '') === 'gerar_r
                 continue;
             }
 
-            $stmtExtratoRecebivel->execute([$extratoIdSelecionado, $empresaId]);
+            $stmtExtratoRecebivel->execute([$extratoIdSelecionado, $empresaExtratoId]);
             $extratoRecebivel = $stmtExtratoRecebivel->fetch(PDO::FETCH_ASSOC);
 
             if (!$extratoRecebivel || !empty($extratoRecebivel['recebimento_id'])) {
@@ -1082,7 +1397,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['acao'] ?? '') === 'gerar_r
 
             $recebimentoId = (int)$pdo_master->lastInsertId();
             if ($recebimentoId > 0) {
-                $stmtUpdateExtratoRecebivel->execute([$recebimentoId, $extratoIdSelecionado, $empresaId]);
+            $stmtUpdateExtratoRecebivel->execute([$recebimentoId, $extratoIdSelecionado, $empresaExtratoId]);
                 $gerados++;
             }
         }
@@ -1131,8 +1446,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['acao'] ?? '') === 'concili
                     COUNT(*) OVER (PARTITION BY b.MOVCONTADOR) AS qtd_sistema
                 FROM financeiro_extrato_bancario e
                 STRAIGHT_JOIN armazem_bnc001 b FORCE INDEX (idx_bnc001_match_extrato)
-                   ON b.EMPRESA = e.empresa_id
-                   AND b.CBCONTADOR = e.cbcontador
+                   ON b.EMPRESA = ?
+                   AND b.CBCONTADOR = ?
                    AND b.TIPOMOV = e.tipo
                    AND b.VALORMOV = e.valor
                    AND b.DTMOV >= DATE(e.data_movimento)
@@ -1148,8 +1463,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['acao'] ?? '') === 'concili
                   AND NOT EXISTS (
                       SELECT 1
                       FROM financeiro_extrato_bancario ex2
-                      WHERE ex2.empresa_id = b.EMPRESA
-                        AND ex2.cbcontador = b.CBCONTADOR
+                      WHERE ex2.bnc001_empresa = b.EMPRESA
                         AND ex2.bnc001_movcontador = b.MOVCONTADOR
                         AND ex2.conciliado = 'S'
                   )
@@ -1160,7 +1474,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['acao'] ?? '') === 'concili
               AND qtd_sistema = 1
             LIMIT 500
         ");
-        $stmtAuto->execute(array_merge([$empresaId, $cbcontador, $dataIniSql, $dataFimExclusivoSql], $paramsAutoFiltros));
+        $stmtAuto->execute(array_merge([$empresaId, $cbcontador, $empresaExtratoId, $cbcontadorExtrato, $dataIniSql, $dataFimExclusivoSql], $paramsAutoFiltros));
         $matchesAuto = $stmtAuto->fetchAll(PDO::FETCH_ASSOC);
 
         $pdo_master->beginTransaction();
@@ -1168,6 +1482,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['acao'] ?? '') === 'concili
         $stmtUpdateAuto = $pdo_master->prepare("
             UPDATE financeiro_extrato_bancario
             SET conciliado = 'S',
+                bnc001_empresa = ?,
                 bnc001_movcontador = ?
             WHERE id = ?
               AND empresa_id = ?
@@ -1187,7 +1502,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['acao'] ?? '') === 'concili
             $extratoAuto = (int)$matchAuto['extrato_id'];
             $contaAuto = (int)$matchAuto['cbcontador'];
 
-            $stmtUpdateAuto->execute([$movAuto, $extratoAuto, $empresaId, $contaAuto]);
+            $stmtUpdateAuto->execute([$empresaId, $movAuto, $extratoAuto, $empresaExtratoId, $contaAuto]);
             if ($stmtUpdateAuto->rowCount() > 0) {
                 $stmtLogAuto->execute([$empresaId, $contaAuto, $extratoAuto, $movAuto, $usuarioId]);
                 $conciliadosAuto++;
@@ -1214,6 +1529,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['acao'] ?? '') === 'importa
     } elseif (empty($_FILES['arquivo_extrato']['tmp_name']) || !is_uploaded_file($_FILES['arquivo_extrato']['tmp_name'])) {
         $mensagemErro = 'Selecione um arquivo de extrato.';
     } else {
+        try {
+            validarImportacaoContaExtrato($pdo_master, $empresaId, $cbcontadorPost);
+        } catch (Throwable $e) {
+            $mensagemErro = $e->getMessage();
+        }
+
+        if ($mensagemErro === '') {
         $nomeOriginal = basename((string)$_FILES['arquivo_extrato']['name']);
         $extensao = strtolower(pathinfo($nomeOriginal, PATHINFO_EXTENSION));
 
@@ -1413,11 +1735,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['acao'] ?? '') === 'importa
                 exit;
             }
         }
+        }
     }
 }
 
 if (($_GET['ok'] ?? '') === '1') {
     $mensagemOk = 'Extrato importado. Novos lancamentos: ' . (int)($_GET['importados'] ?? 0) . '. Duplicados ignorados: ' . (int)($_GET['duplicados'] ?? 0) . '.';
+}
+
+if (($_GET['ok_regra'] ?? '') === '1') {
+    $mensagemOk = 'Regra de importacao da conta salva com sucesso.';
 }
 
 if (($_GET['ok_match'] ?? '') === 'manual') {
@@ -1432,7 +1759,21 @@ if (($_GET['ok_recebiveis'] ?? '') === '1') {
     $mensagemOk = 'Recebiveis gerados a partir do extrato bancario: ' . (int)($_GET['qtd_recebiveis'] ?? 0) . '.';
 }
 
-$paramsExtrato = [$empresaId];
+$empresasExtrato = $usuarioMaster ? empresasParaRegraExtrato($pdo_master) : [];
+$contasRegraExtrato = $usuarioMaster ? contasParaRegraExtrato($pdo_master) : [];
+$regrasContaSelecionada = $usuarioMaster && $cbcontador > 0 ? listarRegrasContaExtrato($pdo_master, $empresaId, $cbcontador) : [];
+$conflitoDonoContaSelecionada = $usuarioMaster && $cbcontador > 0 ? conflitoDonoContaExtrato($pdo_master, $empresaId, $cbcontador) : null;
+$podeAdministrarRegraConta = $usuarioMaster && $cbcontador > 0 && $conflitoDonoContaSelecionada === null;
+$bloqueioImportacaoConta = null;
+if ($cbcontador > 0) {
+    try {
+        validarImportacaoContaExtrato($pdo_master, $empresaId, $cbcontador);
+    } catch (Throwable $e) {
+        $bloqueioImportacaoConta = $e->getMessage();
+    }
+}
+
+$paramsExtrato = [$empresaExtratoId];
 $whereExtrato = ['e.empresa_id = ?'];
 
 if ($situacaoFiltro === 'pendentes') {
@@ -1443,7 +1784,7 @@ if ($situacaoFiltro === 'pendentes') {
 
 if ($cbcontador > 0) {
     $whereExtrato[] = 'e.cbcontador = ?';
-    $paramsExtrato[] = $cbcontador;
+    $paramsExtrato[] = $cbcontadorExtrato;
 }
 if ($dataIni !== '') {
     $whereExtrato[] = 'e.data_movimento >= ?';
@@ -1482,8 +1823,7 @@ $stmtExtrato = $pdo_master->prepare("
           AND TRIM(COALESCE(CLASSIFICACAO, '')) IN ('1', '2')
     ) c ON c.CBCONTADOR = e.cbcontador
     LEFT JOIN armazem_bnc001 b
-      ON b.EMPRESA = e.empresa_id
-     AND b.CBCONTADOR = e.cbcontador
+      ON b.EMPRESA = COALESCE(e.bnc001_empresa, e.empresa_id)
      AND b.MOVCONTADOR = e.bnc001_movcontador
     WHERE {$whereExtratoSql}
     ORDER BY e.data_movimento DESC, e.id DESC
@@ -1542,8 +1882,7 @@ $stmtBnc = $pdo_master->prepare("
       AND NOT EXISTS (
           SELECT 1
           FROM financeiro_extrato_bancario e
-          WHERE e.empresa_id = b.EMPRESA
-            AND e.cbcontador = b.CBCONTADOR
+          WHERE e.bnc001_empresa = b.EMPRESA
             AND e.bnc001_movcontador = b.MOVCONTADOR
             AND e.conciliado = 'S'
       )
@@ -1586,8 +1925,8 @@ if ($situacaoFiltro !== 'conciliados' && $cbcontador > 0 && $dataIni !== '' && $
                 COUNT(*) OVER (PARTITION BY b.MOVCONTADOR) AS qtd_por_sistema
             FROM financeiro_extrato_bancario e
             STRAIGHT_JOIN armazem_bnc001 b FORCE INDEX (idx_bnc001_match_extrato)
-                ON b.EMPRESA = e.empresa_id
-               AND b.CBCONTADOR = e.cbcontador
+                ON b.EMPRESA = ?
+               AND b.CBCONTADOR = ?
                AND b.VALORMOV = e.valor
                AND b.TIPOMOV = e.tipo
                AND b.DTMOV >= DATE_SUB(e.data_movimento, INTERVAL {$diasJanelaMatchManual} DAY)
@@ -1605,8 +1944,7 @@ if ($situacaoFiltro !== 'conciliados' && $cbcontador > 0 && $dataIni !== '' && $
               AND NOT EXISTS (
                   SELECT 1
                   FROM financeiro_extrato_bancario ex2
-                  WHERE ex2.empresa_id = b.EMPRESA
-                    AND ex2.cbcontador = b.CBCONTADOR
+                  WHERE ex2.bnc001_empresa = b.EMPRESA
                     AND ex2.bnc001_movcontador = b.MOVCONTADOR
                     AND ex2.conciliado = 'S'
               )
@@ -1623,7 +1961,7 @@ if ($situacaoFiltro !== 'conciliados' && $cbcontador > 0 && $dataIni !== '' && $
         ORDER BY tipo_sugestao ASC, dias_diferenca ASC, data_extrato DESC
         LIMIT 100
     ");
-    $stmtSug->execute(array_merge([$dataIniSugestaoSql, $dataFimSugestaoSql, $empresaId, $cbcontador, $dataIniSql, $dataFimExclusivoSql], $paramsSugestoesFiltros));
+    $stmtSug->execute(array_merge([$empresaId, $cbcontador, $dataIniSugestaoSql, $dataFimSugestaoSql, $empresaExtratoId, $cbcontadorExtrato, $dataIniSql, $dataFimExclusivoSql], $paramsSugestoesFiltros));
     $sugestoes = $stmtSug->fetchAll(PDO::FETCH_ASSOC);
 }
 
@@ -1745,6 +2083,17 @@ require '../../layout/header.php';
 <?php if ($mensagemErro): ?>
     <div class="alert alert-danger"><?= htmlspecialchars($mensagemErro) ?></div>
 <?php endif; ?>
+<?php if ($cbcontador > 0 && $empresaExtratoId !== $empresaId && $regraContaSelecionada): ?>
+    <div class="alert alert-info">
+        Esta conta esta compartilhada. A tela esta conciliando os lancamentos da empresa logada com o extrato importado pela
+        <strong><?= htmlspecialchars((string)$regraContaSelecionada['nome_empresa_dona']) ?></strong>.
+    </div>
+<?php endif; ?>
+<?php if ($bloqueioImportacaoConta !== null): ?>
+    <div class="alert alert-warning">
+        Importacao bloqueada para esta empresa/conta: <?= htmlspecialchars($bloqueioImportacaoConta) ?>
+    </div>
+<?php endif; ?>
 
 <section class="mb-4">
     <div class="bg-white border rounded-2 shadow-sm p-3">
@@ -1817,11 +2166,148 @@ require '../../layout/header.php';
                 <div class="form-text">CSV generico: colunas data, historico, documento, valor e tipo. OFX usa os campos padrao do extrato.</div>
             </div>
             <div class="col-lg-3">
-                <button type="submit" class="btn btn-success w-100">Importar</button>
+                <button type="submit" class="btn btn-success w-100" <?= $bloqueioImportacaoConta !== null ? 'disabled' : '' ?>>Importar</button>
             </div>
         </form>
     </div>
 </section>
+
+<?php if ($usuarioMaster && $cbcontador > 0 && !$podeAdministrarRegraConta && $conflitoDonoContaSelecionada !== null): ?>
+    <div class="alert alert-warning">
+        Regra de conta compartilhada: <?= htmlspecialchars($conflitoDonoContaSelecionada) ?>
+    </div>
+<?php endif; ?>
+
+<?php if ($podeAdministrarRegraConta): ?>
+<section class="mb-4">
+    <div class="bg-white border rounded-2 shadow-sm p-3">
+        <div class="d-flex flex-column flex-lg-row justify-content-between gap-2 mb-3">
+            <div>
+                <h2 class="h6 fw-bold mb-1">Regra de conta compartilhada</h2>
+                <div class="text-muted small">Configure, pela empresa dona, quais empresas e contas podem conciliar usando este extrato importado.</div>
+            </div>
+            <?php if ($regraContaSelecionada): ?>
+                <span class="badge text-bg-info align-self-lg-start">
+                    Usando extrato: <?= htmlspecialchars((string)$regraContaSelecionada['nome_empresa_dona']) ?> /
+                    <?= (int)$regraContaSelecionada['cbcontador_dona_extrato'] ?> - <?= htmlspecialchars((string)$regraContaSelecionada['nome_conta_dona']) ?>
+                </span>
+            <?php endif; ?>
+        </div>
+
+        <form method="POST" class="row g-3 align-items-end">
+            <input type="hidden" name="acao" value="salvar_regra_conta_extrato">
+            <div class="col-lg-3">
+                <label class="form-label">Conta dona do extrato</label>
+                <select name="cbcontador_dona_extrato" class="form-select" required>
+                    <option value="">Selecione</option>
+                    <?php foreach ($contas as $conta): ?>
+                        <?php $contaNumero = (int)$conta['CBCONTADOR']; ?>
+                        <option value="<?= $contaNumero ?>" <?= $cbcontador === $contaNumero ? 'selected' : '' ?>>
+                            <?= $contaNumero ?> - <?= htmlspecialchars($conta['nome_conta']) ?>
+                        </option>
+                    <?php endforeach; ?>
+                </select>
+                <div class="form-text">Somente a empresa logada cadastra as regras das contas dela.</div>
+            </div>
+            <div class="col-lg-3">
+                <label class="form-label">Empresa autorizada</label>
+                <select name="empresa_regra_extrato" class="form-select" required>
+                    <?php foreach ($empresasExtrato as $empresaExtrato): ?>
+                        <option value="<?= (int)$empresaExtrato['id'] ?>" <?= $empresaId === (int)$empresaExtrato['id'] ? 'selected' : '' ?>>
+                            <?= htmlspecialchars((string)$empresaExtrato['nome']) ?>
+                        </option>
+                    <?php endforeach; ?>
+                </select>
+            </div>
+            <div class="col-lg-3">
+                <label class="form-label">Conta da empresa autorizada</label>
+                <select name="cbcontador_regra" class="form-select" required>
+                    <option value="">Selecione</option>
+                    <?php foreach ($contasRegraExtrato as $contaRegra): ?>
+                        <option value="<?= (int)$contaRegra['CBCONTADOR'] ?>" data-empresa="<?= (int)$contaRegra['EMPRESA'] ?>" <?= ((int)$contaRegra['EMPRESA'] === $empresaId && $cbcontador === (int)$contaRegra['CBCONTADOR']) ? 'selected' : '' ?>>
+                            Empresa <?= (int)$contaRegra['EMPRESA'] ?> - <?= (int)$contaRegra['CBCONTADOR'] ?> - <?= htmlspecialchars((string)$contaRegra['nome_conta']) ?>
+                        </option>
+                    <?php endforeach; ?>
+                </select>
+            </div>
+            <div class="col-md-4 col-lg-3">
+                <label class="form-label">Empresa autorizada pode importar?</label>
+                <select name="permitir_importacao" class="form-select">
+                    <option value="N" <?= (($regraContaSelecionada['permitir_importacao'] ?? 'N') !== 'S') ? 'selected' : '' ?>>Nao</option>
+                    <option value="S" <?= (($regraContaSelecionada['permitir_importacao'] ?? 'N') === 'S') ? 'selected' : '' ?>>Sim</option>
+                </select>
+            </div>
+            <div class="col-lg-9">
+                <label class="form-label">Observacao</label>
+                <input type="text" name="observacao_regra" class="form-control" maxlength="255" value="<?= htmlspecialchars((string)($regraContaSelecionada['observacao'] ?? '')) ?>" placeholder="Opcional">
+            </div>
+            <div class="col-12">
+                <button type="submit" class="btn btn-outline-primary">Salvar regra da conta</button>
+            </div>
+        </form>
+
+        <?php if (!empty($regrasContaSelecionada)): ?>
+            <div class="table-responsive mt-3">
+                <table class="table table-sm align-middle mb-0">
+                    <thead class="table-light">
+                        <tr>
+                            <th>Empresa autorizada</th>
+                            <th>Conta autorizada</th>
+                            <th>Conta dona do extrato</th>
+                            <th>Pode importar</th>
+                            <th>Observacao</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <?php foreach ($regrasContaSelecionada as $regraConta): ?>
+                            <tr>
+                                <td><?= htmlspecialchars((string)$regraConta['nome_empresa']) ?></td>
+                                <td><?= (int)$regraConta['cbcontador'] ?> - <?= htmlspecialchars((string)$regraConta['nome_conta']) ?></td>
+                                <td><?= (int)$regraConta['cbcontador_dona_extrato'] ?> - <?= htmlspecialchars((string)$regraConta['nome_conta_dona']) ?></td>
+                                <td><?= ($regraConta['permitir_importacao'] ?? 'N') === 'S' ? 'Sim' : 'Nao' ?></td>
+                                <td><?= htmlspecialchars((string)($regraConta['observacao'] ?? '')) ?></td>
+                            </tr>
+                        <?php endforeach; ?>
+                    </tbody>
+                </table>
+            </div>
+        <?php endif; ?>
+    </div>
+</section>
+<script>
+document.addEventListener('DOMContentLoaded', function () {
+    var empresaSelect = document.querySelector('select[name="empresa_regra_extrato"]');
+    var contaSelect = document.querySelector('select[name="cbcontador_regra"]');
+    if (!empresaSelect || !contaSelect) {
+        return;
+    }
+
+    function filtrarContasAutorizadas() {
+        var empresa = empresaSelect.value;
+        var primeiraVisivel = '';
+        Array.prototype.forEach.call(contaSelect.options, function (option) {
+            if (!option.value) {
+                option.hidden = false;
+                return;
+            }
+            var visivel = option.getAttribute('data-empresa') === empresa;
+            option.hidden = !visivel;
+            if (visivel && primeiraVisivel === '') {
+                primeiraVisivel = option.value;
+            }
+        });
+
+        var selecionada = contaSelect.options[contaSelect.selectedIndex];
+        if (selecionada && selecionada.hidden) {
+            contaSelect.value = primeiraVisivel;
+        }
+    }
+
+    empresaSelect.addEventListener('change', filtrarContasAutorizadas);
+    filtrarContasAutorizadas();
+});
+</script>
+<?php endif; ?>
 
 <section class="mb-4">
     <div class="bg-white border rounded-2 shadow-sm p-3">
@@ -1917,7 +2403,7 @@ require '../../layout/header.php';
                 <input type="date" name="data_fim" class="form-control" value="<?= htmlspecialchars($dataFim) ?>" required>
             </div>
             <div class="col-md-6 col-lg-4">
-                <button type="submit" class="btn btn-success w-100" onclick="return confirm('Consultar o extrato no Inter e gravar novos lancamentos?')">
+                <button type="submit" class="btn btn-success w-100" <?= $bloqueioImportacaoConta !== null ? 'disabled' : '' ?> onclick="return confirm('Consultar o extrato no Inter e gravar novos lancamentos?')">
                     Consultar e importar pela API
                 </button>
             </div>

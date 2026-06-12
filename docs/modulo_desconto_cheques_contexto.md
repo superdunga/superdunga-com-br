@@ -120,18 +120,34 @@ O prazo da operacao deve considerar:
 
 - data de referencia;
 - data de vencimento do documento;
-- 2 dias de compensacao;
-- ajuste para proximo dia util quando a data final cair em sabado, domingo ou feriado cadastrado.
+- 2 dias uteis de compensacao apos o vencimento;
+- data final no proximo dia util apos a compensacao.
 
 Esse prazo final ajustado deve ser usado para definir a faixa da tabela de adicional de prazo.
 
-Exemplo:
+Regra operacional:
+
+1. Comecar pela data de vencimento do documento.
+2. Avancar no calendario contando somente dias uteis ate completar 2 dias uteis de compensacao.
+3. Depois desses 2 dias uteis, usar o proximo dia util como data de compensacao efetiva.
+4. Calcular o prazo em dias corridos entre a data de referencia da operacao e a data de compensacao efetiva.
+
+Exemplo 1:
+
+- vencimento: 10/07/2026, sexta-feira;
+- 11/07/2026 e 12/07/2026: fim de semana, nao contam;
+- 13/07/2026, segunda-feira: 1o dia util de compensacao;
+- 14/07/2026, terca-feira: 2o dia util de compensacao;
+- data efetiva da compensacao: 15/07/2026, quarta-feira.
+
+Exemplo 2:
 
 - vencimento: 03/09/2026, quinta-feira;
-- adiciona 2 dias de compensacao: 05/09/2026, sabado;
-- 06/09/2026 e domingo;
-- 07/09/2026 e feriado nacional;
-- proximo dia util: 08/09/2026.
+- 04/09/2026, sexta-feira: 1o dia util de compensacao;
+- 05/09/2026 e 06/09/2026: fim de semana, nao contam;
+- 07/09/2026: feriado nacional, nao conta;
+- 08/09/2026, terca-feira: 2o dia util de compensacao;
+- data efetiva da compensacao: 09/09/2026, quarta-feira.
 
 Feriados nacionais fixos carregados automaticamente na tela de feriados:
 

@@ -30,6 +30,7 @@ function sistemaModulosPadrao(): array
         ['codigo' => 'financeiro', 'grupo' => 'Financeiro', 'nome' => 'Financeiro', 'url' => 'modulos/financeiro/menu_financeiro.php', 'ordem' => 260],
         ['codigo' => 'financeiro_contas_receber', 'grupo' => 'Financeiro', 'nome' => 'Contas a Receber - Clientes', 'url' => 'modulos/financeiro/contas_receber_clientes.php', 'ordem' => 270],
         ['codigo' => 'financeiro_conciliacao_extratos', 'grupo' => 'Financeiro', 'nome' => 'Conciliacao de Extratos', 'url' => 'modulos/financeiro/conciliacao_extratos.php', 'ordem' => 285],
+        ['codigo' => 'financeiro_cartao_credito', 'grupo' => 'Financeiro', 'nome' => 'Cartao de Credito', 'url' => 'modulos/financeiro/cartao_credito.php', 'ordem' => 286, 'somente_master' => true],
 
         ['codigo' => 'estoque', 'grupo' => 'Estoque', 'nome' => 'Estoque', 'url' => 'modulos/estoque/menu_estoque.php', 'ordem' => 290],
         ['codigo' => 'estoque_posicao', 'grupo' => 'Estoque', 'nome' => 'Posicao de Estoque', 'url' => 'modulos/estoque/posicao_estoque.php', 'ordem' => 300],
@@ -54,6 +55,11 @@ function sistemaModulosPadrao(): array
         ['codigo' => 'desconto_cheques_clientes', 'grupo' => 'Desconto de Cheques', 'nome' => 'Clientes', 'url' => 'modulos/desconto_cheques/clientes.php', 'ordem' => 319, 'somente_master' => true],
         ['codigo' => 'desconto_cheques_operacoes', 'grupo' => 'Desconto de Cheques', 'nome' => 'Operacoes', 'url' => 'modulos/desconto_cheques/operacoes.php', 'ordem' => 320, 'somente_master' => true],
         ['codigo' => 'desconto_cheques_feriados', 'grupo' => 'Desconto de Cheques', 'nome' => 'Feriados', 'url' => 'modulos/desconto_cheques/feriados.php', 'ordem' => 321, 'somente_master' => true],
+
+        ['codigo' => 'movimentacao_baixa', 'grupo' => 'Movimentacao/Baixa', 'nome' => 'Movimentacao/Baixa', 'url' => 'modulos/movimentacao_baixa/menu_movimentacao_baixa.php', 'ordem' => 322, 'somente_master' => true],
+        ['codigo' => 'movimentacao_baixa_caixa_banco', 'grupo' => 'Movimentacao/Baixa', 'nome' => 'Caixa/Banco', 'url' => 'modulos/movimentacao_baixa/caixa_banco.php', 'ordem' => 323, 'somente_master' => true],
+        ['codigo' => 'movimentacao_baixa_contas_pagar', 'grupo' => 'Movimentacao/Baixa', 'nome' => 'Contas a Pagar', 'url' => 'modulos/movimentacao_baixa/contas_pagar.php', 'ordem' => 324, 'somente_master' => true],
+        ['codigo' => 'movimentacao_baixa_contas_receber', 'grupo' => 'Movimentacao/Baixa', 'nome' => 'Contas a Receber', 'url' => 'modulos/movimentacao_baixa/contas_receber.php', 'ordem' => 325, 'somente_master' => true],
 
         ['codigo' => 'whatsapp', 'grupo' => 'Administracao', 'nome' => 'Mensagens WhatsApp', 'url' => 'modulos/whatsapp/index.php', 'ordem' => 310],
         ['codigo' => 'usuarios', 'grupo' => 'Administracao', 'nome' => 'Gerenciar Usuarios', 'url' => 'modulos/usuarios/listar.php', 'ordem' => 320],
