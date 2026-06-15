@@ -1805,6 +1805,16 @@ if ($historicoFiltro !== '') {
 
 $whereExtratoSql = implode(' AND ', $whereExtrato);
 
+$stmtTotalExtrato = $pdo_master->prepare("
+    SELECT
+        COUNT(*) AS qtd,
+        COALESCE(SUM(e.valor), 0) AS total
+    FROM financeiro_extrato_bancario e
+    WHERE {$whereExtratoSql}
+");
+$stmtTotalExtrato->execute($paramsExtrato);
+$totalExtratoFiltrado = $stmtTotalExtrato->fetch(PDO::FETCH_ASSOC) ?: ['qtd' => 0, 'total' => 0];
+
 $stmtExtrato = $pdo_master->prepare("
     SELECT
         e.*,
@@ -1858,6 +1868,23 @@ if ($historicoFiltro !== '') {
     $paramsBnc[] = '%' . $historicoFiltro . '%';
 }
 $whereBncSql = implode(' AND ', $whereBnc);
+
+$stmtTotalBnc = $pdo_master->prepare("
+    SELECT
+        COUNT(*) AS qtd,
+        COALESCE(SUM(b.VALORMOV), 0) AS total
+    FROM armazem_bnc001 b
+    WHERE {$whereBncSql}
+      AND NOT EXISTS (
+          SELECT 1
+          FROM financeiro_extrato_bancario e
+          WHERE e.bnc001_empresa = b.EMPRESA
+            AND e.bnc001_movcontador = b.MOVCONTADOR
+            AND e.conciliado = 'S'
+      )
+");
+$stmtTotalBnc->execute($paramsBnc);
+$totalBncFiltrado = $stmtTotalBnc->fetch(PDO::FETCH_ASSOC) ?: ['qtd' => 0, 'total' => 0];
 
 $stmtBnc = $pdo_master->prepare("
     SELECT
@@ -2415,14 +2442,20 @@ document.addEventListener('DOMContentLoaded', function () {
     <div class="row g-3">
         <div class="col-md-4">
             <div class="bg-white border rounded-2 shadow-sm p-3 h-100">
-                <div class="text-muted small">Extrato bancario pendente</div>
-                <div class="h4 mb-0"><?= count($extratosPendentes) ?></div>
+                <div class="text-muted small">Extrato bancario filtrado</div>
+                <div class="h4 mb-1"><?= moedaExtratoBanco($totalExtratoFiltrado['total'] ?? 0) ?></div>
+                <div class="text-muted small">
+                    <?= number_format((int)($totalExtratoFiltrado['qtd'] ?? 0), 0, ',', '.') ?> lancamento(s)
+                </div>
             </div>
         </div>
         <div class="col-md-4">
             <div class="bg-white border rounded-2 shadow-sm p-3 h-100">
-                <div class="text-muted small">Sistema pendente</div>
-                <div class="h4 mb-0"><?= count($sistemaPendentes) ?></div>
+                <div class="text-muted small">Sistema BNC001 filtrado</div>
+                <div class="h4 mb-1"><?= moedaExtratoBanco($totalBncFiltrado['total'] ?? 0) ?></div>
+                <div class="text-muted small">
+                    <?= number_format((int)($totalBncFiltrado['qtd'] ?? 0), 0, ',', '.') ?> lancamento(s)
+                </div>
             </div>
         </div>
         <div class="col-md-4">
@@ -2602,6 +2635,14 @@ document.addEventListener('DOMContentLoaded', function () {
                                 <?php endif; ?>
                             </h2>
                             <div class="text-muted small">Use o filtro de situacao para consultar pendentes, conciliados ou todos os lancamentos.</div>
+                            <div class="mt-2 d-flex flex-wrap gap-2">
+                                <span class="badge text-bg-light border">
+                                    <?= number_format((int)($totalExtratoFiltrado['qtd'] ?? 0), 0, ',', '.') ?> lancamento(s)
+                                </span>
+                                <span class="badge text-bg-primary">
+                                    Total filtrado: <?= moedaExtratoBanco($totalExtratoFiltrado['total'] ?? 0) ?>
+                                </span>
+                            </div>
                         </div>
                         <div class="d-flex gap-2 align-items-center">
                             <select name="cm_recebivel" form="form-gerar-recebiveis" class="form-select form-select-sm" style="width: 120px;">
@@ -2689,7 +2730,17 @@ document.addEventListener('DOMContentLoaded', function () {
         <div class="col-xl-6">
             <div class="bg-white border rounded-2 shadow-sm overflow-hidden">
                 <div class="p-3 border-bottom bg-light">
-                    <h2 class="h6 fw-bold mb-0">Sistema BNC001 nao conciliado</h2>
+                    <div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-center gap-2">
+                        <h2 class="h6 fw-bold mb-0">Sistema BNC001 nao conciliado</h2>
+                        <div class="d-flex flex-wrap gap-2">
+                            <span class="badge text-bg-light border">
+                                <?= number_format((int)($totalBncFiltrado['qtd'] ?? 0), 0, ',', '.') ?> lancamento(s)
+                            </span>
+                            <span class="badge text-bg-primary">
+                                Total filtrado: <?= moedaExtratoBanco($totalBncFiltrado['total'] ?? 0) ?>
+                            </span>
+                        </div>
+                    </div>
                 </div>
                 <div class="table-responsive">
                     <table class="table table-sm table-hover align-middle mb-0">
