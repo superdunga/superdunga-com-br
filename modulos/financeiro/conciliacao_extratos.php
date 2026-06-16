@@ -1924,12 +1924,14 @@ $whereExtratoSql = implode(' AND ', $whereExtrato);
 $stmtTotalExtrato = $pdo_master->prepare("
     SELECT
         COUNT(*) AS qtd,
-        COALESCE(SUM(e.valor), 0) AS total
+        COALESCE(SUM(CASE WHEN e.tipo = 'D' THEN -ABS(e.valor) ELSE ABS(e.valor) END), 0) AS total,
+        COALESCE(SUM(CASE WHEN e.tipo = 'C' THEN ABS(e.valor) ELSE 0 END), 0) AS total_credito,
+        COALESCE(SUM(CASE WHEN e.tipo = 'D' THEN ABS(e.valor) ELSE 0 END), 0) AS total_debito
     FROM financeiro_extrato_bancario e
     WHERE {$whereExtratoSql}
 ");
 $stmtTotalExtrato->execute($paramsExtrato);
-$totalExtratoFiltrado = $stmtTotalExtrato->fetch(PDO::FETCH_ASSOC) ?: ['qtd' => 0, 'total' => 0];
+$totalExtratoFiltrado = $stmtTotalExtrato->fetch(PDO::FETCH_ASSOC) ?: ['qtd' => 0, 'total' => 0, 'total_credito' => 0, 'total_debito' => 0];
 
 $exportarExtrato = strtolower((string)($_GET['exportar'] ?? ''));
 if (in_array($exportarExtrato, ['csv', 'pdf'], true)) {
@@ -2053,7 +2055,9 @@ if (in_array($exportarExtrato, ['csv', 'pdf'], true)) {
             ' | Historico: ' . ($historicoFiltro !== '' ? $historicoFiltro : 'Todos') .
             ' | Situacao: ' . ucfirst($situacaoFiltro),
         'Quantidade: ' . (int)$totalExtratoFiltrado['qtd'] .
-            ' | Total filtrado: ' . moedaExtratoBanco((float)$totalExtratoFiltrado['total']),
+            ' | Saldo C-D: ' . moedaExtratoBanco((float)$totalExtratoFiltrado['total']) .
+            ' | Creditos: ' . moedaExtratoBanco((float)$totalExtratoFiltrado['total_credito']) .
+            ' | Debitos: ' . moedaExtratoBanco((float)$totalExtratoFiltrado['total_debito']),
     ];
 
     gerarPdfConciliacaoExtratos(
@@ -2135,7 +2139,9 @@ $whereBncSql = implode(' AND ', $whereBnc);
 $stmtTotalBnc = $pdo_master->prepare("
     SELECT
         COUNT(*) AS qtd,
-        COALESCE(SUM(b.VALORMOV), 0) AS total
+        COALESCE(SUM(CASE WHEN b.TIPOMOV = 'D' THEN -ABS(b.VALORMOV) ELSE ABS(b.VALORMOV) END), 0) AS total,
+        COALESCE(SUM(CASE WHEN b.TIPOMOV = 'C' THEN ABS(b.VALORMOV) ELSE 0 END), 0) AS total_credito,
+        COALESCE(SUM(CASE WHEN b.TIPOMOV = 'D' THEN ABS(b.VALORMOV) ELSE 0 END), 0) AS total_debito
     FROM armazem_bnc001 b
     WHERE {$whereBncSql}
       AND NOT EXISTS (
@@ -2147,7 +2153,7 @@ $stmtTotalBnc = $pdo_master->prepare("
       )
 ");
 $stmtTotalBnc->execute($paramsBnc);
-$totalBncFiltrado = $stmtTotalBnc->fetch(PDO::FETCH_ASSOC) ?: ['qtd' => 0, 'total' => 0];
+$totalBncFiltrado = $stmtTotalBnc->fetch(PDO::FETCH_ASSOC) ?: ['qtd' => 0, 'total' => 0, 'total_credito' => 0, 'total_debito' => 0];
 
 $stmtBnc = $pdo_master->prepare("
     SELECT
@@ -2714,7 +2720,11 @@ document.addEventListener('DOMContentLoaded', function () {
                 <div class="text-muted small">Extrato bancario filtrado</div>
                 <div class="h4 mb-1"><?= moedaExtratoBanco($totalExtratoFiltrado['total'] ?? 0) ?></div>
                 <div class="text-muted small">
-                    <?= number_format((int)($totalExtratoFiltrado['qtd'] ?? 0), 0, ',', '.') ?> lancamento(s)
+                    Saldo C - D | <?= number_format((int)($totalExtratoFiltrado['qtd'] ?? 0), 0, ',', '.') ?> lancamento(s)
+                </div>
+                <div class="small text-muted mt-1">
+                    C: <?= moedaExtratoBanco($totalExtratoFiltrado['total_credito'] ?? 0) ?>
+                    | D: <?= moedaExtratoBanco($totalExtratoFiltrado['total_debito'] ?? 0) ?>
                 </div>
             </div>
         </div>
@@ -2723,7 +2733,11 @@ document.addEventListener('DOMContentLoaded', function () {
                 <div class="text-muted small">Sistema BNC001 filtrado</div>
                 <div class="h4 mb-1"><?= moedaExtratoBanco($totalBncFiltrado['total'] ?? 0) ?></div>
                 <div class="text-muted small">
-                    <?= number_format((int)($totalBncFiltrado['qtd'] ?? 0), 0, ',', '.') ?> lancamento(s)
+                    Saldo C - D | <?= number_format((int)($totalBncFiltrado['qtd'] ?? 0), 0, ',', '.') ?> lancamento(s)
+                </div>
+                <div class="small text-muted mt-1">
+                    C: <?= moedaExtratoBanco($totalBncFiltrado['total_credito'] ?? 0) ?>
+                    | D: <?= moedaExtratoBanco($totalBncFiltrado['total_debito'] ?? 0) ?>
                 </div>
             </div>
         </div>
@@ -2909,7 +2923,13 @@ document.addEventListener('DOMContentLoaded', function () {
                                     <?= number_format((int)($totalExtratoFiltrado['qtd'] ?? 0), 0, ',', '.') ?> lancamento(s)
                                 </span>
                                 <span class="badge text-bg-primary">
-                                    Total filtrado: <?= moedaExtratoBanco($totalExtratoFiltrado['total'] ?? 0) ?>
+                                    Saldo C-D: <?= moedaExtratoBanco($totalExtratoFiltrado['total'] ?? 0) ?>
+                                </span>
+                                <span class="badge text-bg-success">
+                                    C: <?= moedaExtratoBanco($totalExtratoFiltrado['total_credito'] ?? 0) ?>
+                                </span>
+                                <span class="badge text-bg-danger">
+                                    D: <?= moedaExtratoBanco($totalExtratoFiltrado['total_debito'] ?? 0) ?>
                                 </span>
                             </div>
                         </div>
@@ -3019,7 +3039,13 @@ document.addEventListener('DOMContentLoaded', function () {
                                 <?= number_format((int)($totalBncFiltrado['qtd'] ?? 0), 0, ',', '.') ?> lancamento(s)
                             </span>
                             <span class="badge text-bg-primary">
-                                Total filtrado: <?= moedaExtratoBanco($totalBncFiltrado['total'] ?? 0) ?>
+                                Saldo C-D: <?= moedaExtratoBanco($totalBncFiltrado['total'] ?? 0) ?>
+                            </span>
+                            <span class="badge text-bg-success">
+                                C: <?= moedaExtratoBanco($totalBncFiltrado['total_credito'] ?? 0) ?>
+                            </span>
+                            <span class="badge text-bg-danger">
+                                D: <?= moedaExtratoBanco($totalBncFiltrado['total_debito'] ?? 0) ?>
                             </span>
                         </div>
                     </div>
