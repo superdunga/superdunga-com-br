@@ -217,6 +217,122 @@ function dataHoraExtratoBanco($valor): string
     return $valor ? date('d/m/Y H:i', strtotime($valor)) : '-';
 }
 
+function textoPdfConciliacaoExtratos($valor, int $limite = 0): string
+{
+    $texto = preg_replace('/\s+/', ' ', trim((string)$valor));
+    if ($limite > 0) {
+        if (function_exists('mb_strlen') && function_exists('mb_substr')) {
+            if (mb_strlen($texto, 'UTF-8') > $limite) {
+                $texto = mb_substr($texto, 0, max(0, $limite - 3), 'UTF-8') . '...';
+            }
+        } elseif (strlen($texto) > $limite) {
+            $texto = substr($texto, 0, max(0, $limite - 3)) . '...';
+        }
+    }
+
+    $convertido = iconv('UTF-8', 'ISO-8859-1//TRANSLIT', $texto);
+    return $convertido === false ? $texto : $convertido;
+}
+
+function escaparPdfConciliacaoExtratos(string $texto): string
+{
+    return str_replace(['\\', '(', ')'], ['\\\\', '\\(', '\\)'], $texto);
+}
+
+function comandoTextoPdfConciliacaoExtratos(float $x, float $y, int $tamanho, string $texto, bool $negrito = false): string
+{
+    $fonte = $negrito ? 'F2' : 'F1';
+    return "BT /{$fonte} {$tamanho} Tf 1 0 0 1 " . number_format($x, 2, '.', '') . ' ' . number_format($y, 2, '.', '') . ' Tm (' . escaparPdfConciliacaoExtratos($texto) . ") Tj ET\n";
+}
+
+function gerarPdfConciliacaoExtratos(string $titulo, array $metadados, array $colunas, array $linhas, string $arquivo): void
+{
+    $largura = 842;
+    $altura = 595;
+    $margem = 26;
+    $linhaAltura = 15;
+    $topoTabela = $altura - 118;
+    $rodapeY = 22;
+    $linhasPorPagina = max(1, (int)floor(($topoTabela - 44) / $linhaAltura));
+    $paginas = [];
+    $totalPaginas = max(1, (int)ceil(count($linhas) / $linhasPorPagina));
+
+    for ($pagina = 0; $pagina < $totalPaginas; $pagina++) {
+        $conteudo = '';
+        $y = $altura - 38;
+        $conteudo .= comandoTextoPdfConciliacaoExtratos($margem, $y, 15, textoPdfConciliacaoExtratos($titulo, 90), true);
+        $y -= 18;
+
+        foreach ($metadados as $meta) {
+            $conteudo .= comandoTextoPdfConciliacaoExtratos($margem, $y, 8, textoPdfConciliacaoExtratos($meta, 155));
+            $y -= 11;
+        }
+
+        $conteudo .= "0.90 0.94 0.99 rg {$margem} " . ($topoTabela - 4) . ' ' . ($largura - ($margem * 2)) . " 18 re f\n0 g\n";
+        $x = $margem + 3;
+        foreach ($colunas as $coluna) {
+            $conteudo .= comandoTextoPdfConciliacaoExtratos($x, $topoTabela + 2, 8, textoPdfConciliacaoExtratos($coluna['titulo'], $coluna['limite'] ?? 20), true);
+            $x += $coluna['largura'];
+        }
+
+        $linhasPagina = array_slice($linhas, $pagina * $linhasPorPagina, $linhasPorPagina);
+        $y = $topoTabela - 16;
+        foreach ($linhasPagina as $linha) {
+            $x = $margem + 3;
+            foreach ($colunas as $indice => $coluna) {
+                $conteudo .= comandoTextoPdfConciliacaoExtratos($x, $y, 8, textoPdfConciliacaoExtratos($linha[$indice] ?? '', $coluna['limite'] ?? 20));
+                $x += $coluna['largura'];
+            }
+            $y -= $linhaAltura;
+        }
+
+        $conteudo .= comandoTextoPdfConciliacaoExtratos($margem, $rodapeY, 8, textoPdfConciliacaoExtratos('Gerado em ' . date('d/m/Y H:i') . ' - Pagina ' . ($pagina + 1) . ' de ' . $totalPaginas));
+        $paginas[] = $conteudo;
+    }
+
+    $objetos = [
+        1 => "<< /Type /Catalog /Pages 2 0 R >>",
+        2 => '',
+        3 => "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>",
+        4 => "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>",
+    ];
+    $idsPaginas = [];
+    $proximoId = 5;
+
+    foreach ($paginas as $conteudo) {
+        $conteudoId = $proximoId++;
+        $paginaId = $proximoId++;
+        $objetos[$conteudoId] = "<< /Length " . strlen($conteudo) . " >>\nstream\n{$conteudo}endstream";
+        $objetos[$paginaId] = "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 {$largura} {$altura}] /Resources << /Font << /F1 3 0 R /F2 4 0 R >> >> /Contents {$conteudoId} 0 R >>";
+        $idsPaginas[] = $paginaId;
+    }
+
+    $objetos[2] = "<< /Type /Pages /Kids [" . implode(' ', array_map(static function ($id) {
+        return "{$id} 0 R";
+    }, $idsPaginas)) . "] /Count " . count($idsPaginas) . " >>";
+    ksort($objetos);
+
+    $pdf = "%PDF-1.4\n";
+    $offsets = [0 => 0];
+    foreach ($objetos as $id => $objeto) {
+        $offsets[$id] = strlen($pdf);
+        $pdf .= "{$id} 0 obj\n{$objeto}\nendobj\n";
+    }
+
+    $xref = strlen($pdf);
+    $pdf .= "xref\n0 " . (count($objetos) + 1) . "\n0000000000 65535 f \n";
+    for ($i = 1; $i <= count($objetos); $i++) {
+        $pdf .= str_pad((string)$offsets[$i], 10, '0', STR_PAD_LEFT) . " 00000 n \n";
+    }
+    $pdf .= "trailer\n<< /Size " . (count($objetos) + 1) . " /Root 1 0 R >>\nstartxref\n{$xref}\n%%EOF";
+
+    header('Content-Type: application/pdf');
+    header('Content-Disposition: attachment; filename="' . $arquivo . '.pdf"');
+    header('Content-Length: ' . strlen($pdf));
+    echo $pdf;
+    exit;
+}
+
 function queryConciliacaoExtratos(array $extra = []): string
 {
     $params = $_GET;
@@ -1815,6 +1931,150 @@ $stmtTotalExtrato = $pdo_master->prepare("
 $stmtTotalExtrato->execute($paramsExtrato);
 $totalExtratoFiltrado = $stmtTotalExtrato->fetch(PDO::FETCH_ASSOC) ?: ['qtd' => 0, 'total' => 0];
 
+$exportarExtrato = strtolower((string)($_GET['exportar'] ?? ''));
+if (in_array($exportarExtrato, ['csv', 'pdf'], true)) {
+    $stmtExportarExtrato = $pdo_master->prepare("
+        SELECT
+            e.id,
+            e.empresa_id,
+            e.cbcontador,
+            e.data_movimento,
+            e.historico,
+            e.documento,
+            e.tipo,
+            e.valor,
+            e.conciliado,
+            e.bnc001_empresa,
+            e.bnc001_movcontador,
+            e.recebimento_id,
+            c.nome_conta,
+            b.DTMOV AS data_sistema,
+            b.HISTMOV AS historico_sistema,
+            b.TIPOMOV AS tipo_sistema,
+            b.VALORMOV AS valor_sistema,
+            COALESCE(NULLIF(emp_bnc.nome_fantasia, ''), NULLIF(emp_bnc.razao_social, ''), CONCAT('Empresa ', emp_bnc.id)) AS empresa_sistema_nome
+        FROM financeiro_extrato_bancario e
+        LEFT JOIN (
+            SELECT CBCONTADOR, TRIM(COALESCE(NULLIF(TITULAR, ''), NULLIF(DESCABREV, ''), CONCAT('Conta ', CBCONTADOR))) AS nome_conta
+            FROM armazem_bnc002
+            WHERE EMPRESA = ?
+              AND COALESCE(excluido_firebird, 'N') <> 'S'
+              AND COALESCE(CONTABLOQUEADA, 'N') <> 'S'
+              AND TRIM(COALESCE(CLASSIFICACAO, '')) IN ('1', '2')
+        ) c ON c.CBCONTADOR = e.cbcontador
+        LEFT JOIN armazem_bnc001 b
+          ON b.EMPRESA = COALESCE(e.bnc001_empresa, e.empresa_id)
+         AND b.MOVCONTADOR = e.bnc001_movcontador
+        LEFT JOIN empresas emp_bnc
+          ON emp_bnc.id = COALESCE(e.bnc001_empresa, e.empresa_id)
+        WHERE {$whereExtratoSql}
+        ORDER BY e.data_movimento DESC, e.id DESC
+    ");
+    $stmtExportarExtrato->execute(array_merge([$empresaId], $paramsExtrato));
+    $linhasExportacao = $stmtExportarExtrato->fetchAll(PDO::FETCH_ASSOC);
+
+    $nomeArquivo = 'extrato_filtrado_' . date('Ymd_His');
+    if ($exportarExtrato === 'csv') {
+        header('Content-Type: text/csv; charset=utf-8');
+        header('Content-Disposition: attachment; filename="' . $nomeArquivo . '.csv"');
+        echo "\xEF\xBB\xBFsep=;\r\n";
+
+        $saida = fopen('php://output', 'w');
+        fputcsv($saida, [
+            'ID',
+            'Conta',
+            'Data',
+            'Historico',
+            'Documento',
+            'D/C',
+            'Valor',
+            'Situacao',
+            'Empresa conciliacao',
+            'MOV BNC001',
+            'Data sistema',
+            'Historico sistema',
+            'Recebivel',
+        ], ';');
+
+        foreach ($linhasExportacao as $linhaExportacao) {
+            $empresaConciliacao = '';
+            if (!empty($linhaExportacao['bnc001_movcontador'])) {
+                $empresaConciliacao = (string)($linhaExportacao['empresa_sistema_nome'] ?: ('Empresa ' . (int)($linhaExportacao['bnc001_empresa'] ?: $linhaExportacao['empresa_id'])));
+            }
+
+            fputcsv($saida, [
+                (int)$linhaExportacao['id'],
+                (int)$linhaExportacao['cbcontador'] . ' - ' . (string)($linhaExportacao['nome_conta'] ?? ''),
+                dataHoraExtratoBanco($linhaExportacao['data_movimento'] ?? null),
+                (string)($linhaExportacao['historico'] ?? ''),
+                (string)($linhaExportacao['documento'] ?? ''),
+                (string)($linhaExportacao['tipo'] ?? ''),
+                number_format((float)$linhaExportacao['valor'], 2, ',', '.'),
+                (($linhaExportacao['conciliado'] ?? 'N') === 'S') ? 'Conciliado' : 'Pendente',
+                $empresaConciliacao,
+                $linhaExportacao['bnc001_movcontador'] ? (int)$linhaExportacao['bnc001_movcontador'] : '',
+                dataHoraExtratoBanco($linhaExportacao['data_sistema'] ?? null),
+                (string)($linhaExportacao['historico_sistema'] ?? ''),
+                $linhaExportacao['recebimento_id'] ? (int)$linhaExportacao['recebimento_id'] : '',
+            ], ';');
+        }
+        fclose($saida);
+        exit;
+    }
+
+    $linhasPdf = [];
+    foreach ($linhasExportacao as $linhaExportacao) {
+        $vinculo = 'Sem vinculo';
+        if (!empty($linhaExportacao['bnc001_movcontador'])) {
+            $empresaVinculo = (string)($linhaExportacao['empresa_sistema_nome'] ?: ('Empresa ' . (int)($linhaExportacao['bnc001_empresa'] ?: $linhaExportacao['empresa_id'])));
+            $vinculo = $empresaVinculo . ' MOV ' . (int)$linhaExportacao['bnc001_movcontador'];
+        } elseif (!empty($linhaExportacao['recebimento_id'])) {
+            $vinculo = 'Recebivel #' . (int)$linhaExportacao['recebimento_id'];
+        }
+
+        $linhasPdf[] = [
+            (string)(int)$linhaExportacao['id'],
+            (int)$linhaExportacao['cbcontador'] . ' - ' . (string)($linhaExportacao['nome_conta'] ?? ''),
+            dataHoraExtratoBanco($linhaExportacao['data_movimento'] ?? null),
+            (string)($linhaExportacao['historico'] ?? ''),
+            (string)($linhaExportacao['documento'] ?? ''),
+            (string)($linhaExportacao['tipo'] ?? ''),
+            moedaExtratoBanco((float)$linhaExportacao['valor']),
+            (($linhaExportacao['conciliado'] ?? 'N') === 'S') ? 'Conciliado' : 'Pendente',
+            $vinculo,
+        ];
+    }
+
+    $metadadosPdf = [
+        'Conta: ' . ($cbcontador > 0 ? ((string)$cbcontador) : 'Todas') .
+            ' | Periodo: ' . ($dataIni !== '' ? date('d/m/Y', strtotime($dataIni)) : 'inicio') .
+            ' ate ' . ($dataFim !== '' ? date('d/m/Y', strtotime($dataFim)) : 'fim'),
+        'Filtro: D/C ' . ($dcFiltro !== '' ? $dcFiltro : 'Todos') .
+            ' | Historico: ' . ($historicoFiltro !== '' ? $historicoFiltro : 'Todos') .
+            ' | Situacao: ' . ucfirst($situacaoFiltro),
+        'Quantidade: ' . (int)$totalExtratoFiltrado['qtd'] .
+            ' | Total filtrado: ' . moedaExtratoBanco((float)$totalExtratoFiltrado['total']),
+    ];
+
+    gerarPdfConciliacaoExtratos(
+        'Lancamentos do Extrato Filtrados',
+        $metadadosPdf,
+        [
+            ['titulo' => 'ID', 'largura' => 30, 'limite' => 7],
+            ['titulo' => 'Conta', 'largura' => 80, 'limite' => 16],
+            ['titulo' => 'Data', 'largura' => 66, 'limite' => 14],
+            ['titulo' => 'Historico', 'largura' => 220, 'limite' => 45],
+            ['titulo' => 'Doc', 'largura' => 55, 'limite' => 11],
+            ['titulo' => 'D/C', 'largura' => 25, 'limite' => 3],
+            ['titulo' => 'Valor', 'largura' => 62, 'limite' => 12],
+            ['titulo' => 'Situacao', 'largura' => 60, 'limite' => 12],
+            ['titulo' => 'Vinculo', 'largura' => 190, 'limite' => 38],
+        ],
+        $linhasPdf,
+        $nomeArquivo
+    );
+}
+
 $stmtExtrato = $pdo_master->prepare("
     SELECT
         e.*,
@@ -1822,7 +2082,8 @@ $stmtExtrato = $pdo_master->prepare("
         b.DTMOV AS data_sistema,
         b.HISTMOV AS historico_sistema,
         b.TIPOMOV AS tipo_sistema,
-        b.VALORMOV AS valor_sistema
+        b.VALORMOV AS valor_sistema,
+        COALESCE(NULLIF(emp_bnc.nome_fantasia, ''), NULLIF(emp_bnc.razao_social, ''), CONCAT('Empresa ', emp_bnc.id)) AS empresa_sistema_nome
     FROM financeiro_extrato_bancario e
     LEFT JOIN (
         SELECT CBCONTADOR, TRIM(COALESCE(NULLIF(TITULAR, ''), NULLIF(DESCABREV, ''), CONCAT('Conta ', CBCONTADOR))) AS nome_conta
@@ -1835,6 +2096,8 @@ $stmtExtrato = $pdo_master->prepare("
     LEFT JOIN armazem_bnc001 b
       ON b.EMPRESA = COALESCE(e.bnc001_empresa, e.empresa_id)
      AND b.MOVCONTADOR = e.bnc001_movcontador
+    LEFT JOIN empresas emp_bnc
+      ON emp_bnc.id = COALESCE(e.bnc001_empresa, e.empresa_id)
     WHERE {$whereExtratoSql}
     ORDER BY e.data_movimento DESC, e.id DESC
     LIMIT 300
@@ -2166,6 +2429,12 @@ require '../../layout/header.php';
             </div>
             <div class="col-md-3 col-lg-1">
                 <button type="submit" class="btn btn-primary w-100">Filtrar</button>
+            </div>
+            <div class="col-md-3 col-lg-1">
+                <a class="btn btn-outline-success w-100" href="conciliacao_extratos.php?<?= htmlspecialchars(queryConciliacaoExtratos(['exportar' => 'csv'])) ?>">CSV</a>
+            </div>
+            <div class="col-md-3 col-lg-1">
+                <a class="btn btn-outline-danger w-100" href="conciliacao_extratos.php?<?= htmlspecialchars(queryConciliacaoExtratos(['exportar' => 'pdf'])) ?>">PDF</a>
             </div>
         </form>
     </div>
@@ -2698,12 +2967,25 @@ document.addEventListener('DOMContentLoaded', function () {
                                         <td>
                                             <?php if (($item['conciliado'] ?? 'N') === 'S'): ?>
                                                 <span class="badge text-bg-success">Conciliado</span>
+                                                <?php if (!empty($item['bnc001_empresa'])): ?>
+                                                    <div class="small fw-semibold text-success mt-1">
+                                                        Empresa <?= (int)$item['bnc001_empresa'] ?>
+                                                        <?php if (!empty($item['empresa_sistema_nome'])): ?>
+                                                            - <?= htmlspecialchars($item['empresa_sistema_nome']) ?>
+                                                        <?php endif; ?>
+                                                    </div>
+                                                <?php endif; ?>
                                             <?php else: ?>
                                                 <span class="badge text-bg-warning">Pendente</span>
                                             <?php endif; ?>
 
                                             <?php if (!empty($item['bnc001_movcontador'])): ?>
-                                                <div class="small fw-semibold mt-1">MOV <?= (int)$item['bnc001_movcontador'] ?></div>
+                                                <div class="small fw-semibold mt-1">
+                                                    MOV <?= (int)$item['bnc001_movcontador'] ?>
+                                                    <?php if (!empty($item['bnc001_empresa']) && (int)$item['bnc001_empresa'] !== $empresaId): ?>
+                                                        <span class="badge text-bg-info ms-1">Outra empresa</span>
+                                                    <?php endif; ?>
+                                                </div>
                                                 <div class="small text-muted"><?= dataHoraExtratoBanco($item['data_sistema'] ?? null) ?></div>
                                                 <div class="small"><?= htmlspecialchars(mb_substr((string)($item['historico_sistema'] ?? ''), 0, 70) ?: '-') ?></div>
                                             <?php endif; ?>
