@@ -1664,6 +1664,269 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['acao'] ?? '') === 'concili
     }
 }
 
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['acao'] ?? '') === 'conciliar_auto_prioritario') {
+    try {
+        if ($cbcontador <= 0 || $dataIniSql === '' || $dataFimExclusivoSql === '') {
+            throw new RuntimeException('Selecione conta e periodo para executar a conciliacao prioritaria.');
+        }
+
+        $whereAutoExtratoFiltros = '';
+        $paramsAutoExtratoFiltros = [];
+        $whereAutoHistoricoFiltro = '';
+        $paramsAutoHistoricoFiltro = [];
+
+        if ($dcFiltro !== '') {
+            $whereAutoExtratoFiltros .= ' AND e.tipo = ?';
+            $paramsAutoExtratoFiltros[] = $dcFiltro;
+        }
+        if ($historicoFiltro !== '') {
+            $whereAutoHistoricoFiltro .= ' AND (e.historico_extrato LIKE ? OR b.HISTMOV LIKE ?)';
+            $paramsAutoHistoricoFiltro[] = '%' . $historicoFiltro . '%';
+            $paramsAutoHistoricoFiltro[] = '%' . $historicoFiltro . '%';
+        }
+
+        $stmtAutoPrioritario = $pdo_master->prepare("
+            WITH extratos_base AS (
+                SELECT
+                    e.id AS extrato_id,
+                    e.cbcontador,
+                    DATE(e.data_movimento) AS data_match,
+                    e.tipo,
+                    e.valor,
+                    e.historico AS historico_extrato,
+                    ROW_NUMBER() OVER (PARTITION BY DATE(e.data_movimento), e.tipo, e.valor ORDER BY e.id) AS rn,
+                    COUNT(*) OVER (PARTITION BY DATE(e.data_movimento), e.tipo, e.valor) AS qtd_extrato_grupo
+                FROM financeiro_extrato_bancario e
+                WHERE e.empresa_id = ?
+                  AND e.cbcontador = ?
+                  AND e.conciliado = 'N'
+                  AND e.bnc001_movcontador IS NULL
+                  AND e.data_movimento >= ?
+                  AND e.data_movimento < ?
+                  {$whereAutoExtratoFiltros}
+            ),
+            sistema_base AS (
+                SELECT
+                    b.MOVCONTADOR,
+                    DATE(b.DTMOV) AS data_match,
+                    b.TIPOMOV AS tipo,
+                    b.VALORMOV AS valor,
+                    b.HISTMOV,
+                    ROW_NUMBER() OVER (PARTITION BY DATE(b.DTMOV), b.TIPOMOV, b.VALORMOV ORDER BY b.DTLANC, b.MOVCONTADOR) AS rn,
+                    COUNT(*) OVER (PARTITION BY DATE(b.DTMOV), b.TIPOMOV, b.VALORMOV) AS qtd_sistema_grupo
+                FROM armazem_bnc001 b FORCE INDEX (idx_bnc001_match_extrato)
+                WHERE b.EMPRESA = ?
+                  AND b.CBCONTADOR = ?
+                  AND b.DTMOV >= ?
+                  AND b.DTMOV < ?
+                  AND (b.deletado IS NULL OR b.deletado <> 'S')
+                  AND NOT EXISTS (
+                      SELECT 1
+                      FROM financeiro_extrato_bancario ex2
+                      WHERE ex2.bnc001_empresa = b.EMPRESA
+                        AND ex2.bnc001_movcontador = b.MOVCONTADOR
+                        AND ex2.conciliado = 'S'
+                  )
+            )
+            SELECT
+                e.extrato_id,
+                e.cbcontador,
+                b.MOVCONTADOR
+            FROM extratos_base e
+            INNER JOIN sistema_base b
+                ON b.data_match = e.data_match
+               AND b.tipo = e.tipo
+               AND b.valor = e.valor
+               AND b.rn = 1
+            WHERE e.qtd_extrato_grupo = 1
+              AND b.qtd_sistema_grupo > 1
+              {$whereAutoHistoricoFiltro}
+            LIMIT 500
+        ");
+        $stmtAutoPrioritario->execute(array_merge(
+            [$empresaExtratoId, $cbcontadorExtrato, $dataIniSql, $dataFimExclusivoSql],
+            $paramsAutoExtratoFiltros,
+            [$empresaId, $cbcontador, $dataIniSql, $dataFimExclusivoSql],
+            $paramsAutoHistoricoFiltro
+        ));
+        $matchesAutoPrioritario = $stmtAutoPrioritario->fetchAll(PDO::FETCH_ASSOC);
+
+        $pdo_master->beginTransaction();
+
+        $stmtUpdateAutoPrioritario = $pdo_master->prepare("
+            UPDATE financeiro_extrato_bancario
+            SET conciliado = 'S',
+                bnc001_empresa = ?,
+                bnc001_movcontador = ?
+            WHERE id = ?
+              AND empresa_id = ?
+              AND cbcontador = ?
+              AND conciliado = 'N'
+              AND bnc001_movcontador IS NULL
+        ");
+        $stmtLogAutoPrioritario = $pdo_master->prepare("
+            INSERT INTO financeiro_extrato_conciliacoes_log
+                (empresa_id, cbcontador, extrato_id, movcontador, tipo_match, usuario_id)
+            VALUES (?, ?, ?, ?, 'auto_prioritario', ?)
+        ");
+
+        $conciliadosAutoPrioritario = 0;
+        foreach ($matchesAutoPrioritario as $matchAutoPrioritario) {
+            $movAuto = (int)$matchAutoPrioritario['MOVCONTADOR'];
+            $extratoAuto = (int)$matchAutoPrioritario['extrato_id'];
+            $contaAuto = (int)$matchAutoPrioritario['cbcontador'];
+
+            $stmtUpdateAutoPrioritario->execute([$empresaId, $movAuto, $extratoAuto, $empresaExtratoId, $contaAuto]);
+            if ($stmtUpdateAutoPrioritario->rowCount() > 0) {
+                $stmtLogAutoPrioritario->execute([$empresaId, $contaAuto, $extratoAuto, $movAuto, $usuarioId]);
+                $conciliadosAutoPrioritario++;
+            }
+        }
+
+        $pdo_master->commit();
+
+        header('Location: conciliacao_extratos.php?' . queryConciliacaoExtratos(['ok_match' => 'prioritario', 'qtd_auto' => $conciliadosAutoPrioritario]));
+        exit;
+    } catch (Throwable $e) {
+        if ($pdo_master->inTransaction()) {
+            $pdo_master->rollBack();
+        }
+        $mensagemErro = $e->getMessage();
+    }
+}
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['acao'] ?? '') === 'conciliar_auto_fila') {
+    try {
+        if ($cbcontador <= 0 || $dataIniSql === '' || $dataFimExclusivoSql === '') {
+            throw new RuntimeException('Selecione conta e periodo para executar a conciliacao por fila.');
+        }
+
+        $whereAutoExtratoFiltros = '';
+        $paramsAutoExtratoFiltros = [];
+        $whereAutoHistoricoFiltro = '';
+        $paramsAutoHistoricoFiltro = [];
+
+        if ($dcFiltro !== '') {
+            $whereAutoExtratoFiltros .= ' AND e.tipo = ?';
+            $paramsAutoExtratoFiltros[] = $dcFiltro;
+        }
+        if ($historicoFiltro !== '') {
+            $whereAutoHistoricoFiltro .= ' AND (e.historico_extrato LIKE ? OR b.HISTMOV LIKE ?)';
+            $paramsAutoHistoricoFiltro[] = '%' . $historicoFiltro . '%';
+            $paramsAutoHistoricoFiltro[] = '%' . $historicoFiltro . '%';
+        }
+
+        $stmtAutoFila = $pdo_master->prepare("
+            WITH extratos_base AS (
+                SELECT
+                    e.id AS extrato_id,
+                    e.cbcontador,
+                    DATE(e.data_movimento) AS data_match,
+                    e.tipo,
+                    e.valor,
+                    e.historico AS historico_extrato,
+                    ROW_NUMBER() OVER (PARTITION BY DATE(e.data_movimento), e.tipo, e.valor ORDER BY e.id) AS rn,
+                    COUNT(*) OVER (PARTITION BY DATE(e.data_movimento), e.tipo, e.valor) AS qtd_extrato_grupo
+                FROM financeiro_extrato_bancario e
+                WHERE e.empresa_id = ?
+                  AND e.cbcontador = ?
+                  AND e.conciliado = 'N'
+                  AND e.bnc001_movcontador IS NULL
+                  AND e.data_movimento >= ?
+                  AND e.data_movimento < ?
+                  {$whereAutoExtratoFiltros}
+            ),
+            sistema_base AS (
+                SELECT
+                    b.MOVCONTADOR,
+                    DATE(b.DTMOV) AS data_match,
+                    b.TIPOMOV AS tipo,
+                    b.VALORMOV AS valor,
+                    b.HISTMOV,
+                    ROW_NUMBER() OVER (PARTITION BY DATE(b.DTMOV), b.TIPOMOV, b.VALORMOV ORDER BY b.DTLANC, b.MOVCONTADOR) AS rn,
+                    COUNT(*) OVER (PARTITION BY DATE(b.DTMOV), b.TIPOMOV, b.VALORMOV) AS qtd_sistema_grupo
+                FROM armazem_bnc001 b FORCE INDEX (idx_bnc001_match_extrato)
+                WHERE b.EMPRESA = ?
+                  AND b.CBCONTADOR = ?
+                  AND b.DTMOV >= ?
+                  AND b.DTMOV < ?
+                  AND (b.deletado IS NULL OR b.deletado <> 'S')
+                  AND NOT EXISTS (
+                      SELECT 1
+                      FROM financeiro_extrato_bancario ex2
+                      WHERE ex2.bnc001_empresa = b.EMPRESA
+                        AND ex2.bnc001_movcontador = b.MOVCONTADOR
+                        AND ex2.conciliado = 'S'
+                  )
+            )
+            SELECT
+                e.extrato_id,
+                e.cbcontador,
+                b.MOVCONTADOR
+            FROM extratos_base e
+            INNER JOIN sistema_base b
+                ON b.data_match = e.data_match
+               AND b.tipo = e.tipo
+               AND b.valor = e.valor
+               AND b.rn = e.rn
+            WHERE e.qtd_extrato_grupo > 1
+              AND b.qtd_sistema_grupo > e.qtd_extrato_grupo
+              AND e.rn <= e.qtd_extrato_grupo
+              {$whereAutoHistoricoFiltro}
+            LIMIT 500
+        ");
+        $stmtAutoFila->execute(array_merge(
+            [$empresaExtratoId, $cbcontadorExtrato, $dataIniSql, $dataFimExclusivoSql],
+            $paramsAutoExtratoFiltros,
+            [$empresaId, $cbcontador, $dataIniSql, $dataFimExclusivoSql],
+            $paramsAutoHistoricoFiltro
+        ));
+        $matchesAutoFila = $stmtAutoFila->fetchAll(PDO::FETCH_ASSOC);
+
+        $pdo_master->beginTransaction();
+
+        $stmtUpdateAutoFila = $pdo_master->prepare("
+            UPDATE financeiro_extrato_bancario
+            SET conciliado = 'S',
+                bnc001_empresa = ?,
+                bnc001_movcontador = ?
+            WHERE id = ?
+              AND empresa_id = ?
+              AND cbcontador = ?
+              AND conciliado = 'N'
+              AND bnc001_movcontador IS NULL
+        ");
+        $stmtLogAutoFila = $pdo_master->prepare("
+            INSERT INTO financeiro_extrato_conciliacoes_log
+                (empresa_id, cbcontador, extrato_id, movcontador, tipo_match, usuario_id)
+            VALUES (?, ?, ?, ?, 'auto_fila', ?)
+        ");
+
+        $conciliadosAutoFila = 0;
+        foreach ($matchesAutoFila as $matchAutoFila) {
+            $movAuto = (int)$matchAutoFila['MOVCONTADOR'];
+            $extratoAuto = (int)$matchAutoFila['extrato_id'];
+            $contaAuto = (int)$matchAutoFila['cbcontador'];
+
+            $stmtUpdateAutoFila->execute([$empresaId, $movAuto, $extratoAuto, $empresaExtratoId, $contaAuto]);
+            if ($stmtUpdateAutoFila->rowCount() > 0) {
+                $stmtLogAutoFila->execute([$empresaId, $contaAuto, $extratoAuto, $movAuto, $usuarioId]);
+                $conciliadosAutoFila++;
+            }
+        }
+
+        $pdo_master->commit();
+
+        header('Location: conciliacao_extratos.php?' . queryConciliacaoExtratos(['ok_match' => 'fila', 'qtd_auto' => $conciliadosAutoFila]));
+        exit;
+    } catch (Throwable $e) {
+        if ($pdo_master->inTransaction()) {
+            $pdo_master->rollBack();
+        }
+        $mensagemErro = $e->getMessage();
+    }
+}
+
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['acao'] ?? '') === 'importar') {
     $cbcontadorPost = (int)($_POST['cbcontador'] ?? 0);
 
@@ -1896,6 +2159,10 @@ if (($_GET['ok_match'] ?? '') === 'manual') {
     $mensagemOk = 'Matches manuais conciliados: ' . (int)($_GET['qtd_manual'] ?? 0) . '.';
 } elseif (($_GET['ok_match'] ?? '') === 'auto') {
     $mensagemOk = 'Conciliacao automatica segura concluida. Registros conciliados: ' . (int)($_GET['qtd_auto'] ?? 0) . '.';
+} elseif (($_GET['ok_match'] ?? '') === 'prioritario') {
+    $mensagemOk = 'Conciliacao prioritaria concluida. Registros conciliados: ' . (int)($_GET['qtd_auto'] ?? 0) . '.';
+} elseif (($_GET['ok_match'] ?? '') === 'fila') {
+    $mensagemOk = 'Conciliacao por fila concluida. Registros conciliados: ' . (int)($_GET['qtd_auto'] ?? 0) . '.';
 }
 
 if (($_GET['ok_recebiveis'] ?? '') === '1') {
@@ -2309,6 +2576,59 @@ if ($situacaoFiltro !== 'conciliados' && $cbcontador > 0 && $dataIni !== '' && $
             WHERE 1 = 1
               {$whereSugestoesAutoFiltroHistorico}
         ),
+        prioritarios AS (
+            SELECT
+                e.extrato_id,
+                e.data_extrato,
+                e.valor_extrato,
+                e.tipo_extrato,
+                e.historico_extrato,
+                b.MOVCONTADOR,
+                b.DTMOV,
+                b.VALORMOV,
+                b.TIPOMOV,
+                b.HISTMOV,
+                0 AS dias_diferenca,
+                e.qtd_extrato_grupo AS qtd_por_extrato,
+                b.qtd_sistema_grupo AS qtd_por_sistema,
+                'prioritario' AS tipo_sugestao
+            FROM extratos_base e
+            INNER JOIN sistema_base b
+                ON b.data_match = e.data_match
+               AND b.TIPOMOV = e.tipo_extrato
+               AND b.VALORMOV = e.valor_extrato
+               AND b.rn = 1
+            WHERE e.qtd_extrato_grupo = 1
+              AND b.qtd_sistema_grupo > 1
+              {$whereSugestoesAutoFiltroHistorico}
+        ),
+        fila AS (
+            SELECT
+                e.extrato_id,
+                e.data_extrato,
+                e.valor_extrato,
+                e.tipo_extrato,
+                e.historico_extrato,
+                b.MOVCONTADOR,
+                b.DTMOV,
+                b.VALORMOV,
+                b.TIPOMOV,
+                b.HISTMOV,
+                0 AS dias_diferenca,
+                e.qtd_extrato_grupo AS qtd_por_extrato,
+                b.qtd_sistema_grupo AS qtd_por_sistema,
+                'fila' AS tipo_sugestao
+            FROM extratos_base e
+            INNER JOIN sistema_base b
+                ON b.data_match = e.data_match
+               AND b.TIPOMOV = e.tipo_extrato
+               AND b.VALORMOV = e.valor_extrato
+               AND b.rn = e.rn
+            WHERE e.qtd_extrato_grupo > 1
+              AND b.qtd_sistema_grupo > e.qtd_extrato_grupo
+              AND e.rn <= e.qtd_extrato_grupo
+              {$whereSugestoesAutoFiltroHistorico}
+        ),
         candidatos AS (
             SELECT
                 e.id AS extrato_id,
@@ -2355,13 +2675,37 @@ if ($situacaoFiltro !== 'conciliados' && $cbcontador > 0 && $dataIni !== '' && $
                   WHERE ap.extrato_id = e.id
                      OR ap.MOVCONTADOR = b.MOVCONTADOR
               )
+              AND NOT EXISTS (
+                  SELECT 1
+                  FROM prioritarios pr
+                  WHERE pr.extrato_id = e.id
+                     OR pr.MOVCONTADOR = b.MOVCONTADOR
+              )
+              AND NOT EXISTS (
+                  SELECT 1
+                  FROM fila fl
+                  WHERE fl.extrato_id = e.id
+                     OR fl.MOVCONTADOR = b.MOVCONTADOR
+              )
         )
         SELECT * FROM auto_pares
+        UNION ALL
+        SELECT * FROM prioritarios
+        UNION ALL
+        SELECT * FROM fila
         UNION ALL
         SELECT *,
             'manual' AS tipo_sugestao
         FROM candidatos
-        ORDER BY tipo_sugestao ASC, dias_diferenca ASC, data_extrato DESC
+        ORDER BY
+            CASE tipo_sugestao
+                WHEN 'auto' THEN 1
+                WHEN 'prioritario' THEN 2
+                WHEN 'fila' THEN 3
+                ELSE 4
+            END,
+            dias_diferenca ASC,
+            data_extrato DESC
         LIMIT 100
     ");
     $stmtSug->execute(array_merge(
@@ -2376,16 +2720,24 @@ if ($situacaoFiltro !== 'conciliados' && $cbcontador > 0 && $dataIni !== '' && $
 }
 
 $sugestoesAutomaticas = [];
+$sugestoesPrioritarias = [];
+$sugestoesFila = [];
 $sugestoesManuais = [];
 foreach ($sugestoes as $sugestaoContagem) {
     if (($sugestaoContagem['tipo_sugestao'] ?? '') === 'auto') {
         $sugestoesAutomaticas[] = $sugestaoContagem;
+    } elseif (($sugestaoContagem['tipo_sugestao'] ?? '') === 'prioritario') {
+        $sugestoesPrioritarias[] = $sugestaoContagem;
+    } elseif (($sugestaoContagem['tipo_sugestao'] ?? '') === 'fila') {
+        $sugestoesFila[] = $sugestaoContagem;
     } else {
         $sugestoesManuais[] = $sugestaoContagem;
     }
 }
 
 $qtdSugestoesAutomaticas = count($sugestoesAutomaticas);
+$qtdSugestoesPrioritarias = count($sugestoesPrioritarias);
+$qtdSugestoesFila = count($sugestoesFila);
 $qtdSugestoesManuais = count($sugestoesManuais);
 
 $sugestoesManuaisPorExtrato = [];
@@ -2859,7 +3211,11 @@ document.addEventListener('DOMContentLoaded', function () {
             <div class="bg-white border rounded-2 shadow-sm p-3 h-100">
                 <div class="text-muted small">Sugestoes automaticas seguras</div>
                 <div class="h4 mb-0"><?= $qtdSugestoesAutomaticas ?></div>
-                <div class="text-muted small"><?= $qtdSugestoesManuais ?> sugestao(oes) para conferencia manual</div>
+                <div class="text-muted small">
+                    <?= $qtdSugestoesPrioritarias ?> prioritario(s) |
+                    <?= $qtdSugestoesFila ?> por fila |
+                    <?= $qtdSugestoesManuais ?> manual(is)
+                </div>
             </div>
         </div>
     </div>
@@ -2925,6 +3281,134 @@ document.addEventListener('DOMContentLoaded', function () {
                         <?php endforeach; ?>
                         <?php if (empty($sugestoesAutomaticas)): ?>
                             <tr><td colspan="11" class="text-center text-muted py-3">Nenhum match seguro automatico para os filtros atuais.</td></tr>
+                        <?php endif; ?>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </section>
+
+    <section class="mb-4">
+        <div class="bg-white border rounded-2 shadow-sm overflow-hidden">
+            <div class="p-3 border-bottom bg-light">
+                <div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-center gap-2">
+                    <div>
+                        <h2 class="h6 fw-bold mb-1">Matches por fila</h2>
+                        <div class="text-muted small">Quando o extrato tem mais de um lancamento e o sistema tem mais lancamentos iguais, usa os primeiros BNC001 e deixa o excedente pendente.</div>
+                    </div>
+                    <form method="POST" onsubmit="return confirm('Conciliar por fila usando os primeiros lancamentos BNC001 e deixando o excedente pendente?');">
+                        <input type="hidden" name="acao" value="conciliar_auto_fila">
+                        <input type="hidden" name="cbcontador" value="<?= (int)$cbcontador ?>">
+                        <button type="submit" class="btn btn-outline-warning btn-sm" <?= empty($sugestoesFila) ? 'disabled' : '' ?>>
+                            Conciliar <?= $qtdSugestoesFila ?> por fila
+                        </button>
+                    </form>
+                </div>
+            </div>
+            <div class="table-responsive">
+                <table class="table table-sm table-hover align-middle mb-0">
+                    <thead class="table-warning">
+                        <tr>
+                            <th>Extrato</th>
+                            <th>Data banco</th>
+                            <th>Historico banco</th>
+                            <th>Sistema escolhido</th>
+                            <th>Data sistema</th>
+                            <th>Historico sistema</th>
+                            <th>D/C</th>
+                            <th class="text-end">Valor</th>
+                            <th>Qtd grupo</th>
+                            <th>Acao</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <?php foreach ($sugestoesFila as $sugestao): ?>
+                            <tr>
+                                <td><?= (int)$sugestao['extrato_id'] ?></td>
+                                <td><?= dataHoraExtratoBanco($sugestao['data_extrato']) ?></td>
+                                <td><?= htmlspecialchars($sugestao['historico_extrato'] ?: '-') ?></td>
+                                <td><?= (int)$sugestao['MOVCONTADOR'] ?></td>
+                                <td><?= dataHoraExtratoBanco($sugestao['DTMOV']) ?></td>
+                                <td><?= htmlspecialchars($sugestao['HISTMOV'] ?: '-') ?></td>
+                                <td><?= htmlspecialchars($sugestao['tipo_extrato']) ?></td>
+                                <td class="text-end"><?= moedaExtratoBanco($sugestao['valor_extrato']) ?></td>
+                                <td><?= (int)$sugestao['qtd_por_extrato'] ?> x <?= (int)$sugestao['qtd_por_sistema'] ?></td>
+                                <td>
+                                    <form method="POST" onsubmit="return confirm('Confirmar conciliacao por fila deste match?');">
+                                        <input type="hidden" name="acao" value="conciliar_manual">
+                                        <input type="hidden" name="extrato_id" value="<?= (int)$sugestao['extrato_id'] ?>">
+                                        <input type="hidden" name="movcontador" value="<?= (int)$sugestao['MOVCONTADOR'] ?>">
+                                        <button type="submit" class="btn btn-sm btn-outline-warning">Conciliar</button>
+                                    </form>
+                                </td>
+                            </tr>
+                        <?php endforeach; ?>
+                        <?php if (empty($sugestoesFila)): ?>
+                            <tr><td colspan="10" class="text-center text-muted py-3">Nenhum match por fila para os filtros atuais.</td></tr>
+                        <?php endif; ?>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </section>
+
+    <section class="mb-4">
+        <div class="bg-white border rounded-2 shadow-sm overflow-hidden">
+            <div class="p-3 border-bottom bg-light">
+                <div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-center gap-2">
+                    <div>
+                        <h2 class="h6 fw-bold mb-1">Matches prioritarios</h2>
+                        <div class="text-muted small">Quando existe 1 lancamento no extrato e varios iguais no sistema, concilia o primeiro por data e MOVCONTADOR.</div>
+                    </div>
+                    <form method="POST" onsubmit="return confirm('Conciliar prioritariamente o primeiro lancamento do sistema em cada grupo duplicado?');">
+                        <input type="hidden" name="acao" value="conciliar_auto_prioritario">
+                        <input type="hidden" name="cbcontador" value="<?= (int)$cbcontador ?>">
+                        <button type="submit" class="btn btn-warning btn-sm" <?= empty($sugestoesPrioritarias) ? 'disabled' : '' ?>>
+                            Conciliar <?= $qtdSugestoesPrioritarias ?> prioritario(s)
+                        </button>
+                    </form>
+                </div>
+            </div>
+            <div class="table-responsive">
+                <table class="table table-sm table-hover align-middle mb-0">
+                    <thead class="table-warning">
+                        <tr>
+                            <th>Extrato</th>
+                            <th>Data banco</th>
+                            <th>Historico banco</th>
+                            <th>Sistema escolhido</th>
+                            <th>Data sistema</th>
+                            <th>Historico sistema</th>
+                            <th>D/C</th>
+                            <th class="text-end">Valor</th>
+                            <th>Qtd grupo</th>
+                            <th>Acao</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <?php foreach ($sugestoesPrioritarias as $sugestao): ?>
+                            <tr>
+                                <td><?= (int)$sugestao['extrato_id'] ?></td>
+                                <td><?= dataHoraExtratoBanco($sugestao['data_extrato']) ?></td>
+                                <td><?= htmlspecialchars($sugestao['historico_extrato'] ?: '-') ?></td>
+                                <td><?= (int)$sugestao['MOVCONTADOR'] ?></td>
+                                <td><?= dataHoraExtratoBanco($sugestao['DTMOV']) ?></td>
+                                <td><?= htmlspecialchars($sugestao['HISTMOV'] ?: '-') ?></td>
+                                <td><?= htmlspecialchars($sugestao['tipo_extrato']) ?></td>
+                                <td class="text-end"><?= moedaExtratoBanco($sugestao['valor_extrato']) ?></td>
+                                <td><?= (int)$sugestao['qtd_por_extrato'] ?> x <?= (int)$sugestao['qtd_por_sistema'] ?></td>
+                                <td>
+                                    <form method="POST" onsubmit="return confirm('Confirmar conciliacao prioritaria deste match?');">
+                                        <input type="hidden" name="acao" value="conciliar_manual">
+                                        <input type="hidden" name="extrato_id" value="<?= (int)$sugestao['extrato_id'] ?>">
+                                        <input type="hidden" name="movcontador" value="<?= (int)$sugestao['MOVCONTADOR'] ?>">
+                                        <button type="submit" class="btn btn-sm btn-outline-warning">Conciliar</button>
+                                    </form>
+                                </td>
+                            </tr>
+                        <?php endforeach; ?>
+                        <?php if (empty($sugestoesPrioritarias)): ?>
+                            <tr><td colspan="10" class="text-center text-muted py-3">Nenhum match prioritario para os filtros atuais.</td></tr>
                         <?php endif; ?>
                     </tbody>
                 </table>
