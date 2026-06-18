@@ -777,6 +777,63 @@ foreach ($stmtPrazoCaixa->fetchAll(PDO::FETCH_ASSOC) as $prazo) {
     ];
 }
 
+$linhasCaixaExistentes = [];
+foreach ($resultados as $resultadoCaixa) {
+    $linhasCaixaExistentes[$resultadoCaixa['data_operacional'] . '|' . $resultadoCaixa['CBCONTADOR']] = true;
+}
+
+if (!empty($prazoPorCaixa)) {
+    $stmtFinalizadosPrazo = $pdo_master->prepare("
+        SELECT data_operacional, cbcontador, finalizado_em
+        FROM fechamento_caixas_finalizados
+        WHERE empresa_id = ?
+          AND data_operacional BETWEEN ? AND ?
+    ");
+    $stmtFinalizadosPrazo->execute([
+        $empresa_id,
+        date('Y-m-d', strtotime($inicio)),
+        date('Y-m-d', strtotime($fim)),
+    ]);
+
+    $finalizadosPorCaixa = [];
+    foreach ($stmtFinalizadosPrazo->fetchAll(PDO::FETCH_ASSOC) as $finalizadoPrazo) {
+        $finalizadosPorCaixa[$finalizadoPrazo['data_operacional'] . '|' . $finalizadoPrazo['cbcontador']] = $finalizadoPrazo['finalizado_em'];
+    }
+
+    foreach ($prazoPorCaixa as $chavePrazo => $prazoCaixaSomenteCr) {
+        if (isset($linhasCaixaExistentes[$chavePrazo])) {
+            continue;
+        }
+
+        [$dataOperacionalPrazo, $cbcontadorPrazo] = explode('|', $chavePrazo, 2);
+        $finalizadoEmPrazo = $finalizadosPorCaixa[$chavePrazo] ?? null;
+
+        if ($filtroFinalizado === 'finalizado' && $finalizadoEmPrazo === null) {
+            continue;
+        }
+        if ($filtroFinalizado === 'nao_finalizado' && $finalizadoEmPrazo !== null) {
+            continue;
+        }
+
+        $resultados[] = [
+            'data_operacional' => $dataOperacionalPrazo,
+            'CBCONTADOR' => (int)$cbcontadorPrazo,
+            'saldo_final' => 0.0,
+            'finalizado_em' => $finalizadoEmPrazo,
+        ];
+        $linhasCaixaExistentes[$chavePrazo] = true;
+    }
+
+    usort($resultados, static function ($a, $b) {
+        $comparacaoData = strcmp((string)$b['data_operacional'], (string)$a['data_operacional']);
+        if ($comparacaoData !== 0) {
+            return $comparacaoData;
+        }
+
+        return ((int)$a['CBCONTADOR']) <=> ((int)$b['CBCONTADOR']);
+    });
+}
+
 $stmtRecebiveisSemCaixa = $pdo_master->prepare("
     SELECT
         DATE(DATE_SUB(r.data_venda, INTERVAL 7 HOUR)) AS data_operacional,
