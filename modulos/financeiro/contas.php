@@ -826,6 +826,11 @@ require '../../layout/header.php';
     .saldo-card-negativo { color: #dc3545; }
     .saldo-card-positivo { color: #087f5b; }
     .contas-filter-actions .btn { white-space: nowrap; }
+    .acerto-check {
+        width: 1.5rem;
+        height: 1.5rem;
+        cursor: pointer;
+    }
     .contas-selector-tools {
         display: grid;
         grid-template-columns: minmax(180px, 1fr) auto auto auto;
