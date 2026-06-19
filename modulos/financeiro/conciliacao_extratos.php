@@ -2713,6 +2713,8 @@ if ($situacaoFiltro !== 'conciliados' && $cbcontador > 0 && $dataIni !== '' && $
         $paramsSugestoesExtratoFiltros,
         [$empresaId, $cbcontador, $dataIniSql, $dataFimExclusivoSql],
         $paramsSugestoesAutoFiltroHistorico,
+        $paramsSugestoesAutoFiltroHistorico,
+        $paramsSugestoesAutoFiltroHistorico,
         [$empresaId, $cbcontador, $dataIniSugestaoSql, $dataFimSugestaoSql, $empresaExtratoId, $cbcontadorExtrato, $dataIniSql, $dataFimExclusivoSql],
         $paramsSugestoesFiltros
     ));
