@@ -256,6 +256,7 @@ if (!$modoLeveAuto) {
            AND t.ESCONTADOR = b.TIPOES
         WHERE b.DTLANC BETWEEN ? AND ?
           AND b.EMPRESA = $empresa_id
+          AND b.TIPODOCORIGEM = 'VENDA'
           AND b.TIPOMOV = 'C'
           AND COALESCE(t.PAGTOEM, '') = 'DH'
           AND COALESCE(b.NUMDOCORIGEM, '0') <> '0'
