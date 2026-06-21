@@ -21,6 +21,7 @@ $modoLeveAuto = !empty($_GET['auto'])
 $conciliados = [];
 $matchSeguro = [];
 $matchMovimento = [];
+$matchBncDinheiro = [];
 $matchAproximado = [];
 $matchDuplicado = [];
 $recebimentos = [];
@@ -130,7 +131,7 @@ if (!$modoLeveAuto) {
 }
 
 /* =========================================================
-   MATCH POR DATA DO MOVIMENTO - VALOR + CM + DTEMISSAO
+   MATCH POR DATA DO MOVIMENTO - VALOR + DTEMISSAO
 ========================================================= */
 if (!$modoLeveAuto) {
     $stmtMovimento = $pdo_master->prepare("
@@ -141,12 +142,13 @@ if (!$modoLeveAuto) {
             r.valor_bruto,
             r.CMCONTADOR,
             DATE(r.data_venda) AS data_ref,
+            ABS(r.valor_bruto) AS valor_ref,
             ROW_NUMBER() OVER (
-                PARTITION BY DATE(r.data_venda), r.valor_bruto, r.CMCONTADOR
+                PARTITION BY DATE(r.data_venda), ABS(r.valor_bruto)
                 ORDER BY r.id
             ) AS rn,
             COUNT(*) OVER (
-                PARTITION BY DATE(r.data_venda), r.valor_bruto, r.CMCONTADOR
+                PARTITION BY DATE(r.data_venda), ABS(r.valor_bruto)
             ) AS qtd_rec
         FROM armazem_conciliacao_recebimentos r
         WHERE r.data_venda BETWEEN ? AND ?
@@ -169,12 +171,13 @@ if (!$modoLeveAuto) {
             c.VLRPARCELA,
             c.CMCONTADOR,
             DATE(c.DTEMISSAO) AS data_ref,
+            ABS(c.VLRPARCELA) AS valor_ref,
             ROW_NUMBER() OVER (
-                PARTITION BY DATE(c.DTEMISSAO), c.VLRPARCELA, c.CMCONTADOR
+                PARTITION BY DATE(c.DTEMISSAO), ABS(c.VLRPARCELA)
                 ORDER BY c.DTLANC ASC, c.CRCONTADOR ASC
             ) AS rn,
             COUNT(*) OVER (
-                PARTITION BY DATE(c.DTEMISSAO), c.VLRPARCELA, c.CMCONTADOR
+                PARTITION BY DATE(c.DTEMISSAO), ABS(c.VLRPARCELA)
             ) AS qtd_cr
         FROM armazem_cr001 c
         WHERE c.EMPRESA = $empresa_id
@@ -196,8 +199,7 @@ if (!$modoLeveAuto) {
         c.CMCONTADOR AS CM_CR
     FROM rec r
     INNER JOIN cr c
-        ON ABS(r.valor_bruto) = ABS(c.VLRPARCELA)
-       AND r.CMCONTADOR = c.CMCONTADOR
+        ON r.valor_ref = c.valor_ref
        AND r.data_ref = c.data_ref
        AND r.rn = c.rn
     WHERE r.qtd_rec = c.qtd_cr
@@ -205,6 +207,85 @@ if (!$modoLeveAuto) {
 ");
     $stmtMovimento->execute([$inicio, $fim]);
     $matchMovimento = $stmtMovimento->fetchAll(PDO::FETCH_ASSOC);
+}
+
+/* =========================================================
+   POSSIVEIS VENDAS EM DINHEIRO FECHADAS ERRADAS
+========================================================= */
+if (!$modoLeveAuto) {
+    $stmtBncDinheiro = $pdo_master->prepare("
+    WITH rec AS (
+        SELECT
+            r.id,
+            r.data_venda,
+            r.pagador,
+            r.valor_bruto,
+            r.CMCONTADOR,
+            DATE(r.data_venda) AS data_ref,
+            ABS(r.valor_bruto) AS valor_ref
+        FROM armazem_conciliacao_recebimentos r
+        WHERE r.data_venda BETWEEN ? AND ?
+          AND r.empresa_id = $empresa_id
+          AND r.CRCONTADOR IS NULL
+          AND NOT EXISTS (
+              SELECT 1
+              FROM armazem_cr001 cx
+              WHERE cx.recebimento_id = r.id
+                AND cx.EMPRESA = $empresa_id
+                AND COALESCE(cx.excluido_firebird, 'N') = 'N'
+                AND COALESCE(cx.STATUS, '') <> 'QT'
+          )
+    ),
+    bnc AS (
+        SELECT
+            b.MOVCONTADOR,
+            b.NUMDOCORIGEM,
+            b.DTLANC,
+            b.DTMOV,
+            b.HISTMOV,
+            b.VALORMOV,
+            b.CMCONTADOR,
+            b.CBCONTADOR,
+            b.TIPOES,
+            t.DESCES,
+            DATE(b.DTLANC) AS data_ref,
+            ABS(b.VALORMOV) AS valor_ref
+        FROM armazem_bnc001 b
+        INNER JOIN armazem_bnc005 t
+            ON t.EMPRESA = b.EMPRESA
+           AND t.ESCONTADOR = b.TIPOES
+        WHERE b.DTLANC BETWEEN ? AND ?
+          AND b.EMPRESA = $empresa_id
+          AND b.TIPOMOV = 'C'
+          AND COALESCE(t.PAGTOEM, '') = 'DH'
+          AND COALESCE(b.NUMDOCORIGEM, '0') <> '0'
+          AND COALESCE(b.deletado, 'N') <> 'S'
+    )
+    SELECT
+        r.id AS rec_id,
+        r.data_venda,
+        r.pagador,
+        r.valor_bruto,
+        r.CMCONTADOR AS CM_REC,
+        b.MOVCONTADOR,
+        b.NUMDOCORIGEM,
+        b.DTLANC,
+        b.DTMOV,
+        b.HISTMOV,
+        b.VALORMOV,
+        b.CMCONTADOR AS CM_BNC,
+        b.CBCONTADOR,
+        b.TIPOES,
+        b.DESCES,
+        ABS(TIMESTAMPDIFF(MINUTE, r.data_venda, b.DTLANC)) AS dif_minutos
+    FROM rec r
+    INNER JOIN bnc b
+        ON r.valor_ref = b.valor_ref
+       AND r.data_ref = b.data_ref
+    ORDER BY r.data_venda ASC, r.id ASC, b.DTLANC ASC, b.MOVCONTADOR ASC
+");
+    $stmtBncDinheiro->execute([$inicio, $fim, $inicio, $fim]);
+    $matchBncDinheiro = $stmtBncDinheiro->fetchAll(PDO::FETCH_ASSOC);
 }
 
 /* =========================================================
@@ -539,7 +620,7 @@ function renderizarItensVendaRecebimentos(array $itens): void
             <div class="col-md-2">
                 <a href="conciliar_auto.php?modo=movimento&data=<?= urlencode($data) ?>&lote=50" class="btn btn-info w-100">
                     Data do movimento
-                    <span class="d-block small fw-normal">valor + CM + DTEMISSAO</span>
+                    <span class="d-block small fw-normal">valor + DTEMISSAO</span>
                 </a>
             </div>
 
@@ -569,7 +650,7 @@ function renderizarItensVendaRecebimentos(array $itens): void
 <div class="alert alert-light border">
     <strong>Regras dos botoes:</strong>
     <span class="d-block">Seguros: mesmo valor e mesmo minuto entre recebivel e CR001. Processa todos os pendentes da empresa.</span>
-    <span class="d-block">Data do movimento: mesmo valor, mesmo CM e data do recebivel igual a DTEMISSAO do CR001. Processa todos os pendentes da empresa.</span>
+    <span class="d-block">Data do movimento: mesmo valor e data do recebivel igual a DTEMISSAO do CR001. Processa todos os pendentes da empresa.</span>
     <span class="d-block">Aproximados: mesmo valor com ate 5 minutos de diferenca. Este respeita a data filtrada na tela.</span>
 </div>
 
@@ -666,7 +747,7 @@ function renderizarItensVendaRecebimentos(array $itens): void
 
 <!-- MATCH POR DATA DO MOVIMENTO -->
 <div class="card shadow-sm mb-3">
-    <div class="card-header bg-info text-white">MATCH POR DATA DO MOVIMENTO - Valor + CM + DTEMISSAO</div>
+    <div class="card-header bg-info text-white">MATCH POR DATA DO MOVIMENTO - Valor + DTEMISSAO</div>
     <div class="card-body p-2" style="max-height:300px; overflow:auto;">
         <table class="table table-sm table-bordered text-center mb-0">
             <thead>
@@ -703,6 +784,68 @@ function renderizarItensVendaRecebimentos(array $itens): void
                             <td><?= !empty($m['DTEMISSAO']) ? date('d/m/Y', strtotime($m['DTEMISSAO'])) : '-' ?></td>
                             <td>R$ <?= number_format((float)$m['VLRPARCELA'], 2, ',', '.') ?></td>
                             <td><?= $m['CM_CR'] ?></td>
+                        </tr>
+                    <?php endforeach; ?>
+                <?php endif; ?>
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<!-- POSSIVEIS VENDAS EM DINHEIRO FECHADAS ERRADAS -->
+<div class="card shadow-sm mb-3">
+    <div class="card-header bg-secondary text-white">POSSIVEIS VENDAS EM DINHEIRO FECHADAS ERRADAS - Recebivel x BNC001</div>
+    <div class="card-body p-2" style="max-height:300px; overflow:auto;">
+        <table class="table table-sm table-bordered text-center mb-0">
+            <thead>
+                <tr class="table-light">
+                    <th colspan="5">Recebivel pendente</th>
+                    <th colspan="8">BNC001 em dinheiro</th>
+                </tr>
+                <tr>
+                    <th>ID</th>
+                    <th>Data</th>
+                    <th>Pagador</th>
+                    <th>Valor</th>
+                    <th>CM</th>
+                    <th>MOV</th>
+                    <th>Venda</th>
+                    <th>Data</th>
+                    <th>Valor</th>
+                    <th>Conta</th>
+                    <th>Tipo</th>
+                    <th>Dif.</th>
+                    <th>Historico</th>
+                </tr>
+            </thead>
+            <tbody>
+                <?php if (empty($matchBncDinheiro)): ?>
+                    <tr>
+                        <td colspan="13" class="text-center text-muted">Nenhuma venda em dinheiro com mesmo valor e data dos recebiveis pendentes.</td>
+                    </tr>
+                <?php else: ?>
+                    <?php foreach ($matchBncDinheiro as $m): ?>
+                        <tr>
+                            <td><?= (int)$m['rec_id'] ?></td>
+                            <td><?= !empty($m['data_venda']) ? date('d/m/Y H:i', strtotime($m['data_venda'])) : '-' ?></td>
+                            <td class="text-start"><?= htmlspecialchars($m['pagador'] ?? '') ?></td>
+                            <td>R$ <?= number_format((float)$m['valor_bruto'], 2, ',', '.') ?></td>
+                            <td><?= $m['CM_REC'] ?? '-' ?></td>
+                            <td><?= (int)$m['MOVCONTADOR'] ?></td>
+                            <td><?= htmlspecialchars((string)($m['NUMDOCORIGEM'] ?? '')) ?></td>
+                            <td><?= !empty($m['DTLANC']) ? date('d/m/Y H:i', strtotime($m['DTLANC'])) : '-' ?></td>
+                            <td>R$ <?= number_format((float)$m['VALORMOV'], 2, ',', '.') ?></td>
+                            <td><?= htmlspecialchars((string)($m['CBCONTADOR'] ?? '')) ?></td>
+                            <td>
+                                <div><?= htmlspecialchars((string)($m['TIPOES'] ?? '')) ?></div>
+                                <div class="small text-muted"><?= htmlspecialchars((string)($m['DESCES'] ?? '')) ?></div>
+                            </td>
+                            <td><?= (int)($m['dif_minutos'] ?? 0) ?> min</td>
+                            <td class="text-start">
+                                <div class="small text-truncate" style="max-width: 260px;" title="<?= htmlspecialchars($m['HISTMOV'] ?? '') ?>">
+                                    <?= htmlspecialchars($m['HISTMOV'] ?? '') ?>
+                                </div>
+                            </td>
                         </tr>
                     <?php endforeach; ?>
                 <?php endif; ?>

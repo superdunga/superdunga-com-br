@@ -95,7 +95,7 @@ if ($modo === 'seguro') {
 }
 
 /* =========================================================
-   MATCH POR MOVIMENTO - VALOR + CM + DATA_VENDA = DTEMISSAO
+   MATCH POR MOVIMENTO - VALOR + DATA_VENDA = DTEMISSAO
 ========================================================= */
 $sqlMovimento = "
     WITH rec AS (
@@ -104,12 +104,13 @@ $sqlMovimento = "
             r.CMCONTADOR,
             r.valor_bruto,
             DATE(r.data_venda) AS data_ref,
+            ABS(r.valor_bruto) AS valor_ref,
             ROW_NUMBER() OVER (
-                PARTITION BY DATE(r.data_venda), r.valor_bruto, r.CMCONTADOR
+                PARTITION BY DATE(r.data_venda), ABS(r.valor_bruto)
                 ORDER BY r.id
             ) AS rn,
             COUNT(*) OVER (
-                PARTITION BY DATE(r.data_venda), r.valor_bruto, r.CMCONTADOR
+                PARTITION BY DATE(r.data_venda), ABS(r.valor_bruto)
             ) AS qtd_rec
         FROM armazem_conciliacao_recebimentos r
         WHERE NOT EXISTS (
@@ -128,12 +129,13 @@ $sqlMovimento = "
             c.CMCONTADOR,
             c.VLRPARCELA,
             DATE(c.DTEMISSAO) AS data_ref,
+            ABS(c.VLRPARCELA) AS valor_ref,
             ROW_NUMBER() OVER (
-                PARTITION BY DATE(c.DTEMISSAO), c.VLRPARCELA, c.CMCONTADOR
+                PARTITION BY DATE(c.DTEMISSAO), ABS(c.VLRPARCELA)
                 ORDER BY c.DTLANC ASC, c.CRCONTADOR ASC
             ) AS rn,
             COUNT(*) OVER (
-                PARTITION BY DATE(c.DTEMISSAO), c.VLRPARCELA, c.CMCONTADOR
+                PARTITION BY DATE(c.DTEMISSAO), ABS(c.VLRPARCELA)
             ) AS qtd_cr
         FROM armazem_cr001 c
         WHERE c.recebimento_id IS NULL
@@ -146,8 +148,7 @@ $sqlMovimento = "
     SELECT r.id rec_id, r.CMCONTADOR, c.CRCONTADOR
     FROM rec r
     JOIN cr c
-      ON ABS(r.valor_bruto) = ABS(c.VLRPARCELA)
-     AND r.CMCONTADOR = c.CMCONTADOR
+      ON r.valor_ref = c.valor_ref
      AND r.data_ref = c.data_ref
      AND r.rn = c.rn
     WHERE r.qtd_rec = c.qtd_cr
