@@ -23,7 +23,7 @@ function sistemaModulosPadrao(): array
         ['codigo' => 'fechamento_dinheiro', 'grupo' => 'Fechamento', 'nome' => 'Conciliacao de Dinheiro', 'url' => 'modulos/fechamentodecaixa/conciliacao_dinheiro.php', 'ordem' => 120],
         ['codigo' => 'fechamento_importar_recebimentos', 'grupo' => 'Fechamento', 'nome' => 'Recebimentos', 'url' => 'modulos/fechamentodecaixa/menu_recebimentos.php', 'ordem' => 130],
         ['codigo' => 'fechamento_resumo_prazo', 'grupo' => 'Fechamento', 'nome' => 'Resumo Vendas a Prazo', 'url' => 'modulos/fechamentodecaixa/resumo_prazo.php', 'ordem' => 140],
-        ['codigo' => 'fechamento_metas_vendas', 'grupo' => 'Fechamento', 'nome' => 'Metas de Vendas', 'url' => 'modulos/fechamentodecaixa/metas_vendas.php', 'ordem' => 150, 'somente_master' => true],
+        ['codigo' => 'fechamento_metas_vendas', 'grupo' => 'Fechamento', 'nome' => 'Metas de Vendas', 'url' => 'modulos/fechamentodecaixa/metas_vendas.php', 'ordem' => 150, 'padrao_bloqueado' => true],
 
         ['codigo' => 'auditoria_compras', 'grupo' => 'Auditoria', 'nome' => 'Compras', 'url' => 'modulos/auditoria/listar.php', 'ordem' => 210],
         ['codigo' => 'auditoria_itens_fora_padrao', 'grupo' => 'Auditoria', 'nome' => 'Itens fora do padrao', 'url' => 'modulos/auditoria/itens_fora_padrao.php', 'ordem' => 220],
@@ -317,6 +317,12 @@ function moduloPerfilPermitido(PDO $pdo, string $perfil, string $codigo): bool
     }
 
     if (!perfilTemConfiguracaoModulos($pdo, $perfil)) {
+        foreach (sistemaModulosPadrao() as $moduloPadrao) {
+            if (($moduloPadrao['codigo'] ?? '') === $codigo && !empty($moduloPadrao['padrao_bloqueado'])) {
+                return false;
+            }
+        }
+
         return true;
     }
 
