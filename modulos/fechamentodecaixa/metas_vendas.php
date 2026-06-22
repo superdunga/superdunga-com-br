@@ -9,9 +9,10 @@ $fimMesAtual = date('Y-m-t', strtotime($inicioMesAtual));
 $mesAnterior = date('Y-m', strtotime($inicioMesAtual . ' -1 month'));
 $inicioMesAnterior = $mesAnterior . '-01';
 $fimMesAnterior = date('Y-m-t', strtotime($inicioMesAnterior));
-$dataReferencia = min(date('Y-m-d'), $fimMesAtual);
+$dataReferencia = min(date('Y-m-d', strtotime('-1 day')), $fimMesAtual);
+$temDiasFechados = $dataReferencia >= $inicioMesAtual;
 $diasMesAtual = (int)date('t', strtotime($inicioMesAtual));
-$diasDecorridos = max(1, (int)date('j', strtotime($dataReferencia)));
+$diasDecorridos = $temDiasFechados ? (int)date('j', strtotime($dataReferencia)) : 0;
 
 $pdo_master->exec("
     CREATE TABLE IF NOT EXISTS fechamento_metas_vendas (
@@ -205,7 +206,7 @@ while ($cursor <= $fimComparativo) {
 }
 
 $totalMesAnterior = array_sum(array_column($vendasMesAnterior, 'total'));
-$mediaDiaAtual = $totalAtualAteReferencia / $diasDecorridos;
+$mediaDiaAtual = $diasDecorridos > 0 ? $totalAtualAteReferencia / $diasDecorridos : 0.0;
 $ticketMedioAtualAteReferencia = $qtdVendasAtualAteReferencia > 0 ? $totalAtualAteReferencia / $qtdVendasAtualAteReferencia : 0.0;
 $previsaoFechamento = $totalAnteriorComparavel > 0
     ? ($totalAtualAteReferencia / $totalAnteriorComparavel) * $totalMesAnterior
@@ -268,7 +269,9 @@ require '../../layout/header.php';
             <div class="row g-3 mb-3">
                 <div class="col-md-6 col-xl-3">
                     <div class="border rounded-2 p-3 h-100">
-                        <div class="text-muted small">Vendido ate <?= date('d/m', strtotime($dataReferencia)) ?></div>
+                        <div class="text-muted small">
+                            <?= $temDiasFechados ? 'Vendido ate ' . date('d/m', strtotime($dataReferencia)) : 'Sem dias fechados no mes' ?>
+                        </div>
                         <div class="h4 mb-1"><?= moedaMetaVendas($totalAtualAteReferencia) ?></div>
                         <div class="small">Meta: <?= $metaVendas > 0 ? moedaMetaVendas($metaVendas) : 'Nao informada' ?></div>
                     </div>
