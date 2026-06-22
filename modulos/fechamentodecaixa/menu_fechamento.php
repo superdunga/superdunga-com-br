@@ -39,6 +39,14 @@ $opcoes = [
         'icone' => 'RP',
         'botao' => 'btn-info',
     ],
+    [
+        'titulo' => 'Metas de Vendas',
+        'descricao' => 'Acompanhe meta mensal, evolucao e previsao de fechamento.',
+        'href' => 'metas_vendas.php',
+        'modulo' => 'fechamento_metas_vendas',
+        'icone' => 'MV',
+        'botao' => 'btn-dark',
+    ],
 ];
 
 $opcoes = filtrarOpcoesPorModulo($pdo_master, $empresaId, $opcoes);
