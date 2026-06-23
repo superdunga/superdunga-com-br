@@ -109,20 +109,15 @@ function mbDescricaoConta($conta)
         return '';
     }
 
-    $partes = [];
-    if (!empty($conta['CBCONTADOR'])) {
-        $partes[] = $conta['CBCONTADOR'];
-    }
-    if (!empty($conta['NUMERO'])) {
-        $partes[] = $conta['NUMERO'];
-    }
     if (!empty($conta['DESCABREV'])) {
-        $partes[] = $conta['DESCABREV'];
-    } elseif (!empty($conta['TITULAR'])) {
-        $partes[] = $conta['TITULAR'];
+        $fallback = $conta['DESCABREV'];
+    } elseif (!empty($conta['NUMERO'])) {
+        $fallback = $conta['NUMERO'];
+    } else {
+        $fallback = $conta['CBCONTADOR'] ?? '';
     }
 
-    return implode(' - ', $partes);
+    return trim((string)($conta['TITULAR'] ?? '')) ?: (string)$fallback;
 }
 
 function mbCarregarContrapartida(PDO $pdo, $empresaId, $movcontador)
@@ -490,18 +485,23 @@ $contasStmt = $pdo->prepare("
     WHERE EMPRESA = ?
       AND COALESCE(CONTABLOQUEADA, 'N') <> 'S'
       AND COALESCE(excluido_firebird, 'N') <> 'S'
-    ORDER BY DESCABREV, NUMERO, CBCONTADOR
+    ORDER BY
+        CASE WHEN TRIM(COALESCE(TITULAR, '')) = '' THEN 1 ELSE 0 END,
+        TITULAR,
+        CBCONTADOR
 ");
 $contasStmt->execute([$empresaId]);
 $contas = $contasStmt->fetchAll(PDO::FETCH_ASSOC);
 
 $tiposStmt = $pdo->prepare("
-    SELECT ESCONTADOR, DESCES, TIPOMOV, CONTRAP_TIPOES, CONTRAP_TIPOMOV, CONTRAP_CBCONTADOR
+    SELECT ESCONTADOR, DESCES, TIPOMOV, GRUPOBNC, CONTRAP_TIPOES, CONTRAP_TIPOMOV, CONTRAP_CBCONTADOR
     FROM armazem_bnc005
     WHERE EMPRESA = ?
       AND COALESCE(REGDISAB, 'N') <> 'S'
       AND COALESCE(excluido_firebird, 'N') <> 'S'
-    ORDER BY DESCES, ESCONTADOR
+    ORDER BY
+        COALESCE(GRUPOBNC, 0),
+        ESCONTADOR
 ");
 $tiposStmt->execute([$empresaId]);
 $tipos = $tiposStmt->fetchAll(PDO::FETCH_ASSOC);
