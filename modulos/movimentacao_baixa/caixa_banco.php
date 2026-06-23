@@ -900,7 +900,17 @@ require_once __DIR__ . '/../../layout/header.php';
 
                 <div class="mb-field w2">
                     <label for="valor">Valor</label>
-                    <input type="text" id="valor" name="valor" value="<?= mbH($form['valor']) ?>" inputmode="decimal" required>
+                    <input
+                        type="text"
+                        id="valor"
+                        name="valor"
+                        value="<?= mbH($form['valor']) ?>"
+                        inputmode="decimal"
+                        autocomplete="off"
+                        pattern="[0-9.,]*"
+                        placeholder="0,00"
+                        required
+                    >
                 </div>
 
                 <div class="mb-field w12">
@@ -1080,6 +1090,7 @@ require_once __DIR__ . '/../../layout/header.php';
     const tipoVisual = document.getElementById('tipomov_visual');
     const contrapBox = document.getElementById('contrapBox');
     const contrapSelect = document.getElementById('contrap_cbcontador');
+    const valorInput = document.getElementById('valor');
 
     function nomeTipoMov(valor) {
         valor = (valor || '').toUpperCase();
@@ -1111,6 +1122,48 @@ require_once __DIR__ . '/../../layout/header.php';
 
     tipoSelect.addEventListener('change', atualizarTipo);
     atualizarTipo();
+
+    function formatarValorDecimal(valor) {
+        valor = (valor || '').toString().trim().replace(/[^\d.,]/g, '');
+        if (!valor) {
+            return '';
+        }
+
+        let numero;
+        if (valor.includes(',')) {
+            numero = Number(valor.replace(/\./g, '').replace(',', '.'));
+        } else {
+            numero = Number(valor);
+        }
+
+        if (!Number.isFinite(numero)) {
+            return '';
+        }
+
+        return numero.toLocaleString('pt-BR', {
+            minimumFractionDigits: 2,
+            maximumFractionDigits: 2
+        });
+    }
+
+    if (valorInput) {
+        valorInput.addEventListener('input', function () {
+            this.value = this.value.replace(/[^\d.,]/g, '');
+        });
+
+        valorInput.addEventListener('blur', function () {
+            this.value = formatarValorDecimal(this.value);
+        });
+
+        const form = valorInput.closest('form');
+        if (form) {
+            form.addEventListener('submit', function () {
+                valorInput.value = formatarValorDecimal(valorInput.value);
+            });
+        }
+
+        valorInput.value = formatarValorDecimal(valorInput.value);
+    }
 })();
 </script>
 
