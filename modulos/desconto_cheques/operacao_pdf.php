@@ -46,6 +46,49 @@ foreach ($documentos as $documento) {
     $valorLiquidoTitulos += (float)$documento['valor_liquido'];
 }
 
+$basePublicDir = dirname(__DIR__, 2);
+$anexosCheques = [];
+foreach ($documentos as $doc) {
+    if (($doc['tipo_documento'] ?? '') !== 'CHEQUE') {
+        continue;
+    }
+
+    $frenteCaminho = (string)($doc['arquivo_frente_caminho'] ?: $doc['arquivo_caminho'] ?: '');
+    $frenteNome = (string)($doc['arquivo_frente_nome'] ?: $doc['arquivo_nome'] ?: 'Frente do cheque');
+    $versoCaminho = (string)($doc['arquivo_verso_caminho'] ?? '');
+    $versoNome = (string)($doc['arquivo_verso_nome'] ?: 'Verso do cheque');
+
+    foreach ([
+        ['lado' => 'Frente', 'caminho' => $frenteCaminho, 'nome' => $frenteNome],
+        ['lado' => 'Verso', 'caminho' => $versoCaminho, 'nome' => $versoNome],
+    ] as $anexo) {
+        if ($anexo['caminho'] === '') {
+            continue;
+        }
+
+        $arquivoAbs = $basePublicDir . '/' . ltrim($anexo['caminho'], '/\\');
+        $ext = strtolower(pathinfo($anexo['caminho'], PATHINFO_EXTENSION));
+        $larguraImagem = 0;
+        $alturaImagem = 0;
+        if (is_file($arquivoAbs) && in_array($ext, ['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp'], true)) {
+            $dimensoes = @getimagesize($arquivoAbs);
+            if (is_array($dimensoes)) {
+                $larguraImagem = (int)($dimensoes[0] ?? 0);
+                $alturaImagem = (int)($dimensoes[1] ?? 0);
+            }
+        }
+        $anexosCheques[] = [
+            'documento' => trim((string)($doc['numero_documento'] ?? '')),
+            'lado' => $anexo['lado'],
+            'nome' => $anexo['nome'],
+            'caminho' => $anexo['caminho'],
+            'existe' => is_file($arquivoAbs),
+            'imagem' => in_array($ext, ['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp'], true),
+            'rotacionar' => $alturaImagem > $larguraImagem,
+        ];
+    }
+}
+
 $nomeArquivo = 'desconto_cheques_operacao_' . $operacaoId . '.pdf';
 ?>
 <!DOCTYPE html>
@@ -130,12 +173,13 @@ $nomeArquivo = 'desconto_cheques_operacao_' . $operacaoId . '.pdf';
             border-collapse: collapse;
             margin-bottom: 14px;
             font-size: 11px;
+            table-layout: fixed;
         }
 
         th, td {
             border: 1px solid #d9e2ef;
             padding: 6px;
-            vertical-align: top;
+            vertical-align: middle;
         }
 
         th {
@@ -160,6 +204,68 @@ $nomeArquivo = 'desconto_cheques_operacao_' . $operacaoId . '.pdf';
             font-size: 17px;
             font-weight: bold;
             color: #0f2d68;
+        }
+
+        .titulos th:nth-child(1) { width: 16%; }
+        .titulos th:nth-child(2) { width: 29%; }
+        .titulos th:nth-child(3) { width: 12%; }
+        .titulos th:nth-child(4) { width: 8%; }
+        .titulos th:nth-child(5) { width: 12%; }
+        .titulos th:nth-child(6) { width: 11%; }
+        .titulos th:nth-child(7) { width: 12%; }
+
+        .anexos {
+            margin-top: 16px;
+            page-break-before: auto;
+        }
+
+        .anexo-grid {
+            display: grid;
+            grid-template-columns: 1fr;
+            gap: 12px;
+        }
+
+        .anexo-card {
+            border: 1px solid #d9e2ef;
+            border-radius: 4px;
+            padding: 8px;
+            page-break-inside: avoid;
+        }
+
+        .anexo-title {
+            color: #0f2d68;
+            font-size: 12px;
+            font-weight: bold;
+            margin-bottom: 6px;
+        }
+
+        .anexo-frame {
+            align-items: center;
+            background: #f8fafc;
+            border: 1px solid #eef2f7;
+            display: flex;
+            height: 80mm;
+            justify-content: center;
+            overflow: hidden;
+            width: 170mm;
+        }
+
+        .anexo-frame img {
+            display: block;
+            max-height: 80mm;
+            max-width: 170mm;
+            object-fit: contain;
+        }
+
+        .anexo-frame.rotacionar img {
+            max-height: 170mm;
+            max-width: 80mm;
+            transform: rotate(-90deg);
+            transform-origin: center center;
+        }
+
+        .anexo-card {
+            max-width: 100%;
         }
 
         .no-print {
@@ -229,16 +335,14 @@ $nomeArquivo = 'desconto_cheques_operacao_' . $operacaoId . '.pdf';
         </div>
 
         <div class="section-title">Titulos</div>
-        <table>
+        <table class="titulos">
             <thead>
                 <tr>
                     <th>Documento</th>
                     <th>Emissor</th>
                     <th>Vencimento</th>
-                    <th>Compensacao</th>
                     <th class="text-end">Dias</th>
                     <th class="text-end">Valor</th>
-                    <th class="text-end">Taxa total</th>
                     <th class="text-end">Desconto</th>
                     <th class="text-end">Liquido</th>
                 </tr>
@@ -250,22 +354,19 @@ $nomeArquivo = 'desconto_cheques_operacao_' . $operacaoId . '.pdf';
                         <td>
                             <?= htmlspecialchars((string)($doc['nome_emissor'] ?: '-')) ?>
                             <?php if (!empty($doc['cnpj_cpf_emissor'])): ?>
-                                <div><?= htmlspecialchars(formatarCpfCnpjDC($doc['cnpj_cpf_emissor'])) ?></div>
+                                | <?= htmlspecialchars(formatarCpfCnpjDC($doc['cnpj_cpf_emissor'])) ?>
                             <?php endif; ?>
                         </td>
                         <td><?= dataBRDC($doc['data_vencimento']) ?></td>
-                        <td><?= dataBRDC($doc['data_compensacao']) ?></td>
                         <td class="text-end"><?= (int)$doc['prazo_dias'] ?></td>
                         <td class="text-end"><?= moedaDC($doc['valor']) ?></td>
-                        <td class="text-end"><?= percentualDC(taxaTotalDocumentoDC($doc)) ?></td>
                         <td class="text-end"><?= moedaDC($doc['desconto_valor']) ?></td>
                         <td class="text-end"><?= moedaDC($doc['valor_liquido']) ?></td>
                     </tr>
                 <?php endforeach; ?>
                 <tr class="total-row">
-                    <td colspan="5">Total</td>
+                    <td colspan="4">Total</td>
                     <td class="text-end"><?= moedaDC($operacao['valor_bruto']) ?></td>
-                    <td></td>
                     <td class="text-end"><?= moedaDC($operacao['valor_desconto']) ?></td>
                     <td class="text-end"><?= moedaDC($valorLiquidoTitulos) ?></td>
                 </tr>
@@ -295,6 +396,28 @@ $nomeArquivo = 'desconto_cheques_operacao_' . $operacaoId . '.pdf';
         <?php endif; ?>
 
         <div class="final">Valor liquido da operacao: <?= moedaDC($operacao['valor_liquido']) ?></div>
+
+        <?php if (!empty($anexosCheques)): ?>
+            <section class="anexos">
+                <div class="section-title">Anexos dos cheques</div>
+                <div class="anexo-grid">
+                    <?php foreach ($anexosCheques as $anexo): ?>
+                        <div class="anexo-card">
+                            <div class="anexo-title">
+                                Cheque <?= htmlspecialchars($anexo['documento'] ?: '-') ?> - <?= htmlspecialchars($anexo['lado']) ?>
+                            </div>
+                            <?php if ($anexo['existe'] && $anexo['imagem']): ?>
+                                <div class="anexo-frame <?= $anexo['rotacionar'] ? 'rotacionar' : '' ?>">
+                                    <img src="../../<?= htmlspecialchars($anexo['caminho']) ?>" alt="<?= htmlspecialchars($anexo['lado'] . ' do cheque ' . ($anexo['documento'] ?: '')) ?>">
+                                </div>
+                            <?php else: ?>
+                                <a target="_blank" href="../../<?= htmlspecialchars($anexo['caminho']) ?>"><?= htmlspecialchars($anexo['nome'] ?: 'Abrir anexo') ?></a>
+                            <?php endif; ?>
+                        </div>
+                    <?php endforeach; ?>
+                </div>
+            </section>
+        <?php endif; ?>
     </section>
 </main>
 

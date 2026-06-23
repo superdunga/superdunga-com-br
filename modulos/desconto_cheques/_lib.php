@@ -102,6 +102,10 @@ function garantirTabelasDescontoCheques(PDO $pdo): void
             nome_emissor VARCHAR(180) NULL,
             arquivo_nome VARCHAR(255) NULL,
             arquivo_caminho VARCHAR(255) NULL,
+            arquivo_frente_nome VARCHAR(255) NULL,
+            arquivo_frente_caminho VARCHAR(255) NULL,
+            arquivo_verso_nome VARCHAR(255) NULL,
+            arquivo_verso_caminho VARCHAR(255) NULL,
             valor DECIMAL(15,2) NOT NULL DEFAULT 0,
             data_vencimento DATE NOT NULL,
             data_compensacao DATE NOT NULL,
@@ -119,6 +123,10 @@ function garantirTabelasDescontoCheques(PDO $pdo): void
 
     garantirColunaDC($pdo, 'desconto_cheques_documentos', 'cnpj_cpf_emissor', "VARCHAR(20) NULL AFTER numero_documento");
     garantirColunaDC($pdo, 'desconto_cheques_documentos', 'nome_emissor', "VARCHAR(180) NULL AFTER cnpj_cpf_emissor");
+    garantirColunaDC($pdo, 'desconto_cheques_documentos', 'arquivo_frente_nome', "VARCHAR(255) NULL AFTER arquivo_caminho");
+    garantirColunaDC($pdo, 'desconto_cheques_documentos', 'arquivo_frente_caminho', "VARCHAR(255) NULL AFTER arquivo_frente_nome");
+    garantirColunaDC($pdo, 'desconto_cheques_documentos', 'arquivo_verso_nome', "VARCHAR(255) NULL AFTER arquivo_frente_caminho");
+    garantirColunaDC($pdo, 'desconto_cheques_documentos', 'arquivo_verso_caminho', "VARCHAR(255) NULL AFTER arquivo_verso_nome");
     garantirIndiceDC($pdo, 'desconto_cheques_documentos', 'idx_dc_documentos_emissor_vencimento', ['cnpj_cpf_emissor', 'data_vencimento']);
 }
 
@@ -742,7 +750,14 @@ function buscarResumoEmissorAVencerDC(PDO $pdo, int $empresaId, string $cnpjCpf,
         ];
     }
 
-    $params = [$empresaId, $digitos, date('Y-m-d')];
+    $digitosConsulta = [$digitos];
+    if (strlen($digitos) === 15 && preg_match('/^(\d{8})\d(0001\d{2})$/', $digitos, $match)) {
+        $digitosConsulta[] = $match[1] . $match[2];
+    }
+    $digitosConsulta = array_values(array_unique($digitosConsulta));
+    $placeholdersDigitos = implode(',', array_fill(0, count($digitosConsulta), '?'));
+
+    $params = array_merge([$empresaId], $digitosConsulta, [date('Y-m-d')]);
     $filtroIgnorar = '';
     if ($ignorarDocumentoId > 0) {
         $filtroIgnorar = ' AND d.id <> ?';
@@ -762,7 +777,7 @@ function buscarResumoEmissorAVencerDC(PDO $pdo, int $empresaId, string $cnpjCpf,
         FROM desconto_cheques_documentos d
         INNER JOIN desconto_cheques_operacoes o ON o.id = d.operacao_id
         WHERE o.empresa_id = ?
-          AND d.cnpj_cpf_emissor = ?
+          AND d.cnpj_cpf_emissor IN ({$placeholdersDigitos})
           AND d.data_vencimento >= ?
           AND o.status IN ('ABERTA', 'CONFIRMADA')
           {$filtroIgnorar}
@@ -780,9 +795,19 @@ function buscarResumoEmissorAVencerDC(PDO $pdo, int $empresaId, string $cnpjCpf,
     }
     unset($documento);
 
+    $nomeEmissor = '';
+    foreach ($documentos as $documento) {
+        if (!empty($documento['nome_emissor'])) {
+            $nomeEmissor = (string)$documento['nome_emissor'];
+            break;
+        }
+    }
+
     return [
         'cnpj_cpf' => $digitos,
+        'cnpj_cpf_consulta' => $digitosConsulta,
         'cnpj_cpf_formatado' => formatarCpfCnpjDC($digitos),
+        'nome_emissor' => $nomeEmissor,
         'quantidade' => count($documentos),
         'valor_total' => round($total, 2),
         'valor_total_formatado' => moedaDC($total),

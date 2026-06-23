@@ -14,6 +14,21 @@ garantirFeriadosVariaveisDC($pdo_master, $empresaId, (int)date('Y') - 1, 6);
 
 $mensagemErro = '';
 
+function arquivoUploadLinhaDC(?array $arquivos, int $idx): array
+{
+    if (!is_array($arquivos) || !isset($arquivos['name'][$idx])) {
+        return ['error' => UPLOAD_ERR_NO_FILE];
+    }
+
+    return [
+        'name' => $arquivos['name'][$idx],
+        'type' => $arquivos['type'][$idx] ?? '',
+        'tmp_name' => $arquivos['tmp_name'][$idx] ?? '',
+        'error' => $arquivos['error'][$idx] ?? UPLOAD_ERR_NO_FILE,
+        'size' => $arquivos['size'][$idx] ?? 0,
+    ];
+}
+
 $stmtClientes = $pdo_master->prepare("
     SELECT *
     FROM desconto_cheques_clientes
@@ -34,6 +49,7 @@ $feriadosEspecificos = feriadosEspecificosDC($pdo_master, $empresaId, (int)date(
 $operacaoEditarId = (int)($_GET['editar'] ?? $_POST['operacao_id'] ?? 0);
 $operacaoEditar = null;
 $documentosEditar = [];
+$mostrarFormulario = isset($_GET['nova']) || $operacaoEditarId > 0 || $_SERVER['REQUEST_METHOD'] === 'POST';
 
 if ($operacaoEditarId > 0) {
     $stmtEditar = $pdo_master->prepare("
@@ -76,6 +92,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $valores = $_POST['valor'] ?? [];
     $vencimentos = $_POST['data_vencimento'] ?? [];
     $arquivos = $_FILES['arquivo_documento'] ?? null;
+    $arquivosFrente = $_FILES['arquivo_frente'] ?? null;
+    $arquivosVerso = $_FILES['arquivo_verso'] ?? null;
     $docsAtuaisPorId = [];
 
     if ($operacaoEditarId > 0) {
@@ -115,16 +133,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 break;
             }
 
-            $arquivoLinha = ['error' => UPLOAD_ERR_NO_FILE];
-            if (is_array($arquivos) && isset($arquivos['name'][$idx])) {
-                $arquivoLinha = [
-                    'name' => $arquivos['name'][$idx],
-                    'type' => $arquivos['type'][$idx] ?? '',
-                    'tmp_name' => $arquivos['tmp_name'][$idx] ?? '',
-                    'error' => $arquivos['error'][$idx] ?? UPLOAD_ERR_NO_FILE,
-                    'size' => $arquivos['size'][$idx] ?? 0,
-                ];
-            }
+            $arquivoLinha = arquivoUploadLinhaDC($arquivos, $idx);
+            $arquivoFrenteLinha = arquivoUploadLinhaDC($arquivosFrente, $idx);
+            $arquivoVersoLinha = arquivoUploadLinhaDC($arquivosVerso, $idx);
 
             $documentos[] = [
                 'id' => (int)($documentoIds[$idx] ?? 0),
@@ -135,6 +146,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 'valor' => $valor,
                 'data_vencimento' => $vencimento,
                 'arquivo' => $arquivoLinha,
+                'arquivo_frente' => $arquivoFrenteLinha,
+                'arquivo_verso' => $arquivoVersoLinha,
                 'calculo' => $calculo,
             ];
         }
@@ -223,10 +236,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
                 $stmtDoc = $pdo_master->prepare("
                     INSERT INTO desconto_cheques_documentos
-                        (operacao_id, tipo_documento, numero_documento, cnpj_cpf_emissor, nome_emissor, arquivo_nome, arquivo_caminho, valor,
+                        (operacao_id, tipo_documento, numero_documento, cnpj_cpf_emissor, nome_emissor,
+                         arquivo_nome, arquivo_caminho, arquivo_frente_nome, arquivo_frente_caminho, arquivo_verso_nome, arquivo_verso_caminho, valor,
                          data_vencimento, data_compensacao, prazo_dias, taxa_cliente, adicional_percentual,
                          adicional_valor, desconto_valor, valor_liquido)
-                    VALUES (?, ?, NULLIF(?, ''), NULLIF(?, ''), NULLIF(?, ''), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    VALUES (?, ?, NULLIF(?, ''), NULLIF(?, ''), NULLIF(?, ''), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ");
                 $stmtDocUpdate = $pdo_master->prepare("
                     UPDATE desconto_cheques_documentos
@@ -236,6 +250,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         nome_emissor = NULLIF(?, ''),
                         arquivo_nome = ?,
                         arquivo_caminho = ?,
+                        arquivo_frente_nome = ?,
+                        arquivo_frente_caminho = ?,
+                        arquivo_verso_nome = ?,
+                        arquivo_verso_caminho = ?,
                         valor = ?,
                         data_vencimento = ?,
                         data_compensacao = ?,
@@ -253,9 +271,28 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 foreach ($documentos as $documento) {
                     $docId = (int)$documento['id'];
                     $upload = salvarUploadDocumentoDC($documento['arquivo']);
+                    $uploadFrente = salvarUploadDocumentoDC($documento['arquivo_frente']);
+                    $uploadVerso = salvarUploadDocumentoDC($documento['arquivo_verso']);
                     if ($docId > 0 && isset($docsAtuaisPorId[$docId]) && !$upload['caminho']) {
                         $upload['nome'] = $docsAtuaisPorId[$docId]['arquivo_nome'];
                         $upload['caminho'] = $docsAtuaisPorId[$docId]['arquivo_caminho'];
+                    }
+                    if ($docId > 0 && isset($docsAtuaisPorId[$docId]) && !$uploadFrente['caminho']) {
+                        $uploadFrente['nome'] = $docsAtuaisPorId[$docId]['arquivo_frente_nome'] ?? $docsAtuaisPorId[$docId]['arquivo_nome'];
+                        $uploadFrente['caminho'] = $docsAtuaisPorId[$docId]['arquivo_frente_caminho'] ?? $docsAtuaisPorId[$docId]['arquivo_caminho'];
+                    }
+                    if ($docId > 0 && isset($docsAtuaisPorId[$docId]) && !$uploadVerso['caminho']) {
+                        $uploadVerso['nome'] = $docsAtuaisPorId[$docId]['arquivo_verso_nome'] ?? null;
+                        $uploadVerso['caminho'] = $docsAtuaisPorId[$docId]['arquivo_verso_caminho'] ?? null;
+                    }
+                    if ($documento['tipo_documento'] === 'CHEQUE') {
+                        if (!$uploadFrente['caminho'] && $upload['caminho']) {
+                            $uploadFrente = $upload;
+                        }
+                        $upload = $uploadFrente;
+                    } else {
+                        $uploadFrente = ['nome' => null, 'caminho' => null];
+                        $uploadVerso = ['nome' => null, 'caminho' => null];
                     }
                     $calculo = $documento['calculo'];
                     if ($docId > 0 && isset($docsAtuaisPorId[$docId])) {
@@ -266,6 +303,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                             $documento['nome_emissor'],
                             $upload['nome'],
                             $upload['caminho'],
+                            $uploadFrente['nome'],
+                            $uploadFrente['caminho'],
+                            $uploadVerso['nome'],
+                            $uploadVerso['caminho'],
                             $documento['valor'],
                             $documento['data_vencimento'],
                             $calculo['data_compensacao'],
@@ -288,6 +329,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                             $documento['nome_emissor'],
                             $upload['nome'],
                             $upload['caminho'],
+                            $uploadFrente['nome'],
+                            $uploadFrente['caminho'],
+                            $uploadVerso['nome'],
+                            $uploadVerso['caminho'],
                             $documento['valor'],
                             $documento['data_vencimento'],
                             $calculo['data_compensacao'],
@@ -316,7 +361,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 }
 
                 $pdo_master->commit();
-                header('Location: operacoes.php?ok=' . ($operacaoEditarId > 0 ? 'edit' : '1') . '&id=' . $operacaoId);
+                if (!empty($_POST['continuar_editando'])) {
+                    header('Location: operacoes.php?editar=' . $operacaoId . '&ok=' . ($operacaoEditarId > 0 ? 'edit' : '1') . '&id=' . $operacaoId);
+                } else {
+                    header('Location: operacoes.php?ok=' . ($operacaoEditarId > 0 ? 'edit' : '1') . '&id=' . $operacaoId);
+                }
                 exit;
             } catch (Throwable $e) {
                 if ($pdo_master->inTransaction()) {
@@ -353,22 +402,6 @@ $stmtOperacoes = $pdo_master->prepare("
 $stmtOperacoes->execute($params);
 $operacoes = $stmtOperacoes->fetchAll(PDO::FETCH_ASSOC);
 
-$documentosPorOperacao = [];
-if (!empty($operacoes)) {
-    $ids = array_column($operacoes, 'id');
-    $placeholders = implode(',', array_fill(0, count($ids), '?'));
-    $stmtDocs = $pdo_master->prepare("
-        SELECT *
-        FROM desconto_cheques_documentos
-        WHERE operacao_id IN ($placeholders)
-        ORDER BY operacao_id DESC, data_vencimento, id
-    ");
-    $stmtDocs->execute($ids);
-    foreach ($stmtDocs->fetchAll(PDO::FETCH_ASSOC) as $doc) {
-        $documentosPorOperacao[(int)$doc['operacao_id']][] = $doc;
-    }
-}
-
 $formOperacao = $operacaoEditar ?: [
     'id' => 0,
     'cliente_id' => '',
@@ -389,6 +422,10 @@ $formDocumentos = $documentosEditar ?: [[
     'data_vencimento' => '',
     'arquivo_nome' => '',
     'arquivo_caminho' => '',
+    'arquivo_frente_nome' => '',
+    'arquivo_frente_caminho' => '',
+    'arquivo_verso_nome' => '',
+    'arquivo_verso_caminho' => '',
 ]];
 
 require '../../layout/header.php';
@@ -410,6 +447,36 @@ require '../../layout/header.php';
         padding: .75rem;
     }
 
+    .dc-total-card {
+        border: 1px solid #d9e2ef;
+        border-radius: 8px;
+        background: #fff;
+        padding: .85rem 1rem;
+        height: 100%;
+    }
+
+    .dc-total-label {
+        color: #64748b;
+        font-size: .78rem;
+        font-weight: 700;
+        text-transform: uppercase;
+    }
+
+    .dc-total-value {
+        color: #0f172a;
+        font-size: 1.15rem;
+        font-weight: 800;
+        line-height: 1.2;
+    }
+
+    .dc-total-value.negative {
+        color: #b91c1c;
+    }
+
+    .dc-total-value.positive {
+        color: #047857;
+    }
+
     .dc-doc-grid {
         display: grid;
         grid-template-columns: repeat(4, minmax(150px, 1fr));
@@ -421,8 +488,92 @@ require '../../layout/header.php';
         grid-column: span 2;
     }
 
+    .dc-doc-grid .dc-doc-file-cheque {
+        grid-column: span 2;
+    }
+
+    .dc-doc-grid .dc-doc-file-generico {
+        grid-column: span 2;
+    }
+
+    .dc-doc-calculo-atual {
+        background: #fff;
+        border: 1px solid #d9e2ef;
+        border-radius: 8px;
+        display: grid;
+        gap: .35rem;
+        grid-column: 1 / -1;
+        grid-template-columns: repeat(3, minmax(120px, 1fr));
+        padding: .65rem .75rem;
+    }
+
+    .dc-doc-calculo-atual span {
+        display: block;
+    }
+
+    .documento-row[data-tipo-documento="CHEQUE"] .dc-doc-file-generico,
+    .documento-row[data-tipo-documento="BOLETO"] .dc-doc-file-cheque {
+        display: none;
+    }
+
     .dc-doc-grid .dc-doc-remove {
         justify-self: end;
+    }
+
+    .dc-doc-summary {
+        display: none;
+        gap: .75rem;
+        align-items: center;
+        justify-content: space-between;
+    }
+
+    .documento-row:not(.documento-ativo) {
+        background: #fff;
+    }
+
+    .documento-row:not(.documento-ativo) .dc-doc-grid {
+        display: none;
+    }
+
+    .documento-row:not(.documento-ativo) .dc-doc-summary {
+        display: flex;
+    }
+
+    .dc-doc-summary-main {
+        min-width: 0;
+        flex: 1 1 220px;
+    }
+
+    .dc-doc-summary-title,
+    .dc-doc-summary-subtitle {
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+
+    .dc-doc-summary-metrics {
+        display: grid;
+        gap: .1rem;
+        min-width: 150px;
+    }
+
+    .dc-doc-summary-thumb {
+        align-items: center;
+        display: flex;
+        justify-content: center;
+        min-width: 64px;
+    }
+
+    .dc-doc-summary-thumb img {
+        border: 1px solid #d9e2ef;
+        border-radius: 6px;
+        height: 56px;
+        object-fit: cover;
+        width: 56px;
+    }
+
+    .dc-doc-summary-thumb .btn {
+        white-space: nowrap;
     }
 
     .dc-actions {
@@ -439,6 +590,15 @@ require '../../layout/header.php';
         .dc-doc-grid .dc-doc-file {
             grid-column: span 2;
         }
+
+        .dc-doc-grid .dc-doc-file-cheque,
+        .dc-doc-grid .dc-doc-file-generico {
+            grid-column: span 2;
+        }
+
+        .dc-doc-calculo-atual {
+            grid-template-columns: 1fr;
+        }
     }
 
     @media (max-width: 575.98px) {
@@ -447,6 +607,11 @@ require '../../layout/header.php';
         }
 
         .dc-doc-grid .dc-doc-file {
+            grid-column: auto;
+        }
+
+        .dc-doc-grid .dc-doc-file-cheque,
+        .dc-doc-grid .dc-doc-file-generico {
             grid-column: auto;
         }
 
@@ -461,6 +626,25 @@ require '../../layout/header.php';
 
         .dc-operation-table {
             min-width: 820px;
+        }
+
+        .dc-doc-summary {
+            align-items: stretch;
+            flex-direction: column;
+        }
+
+        .dc-doc-summary-values {
+            text-align: left !important;
+        }
+
+        .dc-doc-summary-thumb {
+            justify-content: flex-start;
+        }
+
+        .dc-doc-summary-actions {
+            display: grid;
+            gap: .5rem;
+            grid-template-columns: 1fr 1fr;
         }
     }
 </style>
@@ -488,6 +672,7 @@ require '../../layout/header.php';
     <div class="alert alert-danger"><?= htmlspecialchars($mensagemErro) ?></div>
 <?php endif; ?>
 
+<?php if ($mostrarFormulario): ?>
 <section class="mb-3">
     <div class="row g-3">
         <?php foreach ($faixasPrazo as $faixa): ?>
@@ -515,6 +700,7 @@ require '../../layout/header.php';
             <?php else: ?>
                 <form method="post" enctype="multipart/form-data" id="formOperacao" class="row g-3">
                     <input type="hidden" name="operacao_id" value="<?= (int)$formOperacao['id'] ?>">
+                    <input type="hidden" name="continuar_editando" id="continuarEditando" value="0">
                     <div class="col-12 col-md-4 col-lg-3">
                         <label class="form-label">Data de referencia</label>
                         <input type="date" name="data_referencia" class="form-control" value="<?= htmlspecialchars((string)$formOperacao['data_referencia']) ?>" required>
@@ -536,20 +722,67 @@ require '../../layout/header.php';
                     </div>
 
                     <div class="col-12">
+                        <div class="row g-2">
+                            <div class="col-12 col-sm-6 col-xl-3">
+                                <div class="dc-total-card">
+                                    <div class="dc-total-label">Valor bruto</div>
+                                    <div class="dc-total-value"><?= moedaDC($formOperacao['valor_bruto'] ?? 0) ?></div>
+                                </div>
+                            </div>
+                            <div class="col-12 col-sm-6 col-xl-3">
+                                <div class="dc-total-card">
+                                    <div class="dc-total-label">Desconto dos documentos</div>
+                                    <div class="dc-total-value negative"><?= moedaDC($formOperacao['valor_desconto'] ?? 0) ?></div>
+                                </div>
+                            </div>
+                            <div class="col-12 col-sm-6 col-xl-3">
+                                <div class="dc-total-card">
+                                    <div class="dc-total-label">Taxas e outros descontos</div>
+                                    <div class="dc-total-value negative"><?= moedaDC((float)($formOperacao['valor_taxas_tarifas'] ?? 0) + (float)($formOperacao['valor_descontar'] ?? 0)) ?></div>
+                                </div>
+                            </div>
+                            <div class="col-12 col-sm-6 col-xl-3">
+                                <div class="dc-total-card">
+                                    <div class="dc-total-label">Valor liquido</div>
+                                    <div class="dc-total-value positive"><?= moedaDC($formOperacao['valor_liquido'] ?? 0) ?></div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="col-12">
                         <div class="d-flex flex-column flex-md-row justify-content-between gap-2 mb-2">
                             <h2 class="h6 fw-bold mb-0">Documentos</h2>
-                            <button type="button" class="btn btn-sm btn-outline-primary" id="btnAddDocumento">Adicionar documento</button>
+                            <button type="button" class="btn btn-sm btn-primary" id="btnAddDocumento">Adicionar documento</button>
                         </div>
-                        <div id="documentosContainer" class="d-flex flex-column gap-2">
+                        <div id="documentosContainer" class="d-flex flex-column gap-2" data-iniciar-recolhido="<?= $operacaoEditar ? '1' : '0' ?>">
                             <?php foreach ($formDocumentos as $docForm): ?>
-                                <div class="dc-doc-card documento-row">
+                                <?php
+                                $docPrazoDias = isset($docForm['prazo_dias']) && $docForm['prazo_dias'] !== '' ? (int)$docForm['prazo_dias'] : '';
+                                $docTaxaTotal = $docPrazoDias !== '' ? percentualDC(taxaTotalDocumentoDC($docForm)) : '';
+                                $docValorLiquido = isset($docForm['valor_liquido']) && $docForm['valor_liquido'] !== '' ? moedaDC($docForm['valor_liquido']) : '';
+                                $docArquivoCaminho = (string)($docForm['arquivo_caminho'] ?? '');
+                                $docArquivoNome = (string)($docForm['arquivo_nome'] ?? '');
+                                $docFrenteCaminho = (string)($docForm['arquivo_frente_caminho'] ?? $docArquivoCaminho);
+                                $docFrenteNome = (string)($docForm['arquivo_frente_nome'] ?? $docArquivoNome);
+                                $docVersoCaminho = (string)($docForm['arquivo_verso_caminho'] ?? '');
+                                $docVersoNome = (string)($docForm['arquivo_verso_nome'] ?? '');
+                                $docTipoAtual = ($docForm['tipo_documento'] ?? 'CHEQUE') === 'BOLETO' ? 'BOLETO' : 'CHEQUE';
+                                ?>
+                                <div class="dc-doc-card documento-row"
+                                     data-tipo-documento="<?= htmlspecialchars($docTipoAtual) ?>"
+                                     data-prazo-dias="<?= htmlspecialchars((string)$docPrazoDias) ?>"
+                                     data-taxa-total="<?= htmlspecialchars($docTaxaTotal) ?>"
+                                     data-valor-liquido="<?= htmlspecialchars($docValorLiquido) ?>"
+                                     data-arquivo-caminho="<?= htmlspecialchars($docFrenteCaminho ?: $docArquivoCaminho) ?>"
+                                     data-arquivo-nome="<?= htmlspecialchars($docFrenteNome ?: $docArquivoNome) ?>">
                                     <input type="hidden" name="documento_id[]" value="<?= (int)($docForm['id'] ?? 0) ?>">
                                     <div class="dc-doc-grid">
                                         <div>
                                             <label class="form-label small">Tipo</label>
                                             <select name="tipo_documento[]" class="form-select">
-                                                <option value="CHEQUE" <?= ($docForm['tipo_documento'] ?? 'CHEQUE') === 'CHEQUE' ? 'selected' : '' ?>>Cheque</option>
-                                                <option value="BOLETO" <?= ($docForm['tipo_documento'] ?? 'CHEQUE') === 'BOLETO' ? 'selected' : '' ?>>Boleto</option>
+                                                <option value="CHEQUE" <?= $docTipoAtual === 'CHEQUE' ? 'selected' : '' ?>>Cheque</option>
+                                                <option value="BOLETO" <?= $docTipoAtual === 'BOLETO' ? 'selected' : '' ?>>Boleto</option>
                                             </select>
                                         </div>
                                         <div>
@@ -573,8 +806,8 @@ require '../../layout/header.php';
                                             <label class="form-label small">Vencimento</label>
                                             <input type="date" name="data_vencimento[]" class="form-control" required value="<?= htmlspecialchars((string)($docForm['data_vencimento'] ?? '')) ?>">
                                         </div>
-                                        <div class="dc-doc-file">
-                                            <label class="form-label small">Foto/arquivo</label>
+                                        <div class="dc-doc-file-generico">
+                                            <label class="form-label small">Arquivo do boleto</label>
                                             <input type="file" name="arquivo_documento[]" class="form-control" accept="image/*,.pdf">
                                             <div class="small mt-1 dc-leitura-status text-muted"></div>
                                             <?php if (!empty($docForm['arquivo_caminho'])): ?>
@@ -583,8 +816,65 @@ require '../../layout/header.php';
                                                 </div>
                                             <?php endif; ?>
                                         </div>
+                                        <div class="dc-doc-file-cheque">
+                                            <label class="form-label small">Frente do cheque</label>
+                                            <input type="file" name="arquivo_frente[]" class="form-control" accept="image/*,.pdf">
+                                            <div class="small mt-1 dc-leitura-status text-muted"></div>
+                                            <?php if (!empty($docFrenteCaminho)): ?>
+                                                <div class="small mt-1">
+                                                    <a target="_blank" href="../../<?= htmlspecialchars($docFrenteCaminho) ?>">Frente atual</a>
+                                                </div>
+                                            <?php endif; ?>
+                                        </div>
+                                        <div class="dc-doc-file-cheque">
+                                            <label class="form-label small">Verso do cheque</label>
+                                            <input type="file" name="arquivo_verso[]" class="form-control" accept="image/*,.pdf">
+                                            <?php if (!empty($docVersoCaminho)): ?>
+                                                <div class="small mt-1">
+                                                    <a target="_blank" href="../../<?= htmlspecialchars($docVersoCaminho) ?>">Verso atual</a>
+                                                </div>
+                                            <?php endif; ?>
+                                        </div>
+                                        <div class="dc-doc-calculo-atual">
+                                            <div>
+                                                <span class="small text-muted">Dias</span>
+                                                <span class="fw-semibold dc-doc-current-days">Calculado ao salvar</span>
+                                            </div>
+                                            <div>
+                                                <span class="small text-muted">Taxa</span>
+                                                <span class="fw-semibold dc-doc-current-tax">Calculada ao salvar</span>
+                                            </div>
+                                            <div>
+                                                <span class="small text-muted">Valor liquido</span>
+                                                <span class="fw-semibold text-success dc-doc-current-liquid">Calculado ao salvar</span>
+                                            </div>
+                                        </div>
                                         <div class="dc-doc-remove">
-                                            <button type="button" class="btn btn-outline-danger btn-remover-doc">Remover</button>
+                                            <div class="d-grid gap-2">
+                                                <button type="button" class="btn btn-primary btn-salvar-doc">Salvar documento</button>
+                                                <button type="button" class="btn btn-outline-danger btn-remover-doc">Remover</button>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div class="dc-doc-summary">
+                                        <div class="dc-doc-summary-main">
+                                            <div class="fw-semibold dc-doc-summary-title">Documento pendente</div>
+                                            <div class="small text-muted dc-doc-summary-subtitle">Preencha os dados do documento.</div>
+                                            <div class="small text-warning dc-doc-summary-status"></div>
+                                        </div>
+                                        <div class="dc-doc-summary-values text-md-end">
+                                            <div class="fw-semibold dc-doc-summary-value">R$ 0,00</div>
+                                            <div class="small text-muted dc-doc-summary-date">Vencimento nao informado</div>
+                                        </div>
+                                        <div class="dc-doc-summary-metrics">
+                                            <div class="small fw-semibold dc-doc-summary-days">Dias calculados ao salvar</div>
+                                            <div class="small text-muted dc-doc-summary-tax">Taxa calculada ao salvar</div>
+                                            <div class="small text-success dc-doc-summary-liquid">Liquido calculado ao salvar</div>
+                                        </div>
+                                        <div class="dc-doc-summary-thumb small text-muted">Sem anexo</div>
+                                        <div class="dc-doc-summary-actions">
+                                            <button type="button" class="btn btn-sm btn-outline-primary btn-editar-doc">Editar</button>
+                                            <button type="button" class="btn btn-sm btn-outline-danger btn-remover-doc">Remover</button>
                                         </div>
                                     </div>
                                 </div>
@@ -629,41 +919,21 @@ require '../../layout/header.php';
 
                     <div class="col-12 dc-main-actions">
                         <button type="submit" class="btn btn-primary"><?= $operacaoEditar ? 'Atualizar operacao' : 'Salvar operacao' ?></button>
-                        <?php if ($operacaoEditar): ?>
-                            <a href="operacoes.php" class="btn btn-outline-secondary">Cancelar edicao</a>
-                        <?php endif; ?>
+                        <a href="operacoes.php" class="btn btn-outline-secondary">Voltar para operacoes</a>
                     </div>
                 </form>
             <?php endif; ?>
         </div>
     </div>
 </section>
+<?php endif; ?>
 
+<?php if (!$mostrarFormulario): ?>
 <section>
     <div class="card shadow-sm">
-        <div class="card-header bg-white">
-            <form method="get" class="row g-2 align-items-end">
-                <div class="col-12 col-md-4">
-                    <label class="form-label small">Cliente</label>
-                    <select name="cliente_id" class="form-select">
-                        <option value="0">Todos</option>
-                        <?php foreach ($clientes as $cliente): ?>
-                            <option value="<?= (int)$cliente['id'] ?>" <?= $filtroCliente === (int)$cliente['id'] ? 'selected' : '' ?>><?= htmlspecialchars($cliente['nome']) ?></option>
-                        <?php endforeach; ?>
-                    </select>
-                </div>
-                <div class="col-6 col-md-3">
-                    <label class="form-label small">Data inicial</label>
-                    <input type="date" name="data_ini" class="form-control" value="<?= htmlspecialchars($dataIni) ?>">
-                </div>
-                <div class="col-6 col-md-3">
-                    <label class="form-label small">Data final</label>
-                    <input type="date" name="data_fim" class="form-control" value="<?= htmlspecialchars($dataFim) ?>">
-                </div>
-                <div class="col-12 col-md-2 d-grid">
-                    <button type="submit" class="btn btn-outline-primary">Filtrar</button>
-                </div>
-            </form>
+        <div class="card-header bg-white d-flex justify-content-between align-items-center gap-2">
+            <h2 class="h6 fw-bold mb-0">Operacoes ja salvas</h2>
+            <a href="operacoes.php?nova=1" class="btn btn-primary btn-sm">Nova Operacao</a>
         </div>
         <div class="table-responsive">
             <table class="table table-sm align-middle mb-0 dc-operation-table">
@@ -694,42 +964,10 @@ require '../../layout/header.php';
                             <td class="text-end text-success fw-semibold"><?= moedaDC($operacao['valor_liquido']) ?></td>
                             <td><span class="badge text-bg-info"><?= htmlspecialchars($operacao['status']) ?></span></td>
                             <td class="text-end">
-                                <a href="operacoes.php?editar=<?= (int)$operacao['id'] ?>" class="btn btn-sm btn-outline-primary">Editar</a>
+                                <a href="operacoes.php?editar=<?= (int)$operacao['id'] ?>" class="btn btn-sm btn-outline-primary">Detalhes</a>
                                 <a href="operacao_pdf.php?id=<?= (int)$operacao['id'] ?>" target="_blank" class="btn btn-sm btn-outline-danger">PDF</a>
                             </td>
                         </tr>
-                        <?php foreach (($documentosPorOperacao[(int)$operacao['id']] ?? []) as $doc): ?>
-                            <tr>
-                                <td colspan="2">
-                                    <?= htmlspecialchars($doc['tipo_documento']) ?>
-                                    <?= $doc['numero_documento'] ? ' - ' . htmlspecialchars($doc['numero_documento']) : '' ?>
-                                    <?php if (!empty($doc['nome_emissor']) || !empty($doc['cnpj_cpf_emissor'])): ?>
-                                        <div class="small text-muted">
-                                            Emissor:
-                                            <?= htmlspecialchars((string)($doc['nome_emissor'] ?: '-')) ?>
-                                            <?= !empty($doc['cnpj_cpf_emissor']) ? ' | ' . htmlspecialchars(formatarCpfCnpjDC($doc['cnpj_cpf_emissor'])) : '' ?>
-                                        </div>
-                                    <?php endif; ?>
-                                    <?php if ($doc['arquivo_caminho']): ?>
-                                        <a class="ms-2 small" target="_blank" href="../../<?= htmlspecialchars($doc['arquivo_caminho']) ?>">Anexo</a>
-                                    <?php endif; ?>
-                                </td>
-                                <td>
-                                    Venc. <?= dataBRDC($doc['data_vencimento']) ?>
-                                    <span class="text-muted">| comp. <?= dataBRDC($doc['data_compensacao']) ?></span>
-                                </td>
-                                <td class="text-end"><?= moedaDC($doc['valor']) ?></td>
-                                <td class="text-end"><?= moedaDC($doc['desconto_valor']) ?></td>
-                                <td class="text-end">-</td>
-                                <td class="text-end">-</td>
-                                <td class="text-end"><?= moedaDC($doc['valor_liquido']) ?></td>
-                                <td>
-                                    <strong><?= (int)$doc['prazo_dias'] ?> dias</strong>
-                                    <div class="small text-muted">Taxa total <?= percentualDC(taxaTotalDocumentoDC($doc)) ?></div>
-                                </td>
-                                <td></td>
-                            </tr>
-                        <?php endforeach; ?>
                     <?php endforeach; ?>
                     <?php if (empty($operacoes)): ?>
                         <tr><td colspan="10" class="text-center text-muted py-4">Nenhuma operacao encontrada.</td></tr>
@@ -739,14 +977,136 @@ require '../../layout/header.php';
         </div>
     </div>
 </section>
+<?php endif; ?>
 
-<script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
+<?php if ($mostrarFormulario): ?>
 <script>
 document.addEventListener('DOMContentLoaded', function () {
     const container = document.getElementById('documentosContainer');
     const btnAdd = document.getElementById('btnAddDocumento');
     if (!container || !btnAdd) {
         return;
+    }
+    let linhaAtiva = container.dataset.iniciarRecolhido === '1' ? null : container.querySelector('.documento-row');
+
+    function valorInput(linha, seletor) {
+        const campo = linha.querySelector(seletor);
+        return campo ? campo.value.trim() : '';
+    }
+
+    function textoSelect(linha, seletor) {
+        const campo = linha.querySelector(seletor);
+        return campo && campo.selectedOptions.length ? campo.selectedOptions[0].textContent.trim() : '';
+    }
+
+    function dataBR(dataIso) {
+        if (!dataIso || !/^\d{4}-\d{2}-\d{2}$/.test(dataIso)) {
+            return '';
+        }
+        const pedacos = dataIso.split('-');
+        return pedacos[2] + '/' + pedacos[1] + '/' + pedacos[0];
+    }
+
+    function escapeHtml(texto) {
+        const div = document.createElement('div');
+        div.textContent = texto || '';
+        return div.innerHTML;
+    }
+
+    function caminhoAnexo(caminho) {
+        if (!caminho) {
+            return '';
+        }
+        if (/^(https?:)?\/\//i.test(caminho)) {
+            return caminho;
+        }
+        return '../../' + caminho.replace(/^\/+/, '');
+    }
+
+    function atualizarResumoLinha(linha, indice) {
+        const tipo = textoSelect(linha, 'select[name="tipo_documento[]"]') || 'Documento';
+        const numero = valorInput(linha, 'input[name="numero_documento[]"]');
+        const emissor = valorInput(linha, 'input[name="nome_emissor[]"]');
+        const cnpjCpf = valorInput(linha, 'input[name="cnpj_cpf_emissor[]"]');
+        const valor = valorInput(linha, 'input[name="valor[]"]');
+        const vencimento = dataBR(valorInput(linha, 'input[name="data_vencimento[]"]'));
+        const prazoDias = linha.dataset.prazoDias || '';
+        const taxaTotal = linha.dataset.taxaTotal || '';
+        const valorLiquido = linha.dataset.valorLiquido || '';
+        const arquivoCaminho = linha.dataset.arquivoCaminho || '';
+        const arquivoNome = linha.dataset.arquivoNome || 'Anexo';
+
+        const titulo = linha.querySelector('.dc-doc-summary-title');
+        const subtitulo = linha.querySelector('.dc-doc-summary-subtitle');
+        const statusResumo = linha.querySelector('.dc-doc-summary-status');
+        const valorResumo = linha.querySelector('.dc-doc-summary-value');
+        const dataResumo = linha.querySelector('.dc-doc-summary-date');
+        const diasResumo = linha.querySelector('.dc-doc-summary-days');
+        const taxaResumo = linha.querySelector('.dc-doc-summary-tax');
+        const liquidoResumo = linha.querySelector('.dc-doc-summary-liquid');
+        const anexoResumo = linha.querySelector('.dc-doc-summary-thumb');
+        const diasAtual = linha.querySelector('.dc-doc-current-days');
+        const taxaAtual = linha.querySelector('.dc-doc-current-tax');
+        const liquidoAtual = linha.querySelector('.dc-doc-current-liquid');
+
+        if (titulo) {
+            titulo.textContent = '#' + indice + ' - ' + tipo + (numero ? ' ' + numero : '');
+        }
+        if (subtitulo) {
+            const detalhes = [];
+            if (emissor) {
+                detalhes.push(emissor);
+            }
+            if (cnpjCpf) {
+                detalhes.push(cnpjCpf);
+            }
+            subtitulo.textContent = detalhes.length ? detalhes.join(' | ') : 'Emissor nao informado';
+        }
+        if (statusResumo) {
+            statusResumo.textContent = documentoIdLinha(linha) === '0' ? 'Novo documento, pendente de salvar na operacao.' : '';
+        }
+        if (valorResumo) {
+            valorResumo.textContent = valor ? 'R$ ' + valor : 'Valor nao informado';
+        }
+        if (dataResumo) {
+            dataResumo.textContent = vencimento ? 'Venc. ' + vencimento : 'Vencimento nao informado';
+        }
+        if (diasResumo) {
+            diasResumo.textContent = prazoDias ? prazoDias + ' dias' : 'Dias calculados ao salvar';
+        }
+        if (diasAtual) {
+            diasAtual.textContent = prazoDias ? prazoDias + ' dias' : 'Calculado ao salvar';
+        }
+        if (taxaResumo) {
+            taxaResumo.textContent = taxaTotal ? 'Taxa ' + taxaTotal : 'Taxa calculada ao salvar';
+        }
+        if (taxaAtual) {
+            taxaAtual.textContent = taxaTotal || 'Calculada ao salvar';
+        }
+        if (liquidoResumo) {
+            liquidoResumo.textContent = valorLiquido ? 'Liquido ' + valorLiquido : 'Liquido calculado ao salvar';
+        }
+        if (liquidoAtual) {
+            liquidoAtual.textContent = valorLiquido || 'Calculado ao salvar';
+        }
+        if (anexoResumo) {
+            const href = caminhoAnexo(arquivoCaminho);
+            if (!href) {
+                anexoResumo.textContent = 'Sem anexo';
+            } else if (/\.(png|jpe?g|gif|webp|bmp)$/i.test(arquivoCaminho)) {
+                anexoResumo.innerHTML = '<a href="' + escapeHtml(href) + '" target="_blank" title="' + escapeHtml(arquivoNome) + '"><img src="' + escapeHtml(href) + '" alt="Anexo"></a>';
+            } else {
+                anexoResumo.innerHTML = '<a href="' + escapeHtml(href) + '" target="_blank" class="btn btn-sm btn-outline-secondary">Anexo</a>';
+            }
+        }
+    }
+
+    function atualizarEstadoDocumentos() {
+        const linhas = Array.from(container.querySelectorAll('.documento-row'));
+        linhas.forEach(function (linha, indice) {
+            linha.classList.toggle('documento-ativo', linha === linhaAtiva);
+            atualizarResumoLinha(linha, indice + 1);
+        });
     }
 
     function atualizarBotoes() {
@@ -757,13 +1117,42 @@ document.addEventListener('DOMContentLoaded', function () {
                 botao.disabled = linhas.length === 1;
             }
         });
+        atualizarEstadoDocumentos();
     }
 
-    btnAdd.addEventListener('click', function () {
-        const primeira = container.querySelector('.documento-row');
-        const clone = primeira.cloneNode(true);
+    function validarDocumentoAtivo() {
+        if (linhaAtiva) {
+            const valorAtual = linhaAtiva.querySelector('input[name="valor[]"]');
+            const vencimentoAtual = linhaAtiva.querySelector('input[name="data_vencimento[]"]');
+            if (valorAtual && !valorAtual.value.trim()) {
+                valorAtual.reportValidity();
+                valorAtual.focus();
+                return false;
+            }
+            if (vencimentoAtual && !vencimentoAtual.value.trim()) {
+                vencimentoAtual.reportValidity();
+                vencimentoAtual.focus();
+                return false;
+            }
+        }
+        return true;
+    }
+
+    function limparLinhaDocumento(clone) {
         clone.querySelectorAll('input').forEach(function (input) {
             input.value = '';
+        });
+        const idDocumento = clone.querySelector('input[name="documento_id[]"]');
+        if (idDocumento) {
+            idDocumento.value = '0';
+        }
+        clone.querySelectorAll('.dc-doc-file-generico a, .dc-doc-file-cheque a').forEach(function (link) {
+            const wrapper = link.closest('.small');
+            if (wrapper) {
+                wrapper.remove();
+            } else {
+                link.remove();
+            }
         });
         clone.querySelectorAll('.dc-leitura-status').forEach(function (status) {
             status.textContent = '';
@@ -776,11 +1165,68 @@ document.addEventListener('DOMContentLoaded', function () {
         clone.querySelectorAll('select').forEach(function (select) {
             select.selectedIndex = 0;
         });
-        container.appendChild(clone);
+        clone.dataset.prazoDias = '';
+        clone.dataset.taxaTotal = '';
+        clone.dataset.valorLiquido = '';
+        clone.dataset.arquivoCaminho = '';
+        clone.dataset.arquivoNome = '';
+        clone.dataset.tipoDocumento = 'CHEQUE';
+    }
+
+    btnAdd.addEventListener('click', function () {
+        if (linhaAtiva) {
+            linhaAtiva.scrollIntoView({behavior: 'smooth', block: 'center'});
+            const primeiroCampo = linhaAtiva.querySelector('input, select, textarea');
+            if (primeiroCampo) {
+                primeiroCampo.focus();
+            }
+            return;
+        }
+
+        const primeira = container.querySelector('.documento-row');
+        if (!primeira) {
+            return;
+        }
+        const clone = primeira.cloneNode(true);
+        limparLinhaDocumento(clone);
+        clone.classList.add('documento-ativo');
+        linhaAtiva = clone;
+        container.insertBefore(clone, primeira);
         atualizarBotoes();
     });
 
     container.addEventListener('click', function (event) {
+        if (event.target.classList.contains('btn-editar-doc')) {
+            const linha = event.target.closest('.documento-row');
+            if (linha) {
+                container.insertBefore(linha, container.firstElementChild);
+                linhaAtiva = linha;
+                atualizarBotoes();
+            }
+            return;
+        }
+
+        if (event.target.classList.contains('btn-salvar-doc')) {
+            const linha = event.target.closest('.documento-row');
+            if (linha) {
+                linhaAtiva = linha;
+                if (!validarDocumentoAtivo()) {
+                    return;
+                }
+                const continuar = document.getElementById('continuarEditando');
+                if (continuar) {
+                    continuar.value = '1';
+                }
+                const form = document.getElementById('formOperacao');
+                if (form && typeof form.requestSubmit === 'function') {
+                    form.requestSubmit();
+                } else if (form) {
+                    form.submit();
+                }
+            }
+            return;
+        }
+
         if (!event.target.classList.contains('btn-remover-doc')) {
             return;
         }
@@ -788,8 +1234,29 @@ document.addEventListener('DOMContentLoaded', function () {
         if (linhas.length <= 1) {
             return;
         }
-        event.target.closest('.documento-row').remove();
+        const linhaRemovida = event.target.closest('.documento-row');
+        if (linhaRemovida === linhaAtiva) {
+            linhaAtiva = null;
+        }
+        linhaRemovida.remove();
         atualizarBotoes();
+    });
+
+    container.addEventListener('input', function (event) {
+        const linha = event.target.closest('.documento-row');
+        if (linha) {
+            atualizarResumoLinha(linha, Array.from(container.querySelectorAll('.documento-row')).indexOf(linha) + 1);
+        }
+    });
+
+    container.addEventListener('change', function (event) {
+        const linha = event.target.closest('.documento-row');
+        if (linha) {
+            if (event.target.matches('select[name="tipo_documento[]"]')) {
+                linha.dataset.tipoDocumento = event.target.value === 'BOLETO' ? 'BOLETO' : 'CHEQUE';
+            }
+            atualizarResumoLinha(linha, Array.from(container.querySelectorAll('.documento-row')).indexOf(linha) + 1);
+        }
     });
 
     function aplicarSugestoes(linha, dados, sobrescrever) {
@@ -849,6 +1316,33 @@ document.addEventListener('DOMContentLoaded', function () {
             (arquivo.type && arquivo.type.indexOf('image/') === 0)
             || /\.(jpe?g|png|webp|bmp|tiff?)$/i.test(arquivo.name || '')
         );
+    }
+
+    let promessaTesseract = null;
+    function carregarTesseract() {
+        if (window.Tesseract && typeof window.Tesseract.recognize === 'function') {
+            return Promise.resolve(window.Tesseract);
+        }
+        if (promessaTesseract) {
+            return promessaTesseract;
+        }
+        promessaTesseract = new Promise(function (resolve, reject) {
+            const script = document.createElement('script');
+            script.src = 'https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js';
+            script.async = true;
+            script.onload = function () {
+                if (window.Tesseract && typeof window.Tesseract.recognize === 'function') {
+                    resolve(window.Tesseract);
+                } else {
+                    reject(new Error('OCR indisponivel no navegador. Confira manualmente.'));
+                }
+            };
+            script.onerror = function () {
+                reject(new Error('OCR indisponivel no navegador. Confira manualmente.'));
+            };
+            document.head.appendChild(script);
+        });
+        return promessaTesseract;
     }
 
     function decimalOCR(valor) {
@@ -939,21 +1433,18 @@ document.addEventListener('DOMContentLoaded', function () {
     }
 
     function lerImagemNoCelular(linha, arquivo, status) {
-        if (!window.Tesseract || typeof window.Tesseract.recognize !== 'function') {
-            status.className = 'small mt-1 dc-leitura-status text-warning';
-            status.textContent = 'OCR indisponivel no navegador. Confira manualmente.';
-            return Promise.resolve();
-        }
-
         status.className = 'small mt-1 dc-leitura-status text-muted';
-        status.textContent = 'Tentando OCR no celular. A primeira leitura pode demorar...';
+        status.textContent = 'Carregando OCR para tentar ler a foto...';
 
-        return window.Tesseract.recognize(arquivo, 'por+eng', {
+        return carregarTesseract().then(function (Tesseract) {
+            status.textContent = 'Tentando OCR no celular. A primeira leitura pode demorar...';
+            return Tesseract.recognize(arquivo, 'por+eng', {
             logger: function (mensagem) {
                 if (mensagem && mensagem.status === 'recognizing text' && mensagem.progress) {
                     status.textContent = 'Lendo foto no celular... ' + Math.round(mensagem.progress * 100) + '%';
                 }
             }
+            });
         }).then(function (resultado) {
             const texto = resultado && resultado.data ? resultado.data.text : '';
             const dados = interpretarTextoOCR(texto);
@@ -981,6 +1472,67 @@ document.addEventListener('DOMContentLoaded', function () {
         return input ? input.value || '0' : '0';
     }
 
+    function numeroParaMoedaBR(valor) {
+        return 'R$ ' + Number(valor || 0).toLocaleString('pt-BR', {
+            minimumFractionDigits: 2,
+            maximumFractionDigits: 2
+        });
+    }
+
+    function valorDecimalBR(valor) {
+        const texto = String(valor || '').replace(/[^\d,.-]/g, '').replace(/\./g, '').replace(',', '.');
+        const numero = Number(texto);
+        return Number.isFinite(numero) ? numero : 0;
+    }
+
+    function variantesCnpjCpf(digitos) {
+        const variantes = [digitos];
+        const match = String(digitos || '').match(/^(\d{8})\d(0001\d{2})$/);
+        if (match) {
+            variantes.push(match[1] + match[2]);
+        }
+        return Array.from(new Set(variantes));
+    }
+
+    function documentosGridMesmoEmissor(linhaAtual, digitos) {
+        const documentos = [];
+        let nomeEmissor = '';
+        const variantes = variantesCnpjCpf(digitos);
+        container.querySelectorAll('.documento-row').forEach(function (linha) {
+            if (linha === linhaAtual) {
+                return;
+            }
+
+            const cnpjCpf = valorInput(linha, 'input[name="cnpj_cpf_emissor[]"]').replace(/\D+/g, '');
+            if (!variantes.includes(cnpjCpf)) {
+                return;
+            }
+
+            if (!nomeEmissor) {
+                nomeEmissor = valorInput(linha, 'input[name="nome_emissor[]"]');
+            }
+
+            const valor = valorDecimalBR(valorInput(linha, 'input[name="valor[]"]'));
+            const vencimento = valorInput(linha, 'input[name="data_vencimento[]"]');
+            if (valor <= 0 || !vencimento) {
+                return;
+            }
+
+            documentos.push({
+                operacao_id: 'Atual',
+                numero_documento: valorInput(linha, 'input[name="numero_documento[]"]'),
+                data_vencimento_br: dataBR(vencimento),
+                valor_formatado: numeroParaMoedaBR(valor),
+                valor: valor
+            });
+        });
+
+        return {
+            documentos: documentos,
+            nome_emissor: nomeEmissor
+        };
+    }
+
     function consultarEmissor(linha) {
         const input = linha ? linha.querySelector('input[name="cnpj_cpf_emissor[]"]') : null;
         const status = statusEmissor(linha);
@@ -997,6 +1549,8 @@ document.addEventListener('DOMContentLoaded', function () {
 
         status.className = 'small mt-1 dc-emissor-status text-muted';
         status.textContent = 'Consultando titulos a vencer deste emissor...';
+        const resumoGrid = documentosGridMesmoEmissor(linha, digitos);
+        const documentosGrid = resumoGrid.documentos || [];
 
         const params = new URLSearchParams({
             cnpj_cpf: digitos,
@@ -1016,21 +1570,39 @@ document.addEventListener('DOMContentLoaded', function () {
                 });
             })
             .then(function (dados) {
-                if (!dados.quantidade) {
+                const documentosBanco = Array.isArray(dados.documentos) ? dados.documentos : [];
+                const campoNome = linha.querySelector('input[name="nome_emissor[]"]');
+                const nomeSugerido = dados.nome_emissor || resumoGrid.nome_emissor || '';
+                if (campoNome && !campoNome.value.trim() && nomeSugerido) {
+                    campoNome.value = nomeSugerido;
+                    atualizarResumoLinha(linha, Array.from(container.querySelectorAll('.documento-row')).indexOf(linha) + 1);
+                }
+
+                const quantidadeBanco = Number(dados.quantidade || 0);
+                const totalBanco = Number(dados.valor_total || 0);
+                const quantidadeGrid = documentosGrid.length;
+                const totalGrid = documentosGrid.reduce(function (total, doc) {
+                    return total + Number(doc.valor || 0);
+                }, 0);
+                const quantidadeTotal = quantidadeBanco + quantidadeGrid;
+                const valorTotal = totalBanco + totalGrid;
+
+                if (!quantidadeTotal) {
                     status.className = 'small mt-1 dc-emissor-status text-success';
-                    status.textContent = 'Nenhum cheque/boleto a vencer ja cadastrado para este emissor.';
+                    status.textContent = nomeSugerido
+                        ? 'Emissor localizado: ' + nomeSugerido + '. Nenhum cheque/boleto a vencer ja cadastrado.'
+                        : 'Nenhum cheque/boleto a vencer ja cadastrado para este emissor.';
                     return;
                 }
 
-                const detalhes = Array.isArray(dados.documentos)
-                    ? dados.documentos.map(function (doc) {
+                const detalhes = documentosBanco.concat(documentosGrid).slice(0, 6)
+                    .map(function (doc) {
                         const numero = doc.numero_documento ? ' ' + doc.numero_documento : '';
                         return '#' + doc.operacao_id + numero + ' - ' + doc.data_vencimento_br + ' - ' + doc.valor_formatado;
-                    }).join('; ')
-                    : '';
+                    }).join('; ');
 
                 status.className = 'small mt-1 dc-emissor-status text-warning';
-                status.textContent = 'Ja existem ' + dados.quantidade + ' documento(s) a vencer deste emissor, total ' + dados.valor_total_formatado + (detalhes ? '. ' + detalhes : '') + '.';
+                status.textContent = 'Ja existem ' + quantidadeTotal + ' documento(s) a vencer deste emissor, total ' + numeroParaMoedaBR(valorTotal) + (detalhes ? '. ' + detalhes : '') + '.';
             })
             .catch(function (erro) {
                 status.className = 'small mt-1 dc-emissor-status text-warning';
@@ -1068,13 +1640,18 @@ document.addEventListener('DOMContentLoaded', function () {
 
     container.addEventListener('change', function (event) {
         const input = event.target;
-        if (!(input instanceof HTMLInputElement) || input.type !== 'file' || input.name !== 'arquivo_documento[]') {
+        if (
+            !(input instanceof HTMLInputElement)
+            || input.type !== 'file'
+            || !['arquivo_documento[]', 'arquivo_frente[]'].includes(input.name)
+        ) {
             return;
         }
 
         const arquivo = input.files && input.files[0] ? input.files[0] : null;
         const linha = input.closest('.documento-row');
-        const status = linha ? linha.querySelector('.dc-leitura-status') : null;
+        const blocoArquivo = input.closest('.dc-doc-file, .dc-doc-file-cheque, .dc-doc-file-generico');
+        const status = blocoArquivo ? blocoArquivo.querySelector('.dc-leitura-status') : null;
         if (!arquivo || !linha || !status) {
             return;
         }
@@ -1118,15 +1695,9 @@ document.addEventListener('DOMContentLoaded', function () {
             });
     });
 
-    container.querySelectorAll('.documento-row').forEach(function (linha) {
-        const input = linha.querySelector('input[name="cnpj_cpf_emissor[]"]');
-        if (input && input.value.replace(/\D+/g, '').length >= 11) {
-            consultarEmissor(linha);
-        }
-    });
-
     atualizarBotoes();
 });
 </script>
+<?php endif; ?>
 
 <?php require '../../layout/footer.php'; ?>
