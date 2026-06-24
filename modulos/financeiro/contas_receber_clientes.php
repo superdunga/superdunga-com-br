@@ -47,6 +47,11 @@ $visaoPadrao = 'analitico';
 $visao = ($_GET['visao'] ?? $visaoPadrao) === 'sintetico' ? 'sintetico' : 'analitico';
 $exportar = $_GET['exportar'] ?? '';
 
+$stmtEmpresaLogada = $pdo_master->prepare("SELECT nome_fantasia, razao_social, telefone FROM empresas WHERE id = ?");
+$stmtEmpresaLogada->execute([$empresaId]);
+$empresaLogada = $stmtEmpresaLogada->fetch(PDO::FETCH_ASSOC) ?: [];
+$nomeEmpresaLogada = $empresaLogada['nome_fantasia'] ?: ($empresaLogada['razao_social'] ?: ('Empresa ' . $empresaId));
+
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['acao'] ?? '') === 'verificar') {
     $crcontador = (int)($_POST['crcontador'] ?? 0);
     $novoStatus = ($_POST['verificado'] ?? 'N') === 'S' ? 'S' : 'N';
@@ -144,6 +149,7 @@ if ($visao === 'sintetico') {
         SELECT
             c.CLICONTADOR,
             COALESCE(cli.NOME, cli.APELIDO, CONCAT('Cliente ', c.CLICONTADOR)) AS nome_cliente,
+            MAX(cli.CELULAR) AS telefone_cliente,
             COUNT(*) AS qtd,
             COALESCE(SUM(c.VLRPARCELA), 0) AS total_parcela,
             COALESCE(SUM(c.VLRRESTANTE), 0) AS total_restante
@@ -163,7 +169,9 @@ if ($visao === 'sintetico') {
         $resumo['total_parcela'] += (float)$linhaSintetica['total_parcela'];
         $resumo['total_restante'] += (float)$linhaSintetica['total_restante'];
     }
-} else {
+}
+
+if ($visao !== 'sintetico') {
     $stmtResumo = $pdo_master->prepare("
         SELECT
             COUNT(*) AS qtd,
@@ -177,7 +185,9 @@ if ($visao === 'sintetico') {
     ");
     $stmtResumo->execute($params);
     $resumo = $stmtResumo->fetch(PDO::FETCH_ASSOC) ?: $resumo;
+}
 
+if ($visao !== 'sintetico' || $exportar === 'pdf') {
     $stmt = $pdo_master->prepare("
         SELECT
             c.CRCONTADOR,
@@ -191,11 +201,17 @@ if ($visao === 'sintetico') {
             c.VLRPAGO,
             c.STATUS,
             c.NUMDOCORIGEM,
+            cli.CELULAR AS telefone_cliente,
+            v.DTVENDA AS venda_data,
+            v.HRVENDA AS venda_hora,
             COALESCE(c.financeiro_verificado, 'N') AS financeiro_verificado
         FROM armazem_cr001 c
         LEFT JOIN armazem_cr002 cli
             ON cli.EMPRESA = c.EMPRESA
            AND cli.CLICONTADOR = c.CLICONTADOR
+        LEFT JOIN armazem_est007 v
+            ON v.EMPRESA = c.EMPRESA
+           AND v.VENDACONTADOR = c.NUMDOCORIGEM
         WHERE {$whereSql}
         ORDER BY c.DTVENC ASC, c.CRCONTADOR ASC
     ");
@@ -247,6 +263,62 @@ function dataFinanceiroClientes($valor): string
     return $valor ? date('d/m/Y', strtotime($valor)) : '';
 }
 
+function dataHoraFinanceiroClientes($valor): string
+{
+    return $valor ? date('d/m/Y H:i', strtotime($valor)) : '';
+}
+
+function dataHoraCompraFinanceiroClientes(array $registro): string
+{
+    $dataVenda = $registro['venda_data'] ?? null;
+    $horaVenda = trim((string)($registro['venda_hora'] ?? ''));
+
+    if ($dataVenda) {
+        $data = date('d/m/Y', strtotime($dataVenda));
+        return $horaVenda !== '' ? $data . ' ' . substr($horaVenda, 0, 5) : $data;
+    }
+
+    return dataHoraFinanceiroClientes($registro['DTEMISSAO'] ?? null);
+}
+
+function telefoneFinanceiroClientes(?string $telefone): string
+{
+    $digitos = preg_replace('/\D+/', '', (string)$telefone);
+    if ($digitos === '') {
+        return '';
+    }
+
+    if (strlen($digitos) === 11) {
+        return '(' . substr($digitos, 0, 2) . ') ' . substr($digitos, 2, 5) . '-' . substr($digitos, 7);
+    }
+
+    if (strlen($digitos) === 10) {
+        return '(' . substr($digitos, 0, 2) . ') ' . substr($digitos, 2, 4) . '-' . substr($digitos, 6);
+    }
+
+    return $telefone;
+}
+
+function clienteCabecalhoFinanceiroClientes(string $filtro, array $registros, array $sintetico): string
+{
+    if ($filtro === '') {
+        return 'Todos';
+    }
+
+    $linha = $registros[0] ?? $sintetico[0] ?? null;
+    if (!$linha) {
+        return $filtro;
+    }
+
+    $nome = trim((string)($linha['nome_cliente'] ?? ''));
+    if ($nome === '') {
+        $nome = 'Cliente ' . (int)($linha['CLICONTADOR'] ?? 0);
+    }
+
+    $telefone = telefoneFinanceiroClientes($linha['telefone_cliente'] ?? '');
+    return $telefone !== '' ? $nome . ' - Tel. ' . $telefone : $nome;
+}
+
 function queryFinanceiroClientes(array $extra = []): string
 {
     $params = $_GET;
@@ -294,6 +366,16 @@ function comandoTextoPdfFinanceiro(float $x, float $y, int $tamanho, string $tex
     return "BT /{$fonte} {$tamanho} Tf 1 0 0 1 " . number_format($x, 2, '.', '') . ' ' . number_format($y, 2, '.', '') . ' Tm (' . escaparPdfFinanceiro($texto) . ") Tj ET\n";
 }
 
+function corPdfFinanceiro(float $r, float $g, float $b): string
+{
+    return number_format($r, 3, '.', '') . ' ' . number_format($g, 3, '.', '') . ' ' . number_format($b, 3, '.', '') . " rg\n";
+}
+
+function retanguloPdfFinanceiro(float $x, float $y, float $w, float $h): string
+{
+    return number_format($x, 2, '.', '') . ' ' . number_format($y, 2, '.', '') . ' ' . number_format($w, 2, '.', '') . ' ' . number_format($h, 2, '.', '') . " re f\n";
+}
+
 function gerarPdfFinanceiroClientes(string $titulo, array $metadados, array $colunas, array $linhas, string $arquivo, string $orientacao = 'portrait'): void
 {
     $largura = $orientacao === 'landscape' ? 842 : 595;
@@ -309,16 +391,21 @@ function gerarPdfFinanceiroClientes(string $titulo, array $metadados, array $col
 
     for ($pagina = 0; $pagina < $totalPaginas; $pagina++) {
         $conteudo = '';
-        $y = $altura - 40;
-        $conteudo .= comandoTextoPdfFinanceiro($margem, $y, 15, textoPdfFinanceiro($titulo, 90), true);
-        $y -= 18;
+        $conteudo .= corPdfFinanceiro(0.05, 0.20, 0.45);
+        $conteudo .= retanguloPdfFinanceiro(0, $altura - 78, $largura, 78);
+        $conteudo .= "1 1 1 rg\n";
+        $y = $altura - 31;
+        $conteudo .= comandoTextoPdfFinanceiro($margem, $y, 17, textoPdfFinanceiro($titulo, 90), true);
+        $y -= 17;
 
         foreach ($metadados as $meta) {
             $conteudo .= comandoTextoPdfFinanceiro($margem, $y, 8, textoPdfFinanceiro($meta, 150));
             $y -= 11;
         }
 
-        $conteudo .= "0.90 0.90 0.90 rg {$margem} " . ($topoTabela - 4) . ' ' . ($largura - ($margem * 2)) . " 18 re f\n0 g\n";
+        $conteudo .= corPdfFinanceiro(0.88, 0.93, 0.98);
+        $conteudo .= retanguloPdfFinanceiro($margem, $topoTabela - 4, $largura - ($margem * 2), 18);
+        $conteudo .= "0 g\n";
         $x = $margem + 3;
         foreach ($colunas as $coluna) {
             $conteudo .= comandoTextoPdfFinanceiro($x, $topoTabela + 2, 8, textoPdfFinanceiro($coluna['titulo'], $coluna['limite'] ?? 20), true);
@@ -389,18 +476,182 @@ function gerarPdfFinanceiroClientes(string $titulo, array $metadados, array $col
     exit;
 }
 
+function enviarPdfFinanceiroClientes(array $paginas, float $largura, float $altura, string $arquivo): void
+{
+    $objetos = [
+        1 => "<< /Type /Catalog /Pages 2 0 R >>",
+        2 => '',
+        3 => "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>",
+        4 => "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>",
+    ];
+    $idsPaginas = [];
+    $proximoId = 5;
+
+    foreach ($paginas as $conteudo) {
+        $conteudoId = $proximoId++;
+        $paginaId = $proximoId++;
+        $objetos[$conteudoId] = "<< /Length " . strlen($conteudo) . " >>\nstream\n{$conteudo}endstream";
+        $objetos[$paginaId] = "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 {$largura} {$altura}] /Resources << /Font << /F1 3 0 R /F2 4 0 R >> >> /Contents {$conteudoId} 0 R >>";
+        $idsPaginas[] = $paginaId;
+    }
+
+    $kids = implode(' ', array_map(static function ($id): string {
+        return "{$id} 0 R";
+    }, $idsPaginas));
+    $objetos[2] = "<< /Type /Pages /Kids [{$kids}] /Count " . count($idsPaginas) . " >>";
+
+    ksort($objetos);
+    $pdf = "%PDF-1.4\n";
+    $offsets = [0 => 0];
+    foreach ($objetos as $id => $objeto) {
+        $offsets[$id] = strlen($pdf);
+        $pdf .= "{$id} 0 obj\n{$objeto}\nendobj\n";
+    }
+
+    $xref = strlen($pdf);
+    $pdf .= "xref\n0 " . (count($objetos) + 1) . "\n";
+    $pdf .= "0000000000 65535 f \n";
+    for ($i = 1; $i <= count($objetos); $i++) {
+        $pdf .= str_pad((string)$offsets[$i], 10, '0', STR_PAD_LEFT) . " 00000 n \n";
+    }
+    $pdf .= "trailer\n<< /Size " . (count($objetos) + 1) . " /Root 1 0 R >>\nstartxref\n{$xref}\n%%EOF";
+
+    header('Content-Type: application/pdf');
+    header('Content-Disposition: attachment; filename="' . $arquivo . '.pdf"');
+    header('Content-Length: ' . strlen($pdf));
+    echo $pdf;
+    exit;
+}
+
+function gerarPdfAnaliticoContasReceberClientes(
+    string $titulo,
+    array $metadados,
+    array $registros,
+    array $itensPorVenda,
+    array $resumo,
+    string $arquivo
+): void {
+    $largura = 595;
+    $altura = 842;
+    $margem = 28;
+    $limiteInferior = 42;
+    $paginas = [];
+    $conteudo = '';
+    $paginaAtual = 0;
+    $totalItens = 0;
+    $totalProdutos = 0.0;
+
+    $iniciarPagina = static function () use (&$conteudo, &$paginaAtual, $largura, $altura, $margem, $titulo, $metadados): float {
+        $paginaAtual++;
+        $conteudo = '';
+        $conteudo .= corPdfFinanceiro(0.05, 0.20, 0.45);
+        $conteudo .= retanguloPdfFinanceiro(0, $altura - 82, $largura, 82);
+        $conteudo .= "1 1 1 rg\n";
+        $y = $altura - 32;
+        $conteudo .= comandoTextoPdfFinanceiro($margem, $y, 17, textoPdfFinanceiro($titulo, 95), true);
+        $y -= 17;
+        foreach ($metadados as $meta) {
+            $conteudo .= comandoTextoPdfFinanceiro($margem, $y, 8, textoPdfFinanceiro($meta, 160));
+            $y -= 11;
+        }
+        $conteudo .= "0 g\n";
+        return $altura - 104;
+    };
+
+    $fecharPagina = static function () use (&$paginas, &$conteudo, &$paginaAtual, $margem): void {
+        $conteudo .= "0.35 0.40 0.48 rg\n";
+        $conteudo .= comandoTextoPdfFinanceiro($margem, 22, 8, textoPdfFinanceiro('Gerado em ' . date('d/m/Y H:i') . ' - Pagina ' . $paginaAtual));
+        $paginas[] = $conteudo;
+    };
+
+    $garantirEspaco = static function (float $y, float $espaco) use (&$paginas, &$conteudo, &$paginaAtual, $margem, $limiteInferior, $iniciarPagina, $fecharPagina): float {
+        if (($y - $espaco) >= $limiteInferior) {
+            return $y;
+        }
+        $fecharPagina();
+        return $iniciarPagina();
+    };
+
+    $y = $iniciarPagina();
+
+    foreach ($registros as $registro) {
+        $vendaOrigem = (int)($registro['NUMDOCORIGEM'] ?? 0);
+        $itensVenda = $vendaOrigem > 0 ? ($itensPorVenda[$vendaOrigem] ?? []) : [];
+        $clienteLinha = (string)($registro['nome_cliente'] ?: 'Cliente ' . $registro['CLICONTADOR']);
+        $telefone = telefoneFinanceiroClientes($registro['telefone_cliente'] ?? '');
+        $clienteComTelefone = $telefone !== '' ? $clienteLinha . ' - Tel. ' . $telefone : $clienteLinha;
+        $alturaBloco = 45 + (max(1, count($itensVenda)) * 13) + 12;
+        $y = $garantirEspaco($y, min($alturaBloco, 150));
+
+        $conteudo .= corPdfFinanceiro(0.88, 0.93, 0.98);
+        $conteudo .= retanguloPdfFinanceiro($margem, $y - 24, $largura - ($margem * 2), 25);
+        $conteudo .= "0 g\n";
+        $conteudo .= comandoTextoPdfFinanceiro($margem + 8, $y - 8, 8, textoPdfFinanceiro('Venda: ' . ($vendaOrigem > 0 ? $vendaOrigem : '-') . ' | CR: ' . (int)$registro['CRCONTADOR'] . ' | Compra: ' . dataHoraCompraFinanceiroClientes($registro) . ' | Venc.: ' . dataFinanceiroClientes($registro['DTVENC']), 104), true);
+        $conteudo .= comandoTextoPdfFinanceiro($margem + 8, $y - 20, 7, textoPdfFinanceiro('Cliente: ' . $clienteComTelefone . ' | Valor: ' . moedaFinanceiroClientes($registro['VLRPARCELA']) . ' | Aberto: ' . moedaFinanceiroClientes($registro['VLRRESTANTE']), 112));
+        $y -= 34;
+
+        $conteudo .= comandoTextoPdfFinanceiro($margem + 8, $y, 7, 'Codigo', true);
+        $conteudo .= comandoTextoPdfFinanceiro($margem + 64, $y, 7, 'Produto', true);
+        $conteudo .= comandoTextoPdfFinanceiro($margem + 360, $y, 7, 'Qtd', true);
+        $conteudo .= comandoTextoPdfFinanceiro($margem + 410, $y, 7, 'Unitario', true);
+        $conteudo .= comandoTextoPdfFinanceiro($margem + 488, $y, 7, 'Total', true);
+        $y -= 10;
+
+        if (empty($itensVenda)) {
+            $conteudo .= comandoTextoPdfFinanceiro($margem + 8, $y, 8, textoPdfFinanceiro('Sem itens localizados para esta venda/titulo.', 130));
+            $y -= 16;
+        } else {
+            foreach ($itensVenda as $itemVenda) {
+                $y = $garantirEspaco($y, 22);
+                $totalItens++;
+                $totalProdutos += (float)($itemVenda['TOTPROD'] ?? 0);
+                $conteudo .= comandoTextoPdfFinanceiro($margem + 8, $y, 7, textoPdfFinanceiro((string)($itemVenda['CODPRODUTO'] ?? $itemVenda['PRODUTO'] ?? ''), 11));
+                $conteudo .= comandoTextoPdfFinanceiro($margem + 64, $y, 7, textoPdfFinanceiro((string)($itemVenda['DESCPRODUTO'] ?? 'Produto ' . ($itemVenda['PRODUTO'] ?? '')), 58));
+                $conteudo .= comandoTextoPdfFinanceiro($margem + 360, $y, 7, number_format((float)($itemVenda['QTDE'] ?? 0), 3, ',', '.'));
+                $conteudo .= comandoTextoPdfFinanceiro($margem + 410, $y, 7, moedaFinanceiroClientes($itemVenda['VALOR'] ?? 0));
+                $conteudo .= comandoTextoPdfFinanceiro($margem + 488, $y, 7, moedaFinanceiroClientes($itemVenda['TOTPROD'] ?? 0));
+                $y -= 10;
+            }
+        }
+
+        $linhaY = number_format($y + 4, 2, '.', '');
+        $linhaX2 = number_format($largura - $margem, 2, '.', '');
+        $conteudo .= "0.82 0.86 0.90 RG 0.5 w " . number_format($margem, 2, '.', '') . " {$linhaY} m {$linhaX2} {$linhaY} l S\n";
+        $conteudo .= comandoTextoPdfFinanceiro($margem + 392, $y - 7, 7, 'Subtotal compra:', true);
+        $conteudo .= comandoTextoPdfFinanceiro($margem + 488, $y - 7, 7, moedaFinanceiroClientes($registro['VLRPARCELA']), true);
+        $y -= 18;
+    }
+
+    $y = $garantirEspaco($y, 56);
+    $conteudo .= corPdfFinanceiro(0.05, 0.20, 0.45);
+    $conteudo .= retanguloPdfFinanceiro($margem, $y - 42, $largura - ($margem * 2), 42);
+    $conteudo .= "1 1 1 rg\n";
+    $conteudo .= comandoTextoPdfFinanceiro($margem + 10, $y - 14, 10, 'TOTAL DO RELATORIO', true);
+    $conteudo .= comandoTextoPdfFinanceiro($margem + 190, $y - 14, 9, 'Compras: ' . (int)$resumo['qtd']);
+    $conteudo .= comandoTextoPdfFinanceiro($margem + 300, $y - 14, 9, 'Itens: ' . $totalItens);
+    $conteudo .= comandoTextoPdfFinanceiro($margem + 10, $y - 30, 8, 'Total compras: ' . moedaFinanceiroClientes($resumo['total_parcela']));
+    $conteudo .= comandoTextoPdfFinanceiro($margem + 250, $y - 30, 8, 'Total aberto: ' . moedaFinanceiroClientes($resumo['total_restante']), true);
+    $conteudo .= comandoTextoPdfFinanceiro($margem + 10, $y - 42, 7, 'Total dos itens localizados: ' . moedaFinanceiroClientes($totalProdutos));
+
+    $fecharPagina();
+    enviarPdfFinanceiroClientes($paginas, $largura, $altura, $arquivo);
+}
+
 if (in_array($exportar, ['excel', 'pdf', 'pdf_itens'], true)) {
     $nomeArquivo = ($isRecebiveis ? 'contas_receber_recebiveis_' : 'contas_receber_clientes_') . date('Ymd_His');
+    $clienteCabecalho = clienteCabecalhoFinanceiroClientes($cliente, $registros, $sintetico);
+    $periodoVencimento = ($vencInicio ?: 'inicio') . ' ate ' . ($vencFim ?: 'fim');
 
     if ($exportar === 'pdf_itens') {
-        $tituloExportacao = 'Contas a Receber - ' . $tituloCarteira . ' - Compras e Itens';
+        $tituloExportacao = 'Contas a Receber Analitico';
         $metadados = [
-            $isRecebiveis ? 'CMCONTADOR: ' . ($cmFiltro !== '' ? $cmFiltro : 'Todos exceto 9') : 'CMCONTADOR 9',
-            'Cliente: ' . ($cliente ?: 'Todos'),
-            'Vencimento: ' . ($vencInicio ?: 'inicio') . ' ate ' . ($vencFim ?: 'fim'),
-            'Verificado: ' . ($verificado ?: 'Todos'),
+            'Empresa: ' . $nomeEmpresaLogada,
+            'Cliente: ' . $clienteCabecalho,
+            'Vencimento: ' . $periodoVencimento,
             'Registros: ' . (int)$resumo['qtd'] . ' | Total em aberto: ' . moedaFinanceiroClientes($resumo['total_restante']),
         ];
+
+        gerarPdfAnaliticoContasReceberClientes($tituloExportacao, $metadados, $registros, $itensPorVenda, $resumo, $nomeArquivo . '_itens');
 
         $colunas = [
             ['titulo' => 'CR', 'largura' => 42, 'limite' => 9],
@@ -458,36 +709,46 @@ if (in_array($exportar, ['excel', 'pdf', 'pdf_itens'], true)) {
             ? 'Contas a Receber - ' . $tituloCarteira . ' - Sintetico'
             : 'Contas a Receber - ' . $tituloCarteira . ' - Analitico';
         $metadados = [
-            $isRecebiveis ? 'CMCONTADOR: ' . ($cmFiltro !== '' ? $cmFiltro : 'Todos exceto 9') : 'CMCONTADOR 9',
-            'Cliente: ' . ($cliente ?: 'Todos'),
-            'Vencimento: ' . ($vencInicio ?: 'inicio') . ' ate ' . ($vencFim ?: 'fim'),
-            'Verificado: ' . ($verificado ?: 'Todos'),
+            'Empresa: ' . $nomeEmpresaLogada,
+            'Cliente: ' . $clienteCabecalho,
+            'Vencimento: ' . $periodoVencimento,
         ];
 
         if ($visao === 'sintetico') {
             $colunas = [
-                ['titulo' => 'Codigo', 'largura' => 60, 'limite' => 12],
-                ['titulo' => 'Cliente', 'largura' => 330, 'limite' => 55],
-                ['titulo' => 'Qtd', 'largura' => 55, 'limite' => 8],
-                ['titulo' => 'Valor em aberto', 'largura' => 100, 'limite' => 18],
+                ['titulo' => 'Venda', 'largura' => 62, 'limite' => 10],
+                ['titulo' => 'CR', 'largura' => 48, 'limite' => 9],
+                ['titulo' => 'Compra', 'largura' => 82, 'limite' => 16],
+                ['titulo' => 'Venc.', 'largura' => 62, 'limite' => 10],
+                ['titulo' => 'Cliente', 'largura' => 181, 'limite' => 31],
+                ['titulo' => 'Valor', 'largura' => 78, 'limite' => 14],
             ];
-            $linhas = array_map(static function ($linha): array {
+            $linhas = array_map(static function ($registro): array {
                 return [
-                    (string)(int)$linha['CLICONTADOR'],
-                    (string)$linha['nome_cliente'],
-                    (string)(int)$linha['qtd'],
-                    moedaFinanceiroClientes($linha['total_restante']),
+                    (string)((int)($registro['NUMDOCORIGEM'] ?? 0) ?: '-'),
+                    (string)(int)$registro['CRCONTADOR'],
+                    dataHoraCompraFinanceiroClientes($registro),
+                    dataFinanceiroClientes($registro['DTVENC']),
+                    (string)($registro['nome_cliente'] ?: 'Cliente ' . $registro['CLICONTADOR']),
+                    moedaFinanceiroClientes($registro['VLRRESTANTE']),
                 ];
-            }, $sintetico);
+            }, $registros);
+            $linhas[] = [
+                '',
+                '',
+                '',
+                '',
+                'TOTAL DO RELATORIO',
+                moedaFinanceiroClientes($resumo['total_restante']),
+            ];
 
             gerarPdfFinanceiroClientes($tituloExportacao, $metadados, $colunas, $linhas, $nomeArquivo, 'portrait');
         }
 
         $colunas = [
             ['titulo' => 'CR', 'largura' => 45, 'limite' => 10],
-            ['titulo' => 'CM', 'largura' => 35, 'limite' => 6],
             ['titulo' => 'Cod.', 'largura' => 45, 'limite' => 10],
-            ['titulo' => 'Cliente', 'largura' => 210, 'limite' => 38],
+            ['titulo' => 'Cliente', 'largura' => 245, 'limite' => 44],
             ['titulo' => 'Venc.', 'largura' => 62, 'limite' => 10],
             ['titulo' => 'Emissao', 'largura' => 62, 'limite' => 10],
             ['titulo' => 'Valor', 'largura' => 85, 'limite' => 16],
@@ -498,7 +759,6 @@ if (in_array($exportar, ['excel', 'pdf', 'pdf_itens'], true)) {
         $linhas = array_map(static function ($registro): array {
             return [
                 (string)(int)$registro['CRCONTADOR'],
-                (string)(int)$registro['CMCONTADOR'],
                 (string)(int)$registro['CLICONTADOR'],
                 (string)($registro['nome_cliente'] ?: 'Cliente ' . $registro['CLICONTADOR']),
                 dataFinanceiroClientes($registro['DTVENC']),
@@ -541,10 +801,9 @@ if (in_array($exportar, ['excel', 'pdf', 'pdf_itens'], true)) {
     <body>
         <h1><?= escapeExcelFinanceiro($tituloExportacao) ?></h1>
         <div class="meta">
-            <?= escapeExcelFinanceiro($isRecebiveis ? 'CMCONTADOR: ' . ($cmFiltro !== '' ? $cmFiltro : 'Todos exceto 9') : 'CMCONTADOR 9') ?> |
-            Cliente: <?= escapeExcelFinanceiro($cliente ?: 'Todos') ?> |
-            Vencimento: <?= escapeExcelFinanceiro($vencInicio ?: 'inicio') ?> ate <?= escapeExcelFinanceiro($vencFim ?: 'fim') ?> |
-            Verificado: <?= escapeExcelFinanceiro($verificado ?: 'Todos') ?>
+            Empresa: <?= escapeExcelFinanceiro($nomeEmpresaLogada) ?> |
+            Cliente: <?= escapeExcelFinanceiro($clienteCabecalho) ?> |
+            Vencimento: <?= escapeExcelFinanceiro($periodoVencimento) ?>
         </div>
 
         <?php if ($visao === 'sintetico'): ?>
@@ -573,7 +832,6 @@ if (in_array($exportar, ['excel', 'pdf', 'pdf_itens'], true)) {
                 <thead>
                     <tr>
                         <th>CR</th>
-                        <th>CM</th>
                         <th>Codigo Cliente</th>
                         <th>Cliente</th>
                         <th>Vencimento</th>
@@ -588,7 +846,6 @@ if (in_array($exportar, ['excel', 'pdf', 'pdf_itens'], true)) {
                     <?php foreach ($registros as $registro): ?>
                         <tr>
                             <td><?= (int)$registro['CRCONTADOR'] ?></td>
-                            <td><?= (int)$registro['CMCONTADOR'] ?></td>
                             <td><?= (int)$registro['CLICONTADOR'] ?></td>
                             <td><?= escapeExcelFinanceiro($registro['nome_cliente'] ?: 'Cliente ' . $registro['CLICONTADOR']) ?></td>
                             <td><?= escapeExcelFinanceiro(dataFinanceiroClientes($registro['DTVENC'])) ?></td>
@@ -798,8 +1055,8 @@ require '../../layout/header.php';
             <div class="col-12 d-flex gap-2 justify-content-end">
                 <a href="contas_receber_clientes.php<?= $isRecebiveis ? '?carteira=recebiveis' : '' ?>" class="btn btn-outline-secondary">Limpar</a>
                 <a href="contas_receber_clientes.php?<?= htmlspecialchars(queryFinanceiroClientes(['exportar' => 'excel'])) ?>" class="btn btn-success">Excel</a>
-                <a href="contas_receber_clientes.php?<?= htmlspecialchars(queryFinanceiroClientes(['exportar' => 'pdf'])) ?>" class="btn btn-danger">PDF</a>
-                <a href="contas_receber_clientes.php?<?= htmlspecialchars(queryFinanceiroClientes(['exportar' => 'pdf_itens', 'visao' => 'analitico'])) ?>" class="btn btn-outline-danger">PDF com itens</a>
+                <a href="contas_receber_clientes.php?<?= htmlspecialchars(queryFinanceiroClientes(['exportar' => 'pdf'])) ?>" class="btn btn-outline-danger">PDF</a>
+                <a href="contas_receber_clientes.php?<?= htmlspecialchars(queryFinanceiroClientes(['exportar' => 'pdf_itens', 'visao' => 'analitico'])) ?>" class="btn btn-danger">PDF Analitico</a>
                 <button type="submit" class="btn btn-primary">Filtrar</button>
             </div>
         </div>
