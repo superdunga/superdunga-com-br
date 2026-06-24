@@ -149,22 +149,34 @@ require __DIR__ . '/../../layout/header.php';
             <input type="hidden" name="usuario_id" value="<?= $usuarioId ?>">
 
             <div class="row g-3">
+                <?php $indiceGrupo = 0; ?>
                 <?php foreach ($modulosPorGrupo as $grupo => $lista): ?>
+                    <?php $grupoId = 'grupo-modulos-' . (++$indiceGrupo); ?>
                     <div class="col-lg-6">
-                        <div class="card h-100">
-                            <div class="card-header bg-light">
-                                <strong><?= htmlspecialchars($grupo) ?></strong>
+                        <div class="card h-100 modulo-grupo-card" data-grupo="<?= htmlspecialchars($grupoId) ?>">
+                            <div class="card-header bg-light d-flex align-items-center gap-2">
+                                <input
+                                    class="form-check-input modulo-grupo-check"
+                                    type="checkbox"
+                                    id="<?= htmlspecialchars($grupoId) ?>"
+                                    data-grupo="<?= htmlspecialchars($grupoId) ?>"
+                                    <?= $usuarioSelecionado['nivel'] === 'MASTER' ? 'disabled' : '' ?>
+                                >
+                                <label class="form-check-label fw-semibold flex-grow-1" for="<?= htmlspecialchars($grupoId) ?>">
+                                    <?= htmlspecialchars($grupo) ?>
+                                </label>
                             </div>
                             <div class="card-body">
                                 <?php foreach ($lista as $modulo): ?>
                                     <?php $marcado = $usuarioConfigurado ? $modulo['liberado_usuario'] === 'S' : $modulo['liberado_perfil'] === 'S'; ?>
                                     <div class="form-check border-bottom py-2">
                                         <input
-                                            class="form-check-input"
+                                            class="form-check-input modulo-item-check"
                                             type="checkbox"
                                             name="modulos[]"
                                             value="<?= htmlspecialchars($modulo['codigo']) ?>"
                                             id="modulo-usuario-<?= (int)$modulo['id'] ?>"
+                                            data-grupo="<?= htmlspecialchars($grupoId) ?>"
                                             <?= $marcado ? 'checked' : '' ?>
                                             <?= $usuarioSelecionado['nivel'] === 'MASTER' ? 'disabled' : '' ?>
                                         >
@@ -194,5 +206,51 @@ require __DIR__ . '/../../layout/header.php';
         </form>
     </div>
 </div>
+
+<script>
+document.addEventListener('DOMContentLoaded', function () {
+    const grupoChecks = document.querySelectorAll('.modulo-grupo-check');
+
+    function itensDoGrupo(grupoId) {
+        return Array.from(document.querySelectorAll('.modulo-item-check[data-grupo="' + grupoId + '"]'))
+            .filter(function (item) {
+                return !item.disabled;
+            });
+    }
+
+    function atualizarGrupo(grupoId) {
+        const grupoCheck = document.querySelector('.modulo-grupo-check[data-grupo="' + grupoId + '"]');
+        if (!grupoCheck || grupoCheck.disabled) {
+            return;
+        }
+
+        const itens = itensDoGrupo(grupoId);
+        const marcados = itens.filter(function (item) {
+            return item.checked;
+        }).length;
+
+        grupoCheck.checked = itens.length > 0 && marcados === itens.length;
+        grupoCheck.indeterminate = marcados > 0 && marcados < itens.length;
+    }
+
+    grupoChecks.forEach(function (grupoCheck) {
+        const grupoId = grupoCheck.getAttribute('data-grupo');
+        atualizarGrupo(grupoId);
+
+        grupoCheck.addEventListener('change', function () {
+            itensDoGrupo(grupoId).forEach(function (item) {
+                item.checked = grupoCheck.checked;
+            });
+            atualizarGrupo(grupoId);
+        });
+    });
+
+    document.querySelectorAll('.modulo-item-check').forEach(function (item) {
+        item.addEventListener('change', function () {
+            atualizarGrupo(item.getAttribute('data-grupo'));
+        });
+    });
+});
+</script>
 
 <?php require __DIR__ . '/../../layout/footer.php'; ?>

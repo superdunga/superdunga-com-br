@@ -126,6 +126,41 @@ function formatarTextoExcelRecebimento($valor): string
     return '="' . str_replace('"', '""', $texto) . '"';
 }
 
+function caminhoFisicoArquivoRecebimento(?string $arquivo): string
+{
+    $arquivo = ltrim((string)$arquivo, '/\\');
+    if ($arquivo === '') {
+        return '';
+    }
+
+    return __DIR__ . '/../../' . str_replace(['/', '\\'], DIRECTORY_SEPARATOR, $arquivo);
+}
+
+function arquivoRecebimentoExiste(?string $arquivo): bool
+{
+    $caminho = caminhoFisicoArquivoRecebimento($arquivo);
+    return $caminho !== '' && is_file($caminho);
+}
+
+function urlArquivoRecebimento(?string $arquivo): string
+{
+    $arquivo = ltrim((string)$arquivo, '/\\');
+    return '../../' . str_replace('\\', '/', $arquivo);
+}
+
+function urlRecebimentoMercadorias(array $parametros = [], string $queryFiltros = ''): string
+{
+    $queryExtra = http_build_query(array_filter($parametros, function ($valor): bool {
+        return $valor !== null && $valor !== '';
+    }));
+
+    $partes = array_filter([$queryFiltros, $queryExtra], function ($valor): bool {
+        return $valor !== '';
+    });
+
+    return 'recebimento_mercadorias.php' . (!empty($partes) ? '?' . implode('&', $partes) : '');
+}
+
 function pastaUploadRecebimento(): string
 {
     $pasta = __DIR__ . '/../../uploads/recebimento_mercadorias';
@@ -359,6 +394,23 @@ function prepararAtualizacaoEmbalagemFirebird(PDO $pdo, int $empresaId, int $rec
 
 garantirTabelasRecebimentoMercadorias($pdo_master);
 
+$filtrosLista = [
+    'recebimento_id' => trim((string)($_GET['recebimento_id'] ?? '')),
+    'id_firebird' => trim((string)($_GET['id_firebird'] ?? '')),
+    'situacao_firebird' => trim((string)($_GET['situacao_firebird'] ?? 'pendentes')),
+    'data_ini' => trim((string)($_GET['data_ini'] ?? '')),
+    'data_fim' => trim((string)($_GET['data_fim'] ?? '')),
+    'usuario' => trim((string)($_GET['usuario'] ?? '')),
+];
+
+if (!in_array($filtrosLista['situacao_firebird'], ['todos', 'pendentes', 'preenchidos'], true)) {
+    $filtrosLista['situacao_firebird'] = 'pendentes';
+}
+
+$queryFiltrosLista = http_build_query(array_filter($filtrosLista, function ($valor): bool {
+    return $valor !== '' && $valor !== 'pendentes';
+}));
+
 if (($_GET['ajax'] ?? '') === 'produto') {
     header('Content-Type: application/json; charset=utf-8');
     $codigoAjax = trim((string)($_GET['codigo'] ?? ''));
@@ -389,6 +441,35 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if (!$recebimentoPost) {
             throw new RuntimeException('Recebimento nao encontrado.');
         }
+
+        if ($acao === 'salvar_firebird') {
+            if (($recebimentoPost['status'] ?? '') !== 'finalizado') {
+                throw new RuntimeException('Informe o ID Firebird somente em recebimentos finalizados.');
+            }
+
+            $idFirebirdTexto = trim((string)($_POST['id_firebird'] ?? ''));
+            if ($idFirebirdTexto === '') {
+                header('Location: recebimento_mercadorias.php?erro=firebird_vazio');
+                exit;
+            }
+            if (!ctype_digit($idFirebirdTexto)) {
+                header('Location: recebimento_mercadorias.php?erro=firebird_invalido');
+                exit;
+            }
+
+            $stmtAtualizar = $pdo_master->prepare("
+                UPDATE recebimento_mercadorias
+                SET id_firebird = ?
+                WHERE id = ?
+                  AND empresa_id = ?
+                  AND status = 'finalizado'
+            ");
+            $stmtAtualizar->execute([(int)$idFirebirdTexto, $recebimentoIdPost, $empresaId]);
+
+            header('Location: ' . urlRecebimentoMercadorias(['ok' => 'firebird'], $queryFiltrosLista));
+            exit;
+        }
+
         if (($recebimentoPost['status'] ?? '') === 'finalizado') {
             throw new RuntimeException('Este recebimento ja foi finalizado.');
         }
@@ -502,7 +583,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
 $recebimentoId = (int)($_GET['id'] ?? 0);
 $recebimento = $recebimentoId > 0 ? obterRecebimento($pdo_master, $empresaId, $recebimentoId) : null;
-$usuarioMasterRecebimento = ($_SESSION['nivel'] ?? '') === 'MASTER';
 
 if (($_GET['ok'] ?? '') === 'documentos') {
     $mensagemOk = 'Foto(s) do documento salva(s).';
@@ -510,14 +590,21 @@ if (($_GET['ok'] ?? '') === 'documentos') {
     $mensagemOk = 'Item adicionado ao recebimento.';
 } elseif (($_GET['ok'] ?? '') === 'finalizado') {
     $mensagemOk = 'Recebimento finalizado com comprovante de quem recebeu.';
+} elseif (($_GET['ok'] ?? '') === 'firebird') {
+    $mensagemOk = 'ID do recebimento no Firebird salvo.';
 }
 if (($_GET['erro'] ?? '') === 'csv_pendente') {
     $mensagemErro = 'A exportacao CSV fica disponivel somente apos finalizar o recebimento.';
+} elseif (($_GET['erro'] ?? '') === 'firebird_invalido') {
+    $mensagemErro = 'Informe um ID do Firebird numerico.';
+} elseif (($_GET['erro'] ?? '') === 'firebird_vazio') {
+    $mensagemErro = 'Informe o ID do recebimento no Firebird antes de gravar.';
 }
 
 $documentos = [];
 $itens = [];
 $recebimentosRecentes = [];
+$recebimentosFinalizados = [];
 
 if ($recebimento) {
     $stmtDocs = $pdo_master->prepare("
@@ -546,10 +633,76 @@ if ($recebimento) {
         exportarCsvRecebimentoMercadorias($recebimentoId, $itens);
     }
 
-    if (($recebimento['status'] ?? '') === 'finalizado' && !$usuarioMasterRecebimento) {
-        renderizarAcessoNegadoModulo('Somente usuario MASTER pode abrir recebimentos de mercadorias finalizados.');
-    }
 } else {
+    $whereLista = [
+        "r.empresa_id = ?",
+        "r.status = 'finalizado'",
+    ];
+    $paramsLista = [$empresaId];
+
+    if ($filtrosLista['recebimento_id'] !== '') {
+        if (ctype_digit($filtrosLista['recebimento_id'])) {
+            $whereLista[] = 'r.id = ?';
+            $paramsLista[] = (int)$filtrosLista['recebimento_id'];
+        } else {
+            $whereLista[] = '1 = 0';
+        }
+    }
+
+    if ($filtrosLista['id_firebird'] !== '') {
+        if (ctype_digit($filtrosLista['id_firebird'])) {
+            $whereLista[] = 'r.id_firebird = ?';
+            $paramsLista[] = (int)$filtrosLista['id_firebird'];
+        } else {
+            $whereLista[] = '1 = 0';
+        }
+    }
+
+    if ($filtrosLista['situacao_firebird'] === 'pendentes') {
+        $whereLista[] = 'r.id_firebird IS NULL';
+    } elseif ($filtrosLista['situacao_firebird'] === 'preenchidos') {
+        $whereLista[] = 'r.id_firebird IS NOT NULL';
+    }
+
+    if ($filtrosLista['data_ini'] !== '') {
+        $whereLista[] = 'r.finalizado_em >= ?';
+        $paramsLista[] = $filtrosLista['data_ini'] . ' 00:00:00';
+    }
+
+    if ($filtrosLista['data_fim'] !== '') {
+        $whereLista[] = 'r.finalizado_em <= ?';
+        $paramsLista[] = $filtrosLista['data_fim'] . ' 23:59:59';
+    }
+
+    if ($filtrosLista['usuario'] !== '') {
+        $whereLista[] = 'u.nome LIKE ?';
+        $paramsLista[] = '%' . $filtrosLista['usuario'] . '%';
+    }
+
+    $whereListaSql = implode("\n      AND ", $whereLista);
+
+    $stmtRecebimentosFinalizados = $pdo_master->prepare("
+        SELECT r.id,
+               r.criado_em,
+               r.finalizado_em,
+               r.id_firebird,
+               u.nome AS usuario_nome,
+               COUNT(i.id) AS total_itens,
+               COALESCE(SUM(i.quantidade_total), 0) AS total_quantidade,
+               SUM(CASE WHEN i.status = 'pendente_firebird' THEN 1 ELSE 0 END) AS pendentes_firebird,
+               SUM(CASE WHEN i.status = 'sem_alteracao' THEN 1 ELSE 0 END) AS sem_alteracao,
+               SUM(CASE WHEN i.status = 'produto_nao_cadastrado' THEN 1 ELSE 0 END) AS nao_cadastrados,
+               SUM(CASE WHEN i.status = 'atualizado_firebird' THEN 1 ELSE 0 END) AS atualizados_firebird
+        FROM recebimento_mercadorias r
+        LEFT JOIN usuarios u ON u.id = r.usuario_id
+        LEFT JOIN recebimento_mercadorias_itens i ON i.recebimento_id = r.id
+        WHERE {$whereListaSql}
+        GROUP BY r.id, r.criado_em, r.finalizado_em, r.id_firebird, u.nome
+        ORDER BY r.finalizado_em DESC, r.id DESC
+    ");
+    $stmtRecebimentosFinalizados->execute($paramsLista);
+    $recebimentosFinalizados = $stmtRecebimentosFinalizados->fetchAll(PDO::FETCH_ASSOC);
+
     $stmtRecentes = $pdo_master->prepare("
         SELECT r.*,
                COUNT(DISTINCT d.id) AS total_documentos,
@@ -558,6 +711,7 @@ if ($recebimento) {
         LEFT JOIN recebimento_mercadorias_documentos d ON d.recebimento_id = r.id
         LEFT JOIN recebimento_mercadorias_itens i ON i.recebimento_id = r.id
         WHERE r.empresa_id = ?
+          AND r.status <> 'finalizado'
         GROUP BY r.id
         ORDER BY r.criado_em DESC
         LIMIT 20
@@ -660,9 +814,9 @@ require '../../layout/header.php';
     <?php endif; ?>
 
     <?php if (!$recebimento): ?>
-        <section class="card shadow-sm">
+        <section class="card shadow-sm mb-3">
             <div class="card-body">
-                <h2 class="h6 fw-bold mb-3">Recebimentos recentes</h2>
+                <h2 class="h6 fw-bold mb-3">Recebimentos em andamento</h2>
                 <div class="table-responsive">
                     <table class="table table-sm align-middle mb-0">
                         <thead class="table-primary">
@@ -689,19 +843,172 @@ require '../../layout/header.php';
                                     <td><?= (int)$recente['total_itens'] ?></td>
                                     <td class="text-end">
                                         <div class="d-inline-flex flex-wrap justify-content-end gap-1">
-                                            <?php if (($recente['status'] ?? '') !== 'finalizado' || $usuarioMasterRecebimento): ?>
-                                                <a href="recebimento_mercadorias.php?id=<?= (int)$recente['id'] ?>" class="btn btn-sm btn-primary">Abrir</a>
-                                            <?php endif; ?>
+                                            <a href="recebimento_mercadorias.php?id=<?= (int)$recente['id'] ?>" class="btn btn-sm btn-primary">Abrir</a>
                                         </div>
                                     </td>
                                 </tr>
                             <?php endforeach; ?>
                             <?php if (empty($recebimentosRecentes)): ?>
-                                <tr><td colspan="6" class="text-center text-muted py-3">Nenhum recebimento registrado ainda.</td></tr>
+                                <tr><td colspan="6" class="text-center text-muted py-3">Nenhum recebimento em andamento.</td></tr>
                             <?php endif; ?>
                         </tbody>
                     </table>
                 </div>
+            </div>
+        </section>
+
+        <section class="bg-white border rounded-2 shadow-sm p-3 mb-3">
+            <div class="d-flex flex-column flex-lg-row justify-content-between gap-2 mb-3">
+                <div>
+                    <h2 class="h6 fw-bold mb-1">Recebimentos finalizados</h2>
+                    <div class="text-muted small">Baixe CSV, confira detalhes e informe o ID gerado no Firebird.</div>
+                </div>
+            </div>
+            <form method="GET" class="row g-3 align-items-end">
+                <div class="col-6 col-md-2">
+                    <label class="form-label small text-muted">ID local</label>
+                    <input
+                        type="number"
+                        name="recebimento_id"
+                        class="form-control"
+                        min="1"
+                        step="1"
+                        value="<?= htmlspecialchars($filtrosLista['recebimento_id']) ?>"
+                        placeholder="Ex.: 42"
+                    >
+                </div>
+                <div class="col-6 col-md-2">
+                    <label class="form-label small text-muted">ID Firebird</label>
+                    <input
+                        type="number"
+                        name="id_firebird"
+                        class="form-control"
+                        min="0"
+                        step="1"
+                        value="<?= htmlspecialchars($filtrosLista['id_firebird']) ?>"
+                        placeholder="Ex.: 6442"
+                    >
+                </div>
+                <div class="col-12 col-md-3">
+                    <label class="form-label small text-muted">Situacao Firebird</label>
+                    <select name="situacao_firebird" class="form-select">
+                        <option value="todos" <?= $filtrosLista['situacao_firebird'] === 'todos' ? 'selected' : '' ?>>Todos</option>
+                        <option value="pendentes" <?= $filtrosLista['situacao_firebird'] === 'pendentes' ? 'selected' : '' ?>>Pendentes de ID</option>
+                        <option value="preenchidos" <?= $filtrosLista['situacao_firebird'] === 'preenchidos' ? 'selected' : '' ?>>Com ID Firebird</option>
+                    </select>
+                </div>
+                <div class="col-6 col-md-2">
+                    <label class="form-label small text-muted">Finalizado de</label>
+                    <input
+                        type="date"
+                        name="data_ini"
+                        class="form-control"
+                        value="<?= htmlspecialchars($filtrosLista['data_ini']) ?>"
+                    >
+                </div>
+                <div class="col-6 col-md-2">
+                    <label class="form-label small text-muted">Finalizado ate</label>
+                    <input
+                        type="date"
+                        name="data_fim"
+                        class="form-control"
+                        value="<?= htmlspecialchars($filtrosLista['data_fim']) ?>"
+                    >
+                </div>
+                <div class="col-12 col-md-4">
+                    <label class="form-label small text-muted">Usuario</label>
+                    <input
+                        type="text"
+                        name="usuario"
+                        class="form-control"
+                        value="<?= htmlspecialchars($filtrosLista['usuario']) ?>"
+                        placeholder="Nome de quem criou"
+                    >
+                </div>
+                <div class="col-12 col-md-auto d-flex gap-2">
+                    <button type="submit" class="btn btn-primary">Filtrar</button>
+                    <a href="recebimento_mercadorias.php" class="btn btn-outline-secondary">Limpar</a>
+                </div>
+            </form>
+        </section>
+
+        <section class="bg-white border rounded-2 shadow-sm overflow-hidden">
+            <div class="px-3 py-2 border-bottom text-muted small">
+                <?= count($recebimentosFinalizados) ?> recebimento(s) finalizado(s) encontrado(s)
+            </div>
+            <div class="table-responsive">
+                <table class="table table-sm align-middle mb-0">
+                    <thead class="table-light">
+                        <tr>
+                            <th>ID</th>
+                            <th>Finalizado em</th>
+                            <th>Usuario</th>
+                            <th class="text-end">Itens</th>
+                            <th class="text-end">Qtd total</th>
+                            <th>Qtd por caixa</th>
+                            <th style="min-width: 260px;">ID recebimento Firebird</th>
+                            <th class="text-end">Acoes</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <?php foreach ($recebimentosFinalizados as $finalizadoLinha): ?>
+                            <tr>
+                                <td class="fw-semibold">#<?= (int)$finalizadoLinha['id'] ?></td>
+                                <td><?= $finalizadoLinha['finalizado_em'] ? date('d/m/Y H:i', strtotime($finalizadoLinha['finalizado_em'])) : '-' ?></td>
+                                <td><?= htmlspecialchars($finalizadoLinha['usuario_nome'] ?? '-') ?></td>
+                                <td class="text-end"><?= (int)$finalizadoLinha['total_itens'] ?></td>
+                                <td class="text-end"><?= htmlspecialchars(formatarQtdRecebimento($finalizadoLinha['total_quantidade'] ?? 0)) ?></td>
+                                <td>
+                                    <?php if ((int)($finalizadoLinha['pendentes_firebird'] ?? 0) > 0): ?>
+                                        <span class="badge text-bg-warning"><?= (int)$finalizadoLinha['pendentes_firebird'] ?> pendente(s)</span>
+                                    <?php endif; ?>
+                                    <?php if ((int)($finalizadoLinha['atualizados_firebird'] ?? 0) > 0): ?>
+                                        <span class="badge text-bg-success"><?= (int)$finalizadoLinha['atualizados_firebird'] ?> atualizado(s)</span>
+                                    <?php endif; ?>
+                                    <?php if ((int)($finalizadoLinha['sem_alteracao'] ?? 0) > 0): ?>
+                                        <span class="badge text-bg-secondary"><?= (int)$finalizadoLinha['sem_alteracao'] ?> sem alteracao</span>
+                                    <?php endif; ?>
+                                    <?php if ((int)($finalizadoLinha['nao_cadastrados'] ?? 0) > 0): ?>
+                                        <span class="badge text-bg-danger"><?= (int)$finalizadoLinha['nao_cadastrados'] ?> nao cadastrado(s)</span>
+                                    <?php endif; ?>
+                                </td>
+                                <td>
+                                    <form method="POST" class="d-flex gap-2">
+                                        <input type="hidden" name="acao" value="salvar_firebird">
+                                        <input type="hidden" name="recebimento_id" value="<?= (int)$finalizadoLinha['id'] ?>">
+                                        <input
+                                            type="number"
+                                            name="id_firebird"
+                                            class="form-control form-control-sm"
+                                            min="0"
+                                            step="1"
+                                            inputmode="numeric"
+                                            value="<?= htmlspecialchars((string)($finalizadoLinha['id_firebird'] ?? '')) ?>"
+                                            placeholder="ID no Firebird"
+                                            required
+                                        >
+                                        <button type="submit" class="btn btn-sm btn-primary">Gravar</button>
+                                    </form>
+                                </td>
+                                <td class="text-end">
+                                    <a
+                                        href="recebimento_mercadorias.php?id=<?= (int)$finalizadoLinha['id'] ?>"
+                                        class="btn btn-sm btn-outline-primary"
+                                    >Abrir</a>
+                                    <a
+                                        href="recebimento_mercadorias.php?id=<?= (int)$finalizadoLinha['id'] ?>&exportar=csv"
+                                        class="btn btn-sm btn-outline-success"
+                                    >Baixar CSV</a>
+                                </td>
+                            </tr>
+                        <?php endforeach; ?>
+                        <?php if (empty($recebimentosFinalizados)): ?>
+                            <tr>
+                                <td colspan="8" class="text-center text-muted py-4">Nenhum recebimento finalizado encontrado.</td>
+                            </tr>
+                        <?php endif; ?>
+                    </tbody>
+                </table>
             </div>
         </section>
     <?php else: ?>
@@ -732,13 +1039,19 @@ require '../../layout/header.php';
                         <input type="hidden" name="recebimento_id" value="<?= (int)$recebimento['id'] ?>">
                         <input type="file" name="documentos[]" accept="image/*" capture="environment" multiple class="form-control mb-2" required>
                         <button type="submit" class="btn btn-success btn-lg-mobile w-100">Salvar foto(s) do documento</button>
-                    </form>
+                </form>
                 <?php endif; ?>
                 <div class="d-flex flex-wrap gap-2">
                     <?php foreach ($documentos as $doc): ?>
-                        <a href="../../<?= htmlspecialchars($doc['arquivo']) ?>" target="_blank">
-                            <img src="../../<?= htmlspecialchars($doc['arquivo']) ?>" class="thumb-doc" alt="Documento">
-                        </a>
+                        <?php if (arquivoRecebimentoExiste($doc['arquivo'] ?? '')): ?>
+                            <a href="<?= htmlspecialchars(urlArquivoRecebimento($doc['arquivo'])) ?>" target="_blank">
+                                <img src="<?= htmlspecialchars(urlArquivoRecebimento($doc['arquivo'])) ?>" class="thumb-doc" alt="Documento">
+                            </a>
+                        <?php else: ?>
+                            <div class="thumb-doc d-flex align-items-center justify-content-center text-center text-muted small border bg-light p-2">
+                                Arquivo nao encontrado
+                            </div>
+                        <?php endif; ?>
                     <?php endforeach; ?>
                     <?php if (empty($documentos)): ?>
                         <div class="text-muted small">Nenhuma foto de documento salva.</div>
@@ -840,7 +1153,11 @@ require '../../layout/header.php';
                                         </div>
                                     </div>
                                     <?php if (!empty($item['foto_produto'])): ?>
-                                        <a href="../../<?= htmlspecialchars($item['foto_produto']) ?>" target="_blank" class="btn btn-sm btn-outline-secondary mt-2">Ver foto do produto</a>
+                                        <?php if (arquivoRecebimentoExiste($item['foto_produto'])): ?>
+                                            <a href="<?= htmlspecialchars(urlArquivoRecebimento($item['foto_produto'])) ?>" target="_blank" class="btn btn-sm btn-outline-secondary mt-2">Ver foto do produto</a>
+                                        <?php else: ?>
+                                            <span class="badge text-bg-light border mt-2">Foto do produto nao encontrada</span>
+                                        <?php endif; ?>
                                     <?php endif; ?>
                                 </div>
                             </div>
@@ -859,7 +1176,11 @@ require '../../layout/header.php';
                 <?php if ($finalizado): ?>
                     <div class="alert alert-success mb-3">Recebimento finalizado em <?= date('d/m/Y H:i', strtotime($recebimento['finalizado_em'])) ?>.</div>
                     <?php if (!empty($recebimento['selfie_arquivo'])): ?>
-                        <a href="../../<?= htmlspecialchars($recebimento['selfie_arquivo']) ?>" target="_blank" class="btn btn-outline-secondary">Ver comprovante</a>
+                        <?php if (arquivoRecebimentoExiste($recebimento['selfie_arquivo'])): ?>
+                            <a href="<?= htmlspecialchars(urlArquivoRecebimento($recebimento['selfie_arquivo'])) ?>" target="_blank" class="btn btn-outline-secondary">Ver comprovante</a>
+                        <?php else: ?>
+                            <span class="badge text-bg-light border">Comprovante nao encontrado</span>
+                        <?php endif; ?>
                     <?php endif; ?>
                 <?php else: ?>
                     <form method="POST" enctype="multipart/form-data" onsubmit="return confirm('Finalizar recebimento com a identificacao enviada?');">

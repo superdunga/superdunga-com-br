@@ -15,15 +15,6 @@ $opcoes = [
         'icone' => 'RM',
         'botao' => 'btn-success',
     ],
-    [
-        'titulo' => 'Lista dos Recebimentos',
-        'descricao' => 'Consulte recebimentos finalizados, baixe CSV e informe o ID gerado no Firebird.',
-        'href' => 'lista_recebimentos.php',
-        'modulo' => 'lista_recebimentos_mercadorias',
-        'modulos' => ['lista_recebimentos_mercadorias', 'recebimento_mercadorias'],
-        'icone' => 'LR',
-        'botao' => 'btn-primary',
-    ],
 ];
 
 $opcoes = filtrarOpcoesPorModulo($pdo_master, $empresaId, $opcoes);

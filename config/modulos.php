@@ -41,7 +41,6 @@ function sistemaModulosPadrao(): array
 
         ['codigo' => 'rotinas_operacionais', 'grupo' => 'Rotinas Operacionais', 'nome' => 'Rotinas Operacionais', 'url' => 'modulos/rotinas_operacionais/menu_rotinas_operacionais.php', 'ordem' => 307],
         ['codigo' => 'recebimento_mercadorias', 'grupo' => 'Rotinas Operacionais', 'nome' => 'Recebimento de Mercadorias', 'url' => 'modulos/rotinas_operacionais/recebimento_mercadorias.php', 'ordem' => 308],
-        ['codigo' => 'lista_recebimentos_mercadorias', 'grupo' => 'Rotinas Operacionais', 'nome' => 'Lista dos Recebimentos', 'url' => 'modulos/rotinas_operacionais/lista_recebimentos.php', 'ordem' => 309],
 
         ['codigo' => 'colaboradores', 'grupo' => 'Colaboradores', 'nome' => 'Colaboradores', 'url' => 'modulos/colaboradores/menu_colaboradores.php', 'ordem' => 311],
         ['codigo' => 'colaboradores_cadastro', 'grupo' => 'Colaboradores', 'nome' => 'Cadastro', 'url' => 'modulos/colaboradores/cadastro.php', 'ordem' => 312],
@@ -210,6 +209,12 @@ function garantirTabelasModulos(PDO $pdo): void
             $modulo['ordem'],
         ]);
     }
+
+    $pdo->exec("
+        UPDATE sistema_modulos
+        SET ativo = 'N'
+        WHERE codigo = 'lista_recebimentos_mercadorias'
+    ");
 
     $pdo->exec("
         INSERT INTO empresa_modulos (empresa_id, modulo_id, ativo)

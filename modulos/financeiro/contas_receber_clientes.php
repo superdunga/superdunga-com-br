@@ -389,8 +389,69 @@ function gerarPdfFinanceiroClientes(string $titulo, array $metadados, array $col
     exit;
 }
 
-if (in_array($exportar, ['excel', 'pdf'], true)) {
+if (in_array($exportar, ['excel', 'pdf', 'pdf_itens'], true)) {
     $nomeArquivo = ($isRecebiveis ? 'contas_receber_recebiveis_' : 'contas_receber_clientes_') . date('Ymd_His');
+
+    if ($exportar === 'pdf_itens') {
+        $tituloExportacao = 'Contas a Receber - ' . $tituloCarteira . ' - Compras e Itens';
+        $metadados = [
+            $isRecebiveis ? 'CMCONTADOR: ' . ($cmFiltro !== '' ? $cmFiltro : 'Todos exceto 9') : 'CMCONTADOR 9',
+            'Cliente: ' . ($cliente ?: 'Todos'),
+            'Vencimento: ' . ($vencInicio ?: 'inicio') . ' ate ' . ($vencFim ?: 'fim'),
+            'Verificado: ' . ($verificado ?: 'Todos'),
+            'Registros: ' . (int)$resumo['qtd'] . ' | Total em aberto: ' . moedaFinanceiroClientes($resumo['total_restante']),
+        ];
+
+        $colunas = [
+            ['titulo' => 'CR', 'largura' => 42, 'limite' => 9],
+            ['titulo' => 'Venda', 'largura' => 48, 'limite' => 10],
+            ['titulo' => 'Cliente', 'largura' => 170, 'limite' => 32],
+            ['titulo' => 'Venc.', 'largura' => 55, 'limite' => 10],
+            ['titulo' => 'Cod.', 'largura' => 52, 'limite' => 12],
+            ['titulo' => 'Produto', 'largura' => 250, 'limite' => 48],
+            ['titulo' => 'Qtd', 'largura' => 40, 'limite' => 8],
+            ['titulo' => 'Unit.', 'largura' => 60, 'limite' => 12],
+            ['titulo' => 'Total', 'largura' => 65, 'limite' => 12],
+        ];
+
+        $linhas = [];
+        foreach ($registros as $registro) {
+            $vendaOrigem = (int)($registro['NUMDOCORIGEM'] ?? 0);
+            $itensVenda = $vendaOrigem > 0 ? ($itensPorVenda[$vendaOrigem] ?? []) : [];
+            $clienteLinha = (string)($registro['nome_cliente'] ?: 'Cliente ' . $registro['CLICONTADOR']);
+
+            if (empty($itensVenda)) {
+                $linhas[] = [
+                    (string)(int)$registro['CRCONTADOR'],
+                    $vendaOrigem > 0 ? (string)$vendaOrigem : '-',
+                    $clienteLinha,
+                    dataFinanceiroClientes($registro['DTVENC']),
+                    '-',
+                    'Sem itens localizados para esta venda/titulo',
+                    '',
+                    '',
+                    moedaFinanceiroClientes($registro['VLRPARCELA']),
+                ];
+                continue;
+            }
+
+            foreach ($itensVenda as $itemVenda) {
+                $linhas[] = [
+                    (string)(int)$registro['CRCONTADOR'],
+                    (string)$vendaOrigem,
+                    $clienteLinha,
+                    dataFinanceiroClientes($registro['DTVENC']),
+                    (string)($itemVenda['CODPRODUTO'] ?? $itemVenda['PRODUTO'] ?? ''),
+                    (string)($itemVenda['DESCPRODUTO'] ?? 'Produto ' . ($itemVenda['PRODUTO'] ?? '')),
+                    number_format((float)($itemVenda['QTDE'] ?? 0), 3, ',', '.'),
+                    moedaFinanceiroClientes($itemVenda['VALOR'] ?? 0),
+                    moedaFinanceiroClientes($itemVenda['TOTPROD'] ?? 0),
+                ];
+            }
+        }
+
+        gerarPdfFinanceiroClientes($tituloExportacao, $metadados, $colunas, $linhas, $nomeArquivo . '_itens', 'landscape');
+    }
 
     if ($exportar === 'pdf') {
         $tituloExportacao = $visao === 'sintetico'
@@ -738,6 +799,7 @@ require '../../layout/header.php';
                 <a href="contas_receber_clientes.php<?= $isRecebiveis ? '?carteira=recebiveis' : '' ?>" class="btn btn-outline-secondary">Limpar</a>
                 <a href="contas_receber_clientes.php?<?= htmlspecialchars(queryFinanceiroClientes(['exportar' => 'excel'])) ?>" class="btn btn-success">Excel</a>
                 <a href="contas_receber_clientes.php?<?= htmlspecialchars(queryFinanceiroClientes(['exportar' => 'pdf'])) ?>" class="btn btn-danger">PDF</a>
+                <a href="contas_receber_clientes.php?<?= htmlspecialchars(queryFinanceiroClientes(['exportar' => 'pdf_itens', 'visao' => 'analitico'])) ?>" class="btn btn-outline-danger">PDF com itens</a>
                 <button type="submit" class="btn btn-primary">Filtrar</button>
             </div>
         </div>
