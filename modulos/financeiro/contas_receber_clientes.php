@@ -40,6 +40,8 @@ garantirCamposContasReceberClientes($pdo_master);
 
 $cliente = trim($_GET['cliente'] ?? '');
 $cmFiltro = trim($_GET['cmcontador'] ?? '');
+$compraInicio = trim($_GET['compra_ini'] ?? '');
+$compraFim = trim($_GET['compra_fim'] ?? '');
 $vencInicio = trim($_GET['venc_ini'] ?? '');
 $vencFim = trim($_GET['venc_fim'] ?? '');
 $verificado = trim($_GET['verificado'] ?? '');
@@ -123,6 +125,16 @@ if ($cliente !== '') {
     $params[] = $like;
 }
 
+if ($compraInicio !== '') {
+    $where[] = 'DATE(COALESCE(v.DTVENDA, c.DTEMISSAO)) >= ?';
+    $params[] = $compraInicio;
+}
+
+if ($compraFim !== '') {
+    $where[] = 'DATE(COALESCE(v.DTVENDA, c.DTEMISSAO)) <= ?';
+    $params[] = $compraFim;
+}
+
 if ($vencInicio !== '') {
     $where[] = 'DATE(c.DTVENC) >= ?';
     $params[] = $vencInicio;
@@ -157,6 +169,9 @@ if ($visao === 'sintetico') {
         LEFT JOIN armazem_cr002 cli
             ON cli.EMPRESA = c.EMPRESA
            AND cli.CLICONTADOR = c.CLICONTADOR
+        LEFT JOIN armazem_est007 v
+            ON v.EMPRESA = c.EMPRESA
+           AND v.VENDACONTADOR = c.NUMDOCORIGEM
         WHERE {$whereSql}
         GROUP BY c.CLICONTADOR, nome_cliente
         ORDER BY total_restante DESC, nome_cliente ASC
@@ -181,6 +196,9 @@ if ($visao !== 'sintetico') {
         LEFT JOIN armazem_cr002 cli
             ON cli.EMPRESA = c.EMPRESA
            AND cli.CLICONTADOR = c.CLICONTADOR
+        LEFT JOIN armazem_est007 v
+            ON v.EMPRESA = c.EMPRESA
+           AND v.VENDACONTADOR = c.NUMDOCORIGEM
         WHERE {$whereSql}
     ");
     $stmtResumo->execute($params);
@@ -1036,11 +1054,19 @@ require '../../layout/header.php';
                     <input type="number" name="cmcontador" class="form-control" value="<?= htmlspecialchars($cmFiltro) ?>" placeholder="Todos exceto 9">
                 </div>
             <?php endif; ?>
-            <div class="col-md-3">
+            <div class="col-md-2">
+                <label class="form-label">Compra inicial</label>
+                <input type="date" name="compra_ini" class="form-control" value="<?= htmlspecialchars($compraInicio) ?>">
+            </div>
+            <div class="col-md-2">
+                <label class="form-label">Compra final</label>
+                <input type="date" name="compra_fim" class="form-control" value="<?= htmlspecialchars($compraFim) ?>">
+            </div>
+            <div class="col-md-2">
                 <label class="form-label">Vencimento inicial</label>
                 <input type="date" name="venc_ini" class="form-control" value="<?= htmlspecialchars($vencInicio) ?>">
             </div>
-            <div class="col-md-3">
+            <div class="col-md-2">
                 <label class="form-label">Vencimento final</label>
                 <input type="date" name="venc_fim" class="form-control" value="<?= htmlspecialchars($vencFim) ?>">
             </div>
