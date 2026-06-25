@@ -334,7 +334,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['acao'] ?? '') === 'upload_
     $arquivo = $_FILES['arquivo']['tmp_name'];
     $nomeArquivo = $_FILES['arquivo']['name'];
 
-    if (!file_exists($arquivo)) {
+    if (stripos($nomeArquivo, 'agenda') === false) {
+        $mensagens[] = ['tipo' => 'danger', 'texto' => 'Importacao bloqueada: este botao aceita somente o arquivo agenda Granito PIX.'];
+    } elseif (!file_exists($arquivo)) {
         $mensagens[] = ['tipo' => 'danger', 'texto' => 'Arquivo nao encontrado.'];
     } else {
         $handle = fopen($arquivo, 'r');

@@ -34,6 +34,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['arquivo'])) {
     $arquivo = $_FILES['arquivo']['tmp_name'];
     $nomeArquivo = $_FILES['arquivo']['name'];
 
+    if (stripos($nomeArquivo, 'transacoes') === false) {
+        echo "<div class='alert alert-danger'>Importacao bloqueada: este botao aceita somente o arquivo de transacoes Granito POS.</div>";
+        require '../../layout/footer.php';
+        exit;
+    }
+
     if (!file_exists($arquivo)) {
         echo "<div class='alert alert-danger'>Arquivo nao encontrado.</div>";
     } else {

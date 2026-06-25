@@ -217,3 +217,25 @@ function urlRegraImportacao(array $regra): string
     }
     return $url;
 }
+
+function garantirTabelaTaxasAdquirentes(PDO $pdo): void
+{
+    $pdo->exec("
+        CREATE TABLE IF NOT EXISTS fechamento_adquirente_taxas (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            empresa_id INT NOT NULL,
+            adquirente VARCHAR(40) NOT NULL,
+            grupo VARCHAR(40) NOT NULL,
+            tipo_operacao VARCHAR(20) NOT NULL,
+            bandeira VARCHAR(40) NOT NULL DEFAULT 'TODAS',
+            parcelas_de INT NOT NULL DEFAULT 1,
+            parcelas_ate INT NOT NULL DEFAULT 1,
+            taxa_percentual DECIMAL(9,4) NOT NULL DEFAULT 0,
+            tolerancia_percentual DECIMAL(9,4) NOT NULL DEFAULT 0.0500,
+            ativo CHAR(1) NOT NULL DEFAULT 'S',
+            criado_em DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            atualizado_em DATETIME NULL DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP,
+            INDEX idx_adquirente_taxas_empresa (empresa_id, adquirente, grupo, tipo_operacao, bandeira, ativo)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    ");
+}

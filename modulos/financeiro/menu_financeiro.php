@@ -49,6 +49,17 @@ $opcoes = [
     ],
 ];
 
+if (strtoupper((string)($_SESSION['nivel'] ?? '')) === 'MASTER') {
+    $opcoes[] = [
+        'titulo' => 'Importacao de Recebimentos',
+        'descricao' => 'Cadastre taxas das adquirentes e acompanhe os relatorios importados.',
+        'href' => 'importacao_recebimentos.php',
+        'modulo' => 'financeiro',
+        'icone' => 'IR',
+        'botao' => 'btn-dark',
+    ];
+}
+
 $opcoes = filtrarOpcoesPorModulo($pdo_master, $empresaId, $opcoes);
 ?>
 

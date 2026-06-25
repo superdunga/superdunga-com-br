@@ -14,13 +14,37 @@ $mes = $_GET['mes'] ?? date('Y-m');
    BUSCAR DATAS (BASE SISTEMA)
 ========================= */
 $stmtDatas = $pdo_master->prepare("
-    SELECT DISTINCT DATE(data_venda) AS data_base
-    FROM armazem_conciliacao_recebimentos
-    WHERE DATE(data_venda) LIKE ?
-      AND empresa_id = ?
+    SELECT DISTINCT data_base
+    FROM (
+        SELECT DATE(data_venda) AS data_base
+        FROM armazem_conciliacao_recebimentos
+        WHERE DATE(data_venda) LIKE ?
+          AND empresa_id = ?
+
+        UNION
+
+        SELECT
+            CASE
+                WHEN TIME(DTLANC) < '03:00:00'
+                    THEN DATE(DATE_SUB(DTLANC, INTERVAL 1 DAY))
+                ELSE DATE(DTLANC)
+            END AS data_base
+        FROM armazem_cr001
+        WHERE EMPRESA = ?
+          AND CMCONTADOR <> 9
+          AND COALESCE(STATUS, '') <> 'QT'
+          AND COALESCE(excluido_firebird, 'N') = 'N'
+          AND (
+              CASE
+                  WHEN TIME(DTLANC) < '03:00:00'
+                      THEN DATE(DATE_SUB(DTLANC, INTERVAL 1 DAY))
+                  ELSE DATE(DTLANC)
+              END
+          ) LIKE ?
+    ) datas
     ORDER BY data_base DESC
 ");
-$stmtDatas->execute([$mes . '%', $empresa_id]);
+$stmtDatas->execute([$mes . '%', $empresa_id, $empresa_id, $mes . '%']);
 $datas = $stmtDatas->fetchAll(PDO::FETCH_COLUMN);
 ?>
 
@@ -51,7 +75,7 @@ $datas = $stmtDatas->fetchAll(PDO::FETCH_COLUMN);
             <thead class="table-dark">
                 <tr>
                     <th>Data</th>
-                    <th>Total Sistema</th>
+                    <th>Total Recebiveis</th>
                     <th>Total CR001</th>
                     <th>Diferença</th>
                     <th>Recebiveis nao conciliados</th>
@@ -153,9 +177,9 @@ $datas = $stmtDatas->fetchAll(PDO::FETCH_COLUMN);
                 <tr>
                     <td><?= date('d/m/Y', strtotime($data)) ?></td>
 
-                    <td><?= number_format($totalSistema, 2, ',', '.') ?></td>
+                    <td><?= number_format($subtotalSistema, 2, ',', '.') ?></td>
 
-                    <td><?= number_format($totalCR001, 2, ',', '.') ?></td>
+                    <td><?= number_format($subtotalCR001, 2, ',', '.') ?></td>
 
                     <td class="<?= ($diferenca == 0 ? 'text-success' : 'text-danger') ?>">
                         <?= number_format($diferenca, 2, ',', '.') ?>
