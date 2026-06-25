@@ -240,6 +240,137 @@ function garantirTabelaTaxasAdquirentes(PDO $pdo): void
     ");
 }
 
+function garantirTabelaAgendaAdquirentes(PDO $pdo): void
+{
+    $pdo->exec("
+        CREATE TABLE IF NOT EXISTS fechamento_adquirente_agenda (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            empresa_id INT NOT NULL,
+            adquirente VARCHAR(40) NOT NULL,
+            grupo VARCHAR(40) NOT NULL,
+            arquivo_origem VARCHAR(255) NULL,
+            id_transacao VARCHAR(80) NOT NULL,
+            identificador_recebivel VARCHAR(120) NULL,
+            data_transacao DATETIME NULL,
+            data_pagamento DATE NULL,
+            tipo_operacao CHAR(1) NOT NULL,
+            categoria VARCHAR(40) NOT NULL DEFAULT 'OUTROS',
+            descricao_original VARCHAR(255) NULL,
+            status VARCHAR(40) NULL,
+            parcela INT NOT NULL DEFAULT 1,
+            total_parcelas INT NOT NULL DEFAULT 1,
+            bandeira VARCHAR(80) NULL,
+            valor_bruto DECIMAL(15,4) NOT NULL DEFAULT 0,
+            valor_taxa DECIMAL(15,4) NOT NULL DEFAULT 0,
+            valor_antecipacao DECIMAL(15,4) NOT NULL DEFAULT 0,
+            valor_liquido DECIMAL(15,4) NOT NULL DEFAULT 0,
+            criado_em DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            atualizado_em DATETIME NULL DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP,
+            UNIQUE KEY ux_agenda_adq_linha (empresa_id, adquirente, grupo, id_transacao, parcela, data_pagamento),
+            INDEX idx_agenda_adq_pagamento (empresa_id, data_pagamento),
+            INDEX idx_agenda_adq_filtros (empresa_id, adquirente, grupo, tipo_operacao, bandeira, categoria)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    ");
+}
+
+function categoriaAgendaAdquirente(string $tipoDescricao, string $tipoOperacao, float $valorBruto): string
+{
+    $textoOriginal = trim($tipoDescricao);
+    $textoNormalizado = iconv('UTF-8', 'ASCII//TRANSLIT//IGNORE', $textoOriginal);
+    $texto = strtolower($textoNormalizado !== false ? $textoNormalizado : $textoOriginal);
+    $texto = preg_replace('/[^a-z0-9]+/', ' ', $texto) ?? $texto;
+
+    if (strpos($texto, 'aluguel') !== false || strpos($texto, 'equip pos') !== false || strpos($texto, 'clube granito') !== false) {
+        return 'ALUGUEL_POS';
+    }
+
+    if (strpos($texto, 'antecip') !== false) {
+        return 'ANTECIPACAO';
+    }
+
+    if (strpos($texto, 'ajuste') !== false || strpos($texto, 'estorno') !== false || strpos($texto, 'cancel') !== false) {
+        return 'AJUSTE';
+    }
+
+    if (strpos($texto, 'taxa') !== false || strpos($texto, 'tarifa') !== false || $valorBruto < 0) {
+        return 'TAXA';
+    }
+
+    return $tipoOperacao === 'P' ? 'PIX' : 'VENDA';
+}
+
+function salvarAgendaAdquirente(
+    PDO $pdo,
+    int $empresaId,
+    string $adquirente,
+    string $grupo,
+    string $arquivoOrigem,
+    string $idTransacao,
+    ?string $identificadorRecebivel,
+    ?string $dataTransacao,
+    ?string $dataPagamento,
+    string $tipoOperacao,
+    string $descricaoOriginal,
+    string $status,
+    int $parcela,
+    int $totalParcelas,
+    string $bandeira,
+    float $valorBruto,
+    float $valorTaxa,
+    float $valorAntecipacao,
+    float $valorLiquido
+): void {
+    garantirTabelaAgendaAdquirentes($pdo);
+
+    $categoria = categoriaAgendaAdquirente($descricaoOriginal, $tipoOperacao, $valorBruto);
+
+    $stmt = $pdo->prepare("
+        INSERT INTO fechamento_adquirente_agenda (
+            empresa_id, adquirente, grupo, arquivo_origem, id_transacao,
+            identificador_recebivel, data_transacao, data_pagamento, tipo_operacao,
+            categoria, descricao_original, status, parcela, total_parcelas, bandeira,
+            valor_bruto, valor_taxa, valor_antecipacao, valor_liquido
+        ) VALUES (
+            ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+        )
+        ON DUPLICATE KEY UPDATE
+            arquivo_origem = VALUES(arquivo_origem),
+            identificador_recebivel = VALUES(identificador_recebivel),
+            data_transacao = VALUES(data_transacao),
+            tipo_operacao = VALUES(tipo_operacao),
+            categoria = VALUES(categoria),
+            descricao_original = VALUES(descricao_original),
+            status = VALUES(status),
+            total_parcelas = VALUES(total_parcelas),
+            bandeira = VALUES(bandeira),
+            valor_bruto = VALUES(valor_bruto),
+            valor_taxa = VALUES(valor_taxa),
+            valor_antecipacao = VALUES(valor_antecipacao),
+            valor_liquido = VALUES(valor_liquido)
+    ");
+    $stmt->execute([
+        $empresaId,
+        strtoupper(trim($adquirente)),
+        strtoupper(trim($grupo)),
+        $arquivoOrigem,
+        trim($idTransacao),
+        $identificadorRecebivel,
+        $dataTransacao,
+        $dataPagamento,
+        $tipoOperacao,
+        $categoria,
+        substr($descricaoOriginal, 0, 255),
+        $status,
+        max(1, $parcela),
+        max(1, $totalParcelas),
+        $bandeira,
+        $valorBruto,
+        $valorTaxa,
+        $valorAntecipacao,
+        $valorLiquido,
+    ]);
+}
+
 function identificadorGranitoPos(string $idGranitoOuTransacao): string
 {
     return 'GRANITO_POS_' . trim($idGranitoOuTransacao);

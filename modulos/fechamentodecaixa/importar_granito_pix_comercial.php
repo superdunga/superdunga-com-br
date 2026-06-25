@@ -12,6 +12,7 @@ $empresa_id = (int)$_SESSION['empresa_id'];
 $regraImportacao = buscarRegraImportacao($pdo_master, $empresa_id, 'granito_pix_comercial', []);
 garantirCamposGranitoRecebimentos($pdo_master);
 garantirTabelaGranitoAgendaTaxas($pdo_master);
+garantirTabelaAgendaAdquirentes($pdo_master);
 $mensagens = [];
 $previewInterPix = [];
 $previewDiagnosticoInter = [];
@@ -134,6 +135,37 @@ function granitoPixCampo(array $dados, array $cabecalho, array $nomes): string {
         }
     }
     return '';
+}
+
+function nomeSeguroAgendaAdquirente(string $nome): string
+{
+    $nome = preg_replace('/[^a-zA-Z0-9._-]+/', '_', basename($nome));
+    return trim((string)$nome, '._') ?: ('agenda_' . date('YmdHis') . '.csv');
+}
+
+function salvarArquivoAgendaAdquirente(array $arquivo, int $empresaId): string
+{
+    $base = dirname(__DIR__, 2) . DIRECTORY_SEPARATOR . 'uploads' . DIRECTORY_SEPARATOR . 'recebimentos_agenda';
+    $pasta = $base . DIRECTORY_SEPARATOR . 'empresa_' . $empresaId;
+
+    if (!is_dir($pasta)) {
+        mkdir($pasta, 0755, true);
+    }
+
+    foreach ([$base, $pasta] as $dir) {
+        $index = $dir . DIRECTORY_SEPARATOR . 'index.php';
+        if (!is_file($index)) {
+            file_put_contents($index, "<?php\nhttp_response_code(403);\nexit;\n");
+        }
+    }
+
+    $nomeSeguro = date('Ymd_His') . '_' . nomeSeguroAgendaAdquirente((string)($arquivo['name'] ?? 'agenda.csv'));
+    $destino = $pasta . DIRECTORY_SEPARATOR . $nomeSeguro;
+    if (!copy((string)$arquivo['tmp_name'], $destino)) {
+        throw new RuntimeException('Nao foi possivel salvar copia do arquivo de agenda.');
+    }
+
+    return 'uploads/recebimentos_agenda/empresa_' . $empresaId . '/' . $nomeSeguro;
 }
 
 function pastaInterPixEmpresa(int $empresaId): string
@@ -407,6 +439,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['acao'] ?? '') === 'upload_
     } elseif (!file_exists($arquivo)) {
         $mensagens[] = ['tipo' => 'danger', 'texto' => 'Arquivo nao encontrado.'];
     } else {
+        try {
+            $arquivoAgendaSalvo = salvarArquivoAgendaAdquirente($_FILES['arquivo'], $empresa_id);
+        } catch (Throwable $e) {
+            $mensagens[] = ['tipo' => 'danger', 'texto' => 'Erro ao salvar copia da agenda: ' . $e->getMessage()];
+            $arquivoAgendaSalvo = $nomeArquivo;
+        }
+
         $handle = fopen($arquivo, 'r');
 
         if (!$handle) {
@@ -416,7 +455,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['acao'] ?? '') === 'upload_
             $importados = 0;
             $posAtualizados = 0;
             $posSemTransacao = 0;
+            $agendaGravados = 0;
             $cabecalho = [];
+            $grupoAgenda = strtoupper((string)($regraImportacao['grupo'] ?? ''));
+            if (!in_array($grupoAgenda, ['COMERCIAL', 'OUTROS'], true)) {
+                $origemRegra = strtoupper((string)($regraImportacao['origem'] ?? ''));
+                $grupoAgenda = strpos($origemRegra, 'OUTROS') !== false ? 'OUTROS' : 'COMERCIAL';
+            }
 
             while (($dados = fgetcsv($handle, 0, ';')) !== false) {
                 $linha++;
@@ -466,18 +511,47 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['acao'] ?? '') === 'upload_
 
                 $tipoOperacaoAgenda = granitoAgendaTipoOperacao($tipo);
 
-                if ($idTransacao === '' || $dataVenda === null || strcasecmp($status, 'Pago') !== 0 || $valorBruto <= 0 || $tipoOperacaoAgenda === '') {
+                if ($idTransacao === '' || $dataVenda === null || strcasecmp($status, 'Pago') !== 0 || $tipoOperacaoAgenda === '') {
                     continue;
                 }
 
                 [$parcela, $totalParcelas] = granitoAgendaParcela($parcelaTexto);
+                $identificadorRecebivel = $tipoOperacaoAgenda === 'P'
+                    ? identificadorGranitoPix($idTransacao)
+                    : identificadorGranitoPos($idTransacao);
+
+                salvarAgendaAdquirente(
+                    $pdo_master,
+                    $empresa_id,
+                    'GRANITO',
+                    $grupoAgenda,
+                    $arquivoAgendaSalvo,
+                    $idTransacao,
+                    $identificadorRecebivel,
+                    $dataVenda,
+                    $dataPagamento,
+                    $tipoOperacaoAgenda,
+                    $tipo,
+                    $status,
+                    $parcela ?: 1,
+                    $totalParcelas ?: 1,
+                    $bandeira,
+                    $valorBruto,
+                    $valorTaxa,
+                    $valorAntecipacao,
+                    $valorLiquido
+                );
+                $agendaGravados++;
+
+                if ($valorBruto <= 0) {
+                    continue;
+                }
 
                 if ($tipoOperacaoAgenda !== 'P') {
-                    $identificadorPos = identificadorGranitoPos($idTransacao);
                     salvarGranitoAgendaTaxa(
                         $pdo_master,
                         $empresa_id,
-                        $identificadorPos,
+                        $identificadorRecebivel,
                         $dataVenda,
                         $dataPagamento,
                         $valorBruto,
@@ -488,10 +562,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['acao'] ?? '') === 'upload_
                         $status,
                         $bandeira,
                         $tipoOperacaoAgenda,
-                        $nomeArquivo
+                        $arquivoAgendaSalvo
                     );
 
-                    if (aplicarGranitoAgendaTaxaNoRecebimento($pdo_master, $empresa_id, $identificadorPos) > 0) {
+                    if (aplicarGranitoAgendaTaxaNoRecebimento($pdo_master, $empresa_id, $identificadorRecebivel) > 0) {
                         $posAtualizados++;
                     } else {
                         $posSemTransacao++;
@@ -501,7 +575,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['acao'] ?? '') === 'upload_
                 }
 
                 $origem = $regraImportacao['origem'];
-                $identificador = identificadorGranitoPix($idTransacao);
+                $identificador = $identificadorRecebivel;
 
                 $check = $pdo_master->prepare("SELECT id FROM armazem_conciliacao_recebimentos WHERE empresa_id = ? AND identificador = ?");
                 $check->execute([$empresa_id, $identificador]);
@@ -544,7 +618,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['acao'] ?? '') === 'upload_
                     $parcela ?: 1,
                     $totalParcelas ?: 1,
                     $status,
-                    $nomeArquivo,
+                    $arquivoAgendaSalvo,
                     (int)$regraImportacao['cm_pix'],
                     $bandeira,
                     $idTransacao,
@@ -557,7 +631,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['acao'] ?? '') === 'upload_
             fclose($handle);
             $mensagens[] = [
                 'tipo' => 'success',
-                'texto' => "Importacao concluida! Pix importados: {$importados}. POS atualizados com taxas da agenda: {$posAtualizados}. POS gravados na agenda aguardando transacao: {$posSemTransacao}.",
+                'texto' => "Importacao concluida! Linhas de agenda gravadas: {$agendaGravados}. Pix importados: {$importados}. POS atualizados com taxas da agenda: {$posAtualizados}. POS gravados na agenda aguardando transacao: {$posSemTransacao}.",
             ];
         }
     }

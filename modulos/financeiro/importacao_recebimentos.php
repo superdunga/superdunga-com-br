@@ -14,6 +14,7 @@ if (!$ehMaster) {
 }
 
 garantirTabelaTaxasAdquirentes($pdo_master);
+garantirTabelaAgendaAdquirentes($pdo_master);
 
 function origemAdquirenteSql(): string
 {
@@ -117,13 +118,63 @@ if ($filtroBandeira !== '') {
     $params[] = $filtroBandeira;
 }
 
+$whereAgenda = ["empresa_id = ?"];
+$paramsAgenda = [$empresaId];
+
+if ($filtroDataIni !== '') {
+    $whereAgenda[] = "DATE(data_transacao) >= ?";
+    $paramsAgenda[] = $filtroDataIni;
+}
+
+if ($filtroDataFim !== '') {
+    $whereAgenda[] = "DATE(data_transacao) <= ?";
+    $paramsAgenda[] = $filtroDataFim;
+}
+
+if ($filtroVencIni !== '') {
+    $whereAgenda[] = "DATE(data_pagamento) >= ?";
+    $paramsAgenda[] = $filtroVencIni;
+}
+
+if ($filtroVencFim !== '') {
+    $whereAgenda[] = "DATE(data_pagamento) <= ?";
+    $paramsAgenda[] = $filtroVencFim;
+}
+
+if ($filtroAdquirente !== '') {
+    $whereAgenda[] = "adquirente = ?";
+    $paramsAgenda[] = $filtroAdquirente;
+}
+
+if ($filtroGrupo !== '') {
+    $whereAgenda[] = "grupo = ?";
+    $paramsAgenda[] = $filtroGrupo;
+}
+
+if ($filtroTipo !== '') {
+    $whereAgenda[] = "tipo_operacao = ?";
+    $paramsAgenda[] = $filtroTipo;
+}
+
+if ($filtroBandeira !== '') {
+    $whereAgenda[] = "UPPER(COALESCE(NULLIF(bandeira, ''), 'TODAS')) = ?";
+    $paramsAgenda[] = $filtroBandeira;
+}
+
 $stmtBandeiras = $pdo_master->prepare("
-    SELECT DISTINCT UPPER(COALESCE(NULLIF(bandeira, ''), 'TODAS')) AS bandeira
-    FROM armazem_conciliacao_recebimentos
-    WHERE empresa_id = ?
+    SELECT DISTINCT bandeira
+    FROM (
+        SELECT UPPER(COALESCE(NULLIF(bandeira, ''), 'TODAS')) AS bandeira
+        FROM armazem_conciliacao_recebimentos
+        WHERE empresa_id = ?
+        UNION
+        SELECT UPPER(COALESCE(NULLIF(bandeira, ''), 'TODAS')) AS bandeira
+        FROM fechamento_adquirente_agenda
+        WHERE empresa_id = ?
+    ) base
     ORDER BY bandeira
 ");
-$stmtBandeiras->execute([$empresaId]);
+$stmtBandeiras->execute([$empresaId, $empresaId]);
 $bandeiras = array_values(array_filter(array_column($stmtBandeiras->fetchAll(PDO::FETCH_ASSOC), 'bandeira')));
 
 $sqlTransacoes = "
@@ -164,6 +215,39 @@ $sqlTransacoes = "
 $stmtTransacoes = $pdo_master->prepare($sqlTransacoes);
 $stmtTransacoes->execute($params);
 $transacoes = $stmtTransacoes->fetchAll(PDO::FETCH_ASSOC);
+
+$sqlAgenda = "
+    SELECT
+        id,
+        adquirente,
+        grupo,
+        arquivo_origem,
+        id_transacao,
+        identificador_recebivel,
+        data_transacao,
+        data_pagamento,
+        tipo_operacao,
+        categoria,
+        descricao_original,
+        status,
+        parcela,
+        total_parcelas,
+        COALESCE(NULLIF(bandeira, ''), 'TODAS') AS bandeira,
+        valor_bruto,
+        valor_taxa,
+        valor_antecipacao,
+        valor_liquido
+    FROM fechamento_adquirente_agenda
+    WHERE " . implode(' AND ', $whereAgenda) . "
+    ORDER BY
+        data_pagamento IS NULL,
+        data_pagamento ASC,
+        data_transacao ASC,
+        id ASC
+";
+$stmtAgenda = $pdo_master->prepare($sqlAgenda);
+$stmtAgenda->execute($paramsAgenda);
+$agendaAdquirente = $stmtAgenda->fetchAll(PDO::FETCH_ASSOC);
 
 function buscarTaxaEsperada(array $taxasAtivas, array $relatorio): ?array
 {
@@ -255,6 +339,21 @@ $totaisTransacoes = [
     'liquido' => 0.0,
     'diferenca_valor' => 0.0,
 ];
+
+$totaisAgenda = [
+    'qtd' => count($agendaAdquirente),
+    'bruto' => 0.0,
+    'taxa' => 0.0,
+    'antecipacao' => 0.0,
+    'liquido' => 0.0,
+];
+
+foreach ($agendaAdquirente as $agendaResumo) {
+    $totaisAgenda['bruto'] += (float)$agendaResumo['valor_bruto'];
+    $totaisAgenda['taxa'] += (float)$agendaResumo['valor_taxa'];
+    $totaisAgenda['antecipacao'] += (float)$agendaResumo['valor_antecipacao'];
+    $totaisAgenda['liquido'] += (float)$agendaResumo['valor_liquido'];
+}
 
 foreach ($transacoes as $transacaoResumo) {
     $situacaoResumo = situacaoTaxaRelatorio($transacaoResumo, $taxasAtivas);
@@ -481,6 +580,103 @@ require '../../layout/header.php';
                     <?php endforeach; ?>
                     <?php if (empty($transacoes)): ?>
                         <tr><td colspan="16" class="text-center text-muted py-4">Nenhuma transacao encontrada para os filtros.</td></tr>
+                    <?php endif; ?>
+                </tbody>
+            </table>
+        </div>
+    </div>
+</section>
+
+<section class="mt-4">
+    <div class="card shadow-sm">
+        <div class="card-header bg-light">
+            <div class="d-flex flex-column flex-lg-row justify-content-between gap-2">
+                <div>
+                    <h2 class="h5 mb-1">Agenda da Adquirente</h2>
+                    <div class="text-muted small">Linhas completas dos arquivos de agenda importados, incluindo vendas, Pix, taxas, aluguel POS e ajustes.</div>
+                </div>
+                <div class="text-muted small align-self-lg-center">Este bloco nao gera recebivel automaticamente para itens financeiros como aluguel de POS.</div>
+            </div>
+        </div>
+        <div class="card-body border-bottom">
+            <div class="row g-3">
+                <div class="col-md-2">
+                    <div class="border rounded-2 p-3 h-100">
+                        <div class="text-muted small">Linhas da agenda</div>
+                        <div class="h5 mb-0"><?= number_format($totaisAgenda['qtd'], 0, ',', '.') ?></div>
+                    </div>
+                </div>
+                <div class="col-md-2">
+                    <div class="border rounded-2 p-3 h-100">
+                        <div class="text-muted small">Bruto</div>
+                        <div class="h5 mb-0">R$ <?= number_format($totaisAgenda['bruto'], 2, ',', '.') ?></div>
+                    </div>
+                </div>
+                <div class="col-md-2">
+                    <div class="border rounded-2 p-3 h-100">
+                        <div class="text-muted small">Taxa</div>
+                        <div class="h5 mb-0">R$ <?= number_format($totaisAgenda['taxa'], 2, ',', '.') ?></div>
+                    </div>
+                </div>
+                <div class="col-md-3">
+                    <div class="border rounded-2 p-3 h-100">
+                        <div class="text-muted small">Antecipacao</div>
+                        <div class="h5 mb-0">R$ <?= number_format($totaisAgenda['antecipacao'], 2, ',', '.') ?></div>
+                    </div>
+                </div>
+                <div class="col-md-3">
+                    <div class="border rounded-2 p-3 h-100">
+                        <div class="text-muted small">Liquido</div>
+                        <div class="h5 mb-0">R$ <?= number_format($totaisAgenda['liquido'], 2, ',', '.') ?></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="table-responsive">
+            <table class="table table-sm table-hover align-middle mb-0">
+                <thead class="table-dark">
+                    <tr>
+                        <th>Venc./Pagto.</th>
+                        <th>Data</th>
+                        <th>Transacao</th>
+                        <th>Adq.</th>
+                        <th>Grupo</th>
+                        <th>Tipo</th>
+                        <th>Categoria</th>
+                        <th>Bandeira</th>
+                        <th>Parc.</th>
+                        <th class="text-end">Bruto</th>
+                        <th class="text-end">Taxa</th>
+                        <th class="text-end">Antecip.</th>
+                        <th class="text-end">Liquido</th>
+                        <th>Status</th>
+                        <th>Descricao</th>
+                        <th>Arquivo</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <?php foreach ($agendaAdquirente as $agenda): ?>
+                        <tr>
+                            <td class="small"><?= $agenda['data_pagamento'] ? date('d/m/Y', strtotime($agenda['data_pagamento'])) : '-' ?></td>
+                            <td class="small"><?= $agenda['data_transacao'] ? date('d/m/Y H:i', strtotime($agenda['data_transacao'])) : '-' ?></td>
+                            <td class="small"><?= htmlspecialchars($agenda['id_transacao']) ?></td>
+                            <td><?= htmlspecialchars($agenda['adquirente']) ?></td>
+                            <td><?= htmlspecialchars($agenda['grupo']) ?></td>
+                            <td><?= htmlspecialchars(rotuloTipoOperacao((string)$agenda['tipo_operacao'])) ?></td>
+                            <td><span class="badge text-bg-secondary"><?= htmlspecialchars($agenda['categoria']) ?></span></td>
+                            <td><?= htmlspecialchars($agenda['bandeira']) ?></td>
+                            <td><?= (int)$agenda['parcela'] ?>/<?= (int)$agenda['total_parcelas'] ?></td>
+                            <td class="text-end"><?= number_format((float)$agenda['valor_bruto'], 2, ',', '.') ?></td>
+                            <td class="text-end"><?= number_format((float)$agenda['valor_taxa'], 2, ',', '.') ?></td>
+                            <td class="text-end"><?= number_format((float)$agenda['valor_antecipacao'], 2, ',', '.') ?></td>
+                            <td class="text-end"><?= number_format((float)$agenda['valor_liquido'], 2, ',', '.') ?></td>
+                            <td><?= htmlspecialchars((string)$agenda['status']) ?></td>
+                            <td class="small"><?= htmlspecialchars((string)$agenda['descricao_original']) ?></td>
+                            <td class="small"><?= htmlspecialchars(basename((string)$agenda['arquivo_origem'])) ?></td>
+                        </tr>
+                    <?php endforeach; ?>
+                    <?php if (empty($agendaAdquirente)): ?>
+                        <tr><td colspan="16" class="text-center text-muted py-4">Nenhuma linha de agenda encontrada para os filtros.</td></tr>
                     <?php endif; ?>
                 </tbody>
             </table>
