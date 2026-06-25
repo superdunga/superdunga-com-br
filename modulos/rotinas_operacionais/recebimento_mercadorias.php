@@ -443,10 +443,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
 
         if ($acao === 'salvar_firebird') {
-            if (($recebimentoPost['status'] ?? '') !== 'finalizado') {
-                throw new RuntimeException('Informe o ID Firebird somente em recebimentos finalizados.');
-            }
-
             $idFirebirdTexto = trim((string)($_POST['id_firebird'] ?? ''));
             if ($idFirebirdTexto === '') {
                 header('Location: recebimento_mercadorias.php?erro=firebird_vazio');
@@ -462,9 +458,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 SET id_firebird = ?
                 WHERE id = ?
                   AND empresa_id = ?
-                  AND status = 'finalizado'
             ");
             $stmtAtualizar->execute([(int)$idFirebirdTexto, $recebimentoIdPost, $empresaId]);
+
+            if (($_POST['voltar_recebimento'] ?? '') === 'S') {
+                header('Location: recebimento_mercadorias.php?id=' . $recebimentoIdPost . '&ok=firebird');
+                exit;
+            }
 
             header('Location: ' . urlRecebimentoMercadorias(['ok' => 'firebird'], $queryFiltrosLista));
             exit;
@@ -591,14 +591,14 @@ if (($_GET['ok'] ?? '') === 'documentos') {
 } elseif (($_GET['ok'] ?? '') === 'finalizado') {
     $mensagemOk = 'Recebimento finalizado com comprovante de quem recebeu.';
 } elseif (($_GET['ok'] ?? '') === 'firebird') {
-    $mensagemOk = 'ID do recebimento no Firebird salvo.';
+    $mensagemOk = 'ID da nota salvo.';
 }
 if (($_GET['erro'] ?? '') === 'csv_pendente') {
     $mensagemErro = 'A exportacao CSV fica disponivel somente apos finalizar o recebimento.';
 } elseif (($_GET['erro'] ?? '') === 'firebird_invalido') {
     $mensagemErro = 'Informe um ID do Firebird numerico.';
 } elseif (($_GET['erro'] ?? '') === 'firebird_vazio') {
-    $mensagemErro = 'Informe o ID do recebimento no Firebird antes de gravar.';
+    $mensagemErro = 'Informe o ID da nota antes de gravar.';
 }
 
 $documentos = [];
@@ -878,7 +878,7 @@ require '../../layout/header.php';
                     >
                 </div>
                 <div class="col-6 col-md-2">
-                    <label class="form-label small text-muted">ID Firebird</label>
+                    <label class="form-label small text-muted">ID da nota</label>
                     <input
                         type="number"
                         name="id_firebird"
@@ -890,11 +890,11 @@ require '../../layout/header.php';
                     >
                 </div>
                 <div class="col-12 col-md-3">
-                    <label class="form-label small text-muted">Situacao Firebird</label>
+                    <label class="form-label small text-muted">Situacao da nota</label>
                     <select name="situacao_firebird" class="form-select">
                         <option value="todos" <?= $filtrosLista['situacao_firebird'] === 'todos' ? 'selected' : '' ?>>Todos</option>
-                        <option value="pendentes" <?= $filtrosLista['situacao_firebird'] === 'pendentes' ? 'selected' : '' ?>>Pendentes de ID</option>
-                        <option value="preenchidos" <?= $filtrosLista['situacao_firebird'] === 'preenchidos' ? 'selected' : '' ?>>Com ID Firebird</option>
+                        <option value="pendentes" <?= $filtrosLista['situacao_firebird'] === 'pendentes' ? 'selected' : '' ?>>Pendentes de ID da nota</option>
+                        <option value="preenchidos" <?= $filtrosLista['situacao_firebird'] === 'preenchidos' ? 'selected' : '' ?>>Com ID da nota</option>
                     </select>
                 </div>
                 <div class="col-6 col-md-2">
@@ -946,7 +946,7 @@ require '../../layout/header.php';
                             <th class="text-end">Itens</th>
                             <th class="text-end">Qtd total</th>
                             <th>Qtd por caixa</th>
-                            <th style="min-width: 260px;">ID recebimento Firebird</th>
+                            <th style="min-width: 260px;">ID da nota</th>
                             <th class="text-end">Acoes</th>
                         </tr>
                     </thead>
@@ -984,7 +984,7 @@ require '../../layout/header.php';
                                             step="1"
                                             inputmode="numeric"
                                             value="<?= htmlspecialchars((string)($finalizadoLinha['id_firebird'] ?? '')) ?>"
-                                            placeholder="ID no Firebird"
+                                            placeholder="ID da nota"
                                             required
                                         >
                                         <button type="submit" class="btn btn-sm btn-primary">Gravar</button>
@@ -1020,6 +1020,28 @@ require '../../layout/header.php';
                     <div>
                         <h2 class="h5 fw-bold mb-1">Recebimento #<?= (int)$recebimento['id'] ?></h2>
                         <div class="text-muted small">Iniciado em <?= date('d/m/Y H:i', strtotime($recebimento['criado_em'])) ?></div>
+                        <form method="POST" class="row g-2 align-items-end mt-3">
+                            <input type="hidden" name="acao" value="salvar_firebird">
+                            <input type="hidden" name="recebimento_id" value="<?= (int)$recebimento['id'] ?>">
+                            <input type="hidden" name="voltar_recebimento" value="S">
+                            <div class="col-12 col-md-7">
+                                <label class="form-label small text-muted mb-1">ID da nota</label>
+                                <input
+                                    type="number"
+                                    name="id_firebird"
+                                    class="form-control"
+                                    min="0"
+                                    step="1"
+                                    inputmode="numeric"
+                                    value="<?= htmlspecialchars((string)($recebimento['id_firebird'] ?? '')) ?>"
+                                    placeholder="Informe o ID da nota"
+                                    required
+                                >
+                            </div>
+                            <div class="col-12 col-md-auto">
+                                <button type="submit" class="btn btn-primary w-100">Gravar ID</button>
+                            </div>
+                        </form>
                     </div>
                     <div>
                         <span class="badge <?= $finalizado ? 'text-bg-success' : 'text-bg-warning' ?> fs-6">
