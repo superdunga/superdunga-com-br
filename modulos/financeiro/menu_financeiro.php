@@ -51,8 +51,16 @@ $opcoes = [
 
 if (strtoupper((string)($_SESSION['nivel'] ?? '')) === 'MASTER') {
     $opcoes[] = [
-        'titulo' => 'Importacao de Recebimentos',
-        'descricao' => 'Cadastre taxas das adquirentes e acompanhe os relatorios importados.',
+        'titulo' => 'Cadastro de Taxas de Adquirentes',
+        'descricao' => 'Configure taxas por adquirente, grupo, operacao, bandeira e parcelas.',
+        'href' => 'cadastro_taxas_adquirentes.php',
+        'modulo' => 'financeiro',
+        'icone' => 'TX',
+        'botao' => 'btn-dark',
+    ];
+    $opcoes[] = [
+        'titulo' => 'Relatorio dos Recebimentos',
+        'descricao' => 'Consulte as transacoes importadas e confira taxas aplicadas pelas adquirentes.',
         'href' => 'importacao_recebimentos.php',
         'modulo' => 'financeiro',
         'icone' => 'IR',

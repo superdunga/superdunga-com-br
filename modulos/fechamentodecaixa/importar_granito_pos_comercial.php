@@ -9,6 +9,8 @@ error_reporting(E_ALL);
 
 $empresa_id = (int)$_SESSION['empresa_id'];
 $regraImportacao = buscarRegraImportacao($pdo_master, $empresa_id, 'granito_pos_comercial', []);
+garantirCamposGranitoRecebimentos($pdo_master);
+garantirTabelaGranitoAgendaTaxas($pdo_master);
 
 if (!$regraImportacao) {
     echo "<div class='alert alert-warning'>Nenhuma regra de importacao Granito POS Comercial cadastrada para esta empresa.</div>";
@@ -50,6 +52,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['arquivo'])) {
         } else {
             $linha = 0;
             $importados = 0;
+            $duplicados = 0;
+            $atualizadosComAgenda = 0;
 
             while (($dados = fgetcsv($handle, 0, ';')) !== false) {
                 $linha++;
@@ -75,20 +79,24 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['arquivo'])) {
                 $cmcontador = $ehDebito ? (int)$regraImportacao['cm_debito'] : (int)$regraImportacao['cm_credito'];
                 $tipoOperacao = $ehDebito ? 'D' : 'C';
                 $origem = $regraImportacao['origem'];
-                $identificador = 'GRANITO_POS_' . $idGranito;
+                $identificador = identificadorGranitoPos($idGranito);
 
                 $check = $pdo_master->prepare("SELECT id FROM armazem_conciliacao_recebimentos WHERE empresa_id = ? AND identificador = ?");
                 $check->execute([$empresa_id, $identificador]);
-                if ($check->fetch()) continue;
+                if ($check->fetch()) {
+                    $duplicados++;
+                    $atualizadosComAgenda += aplicarGranitoAgendaTaxaNoRecebimento($pdo_master, $empresa_id, $identificador) > 0 ? 1 : 0;
+                    continue;
+                }
 
                 $stmt = $pdo_master->prepare("
                     INSERT INTO armazem_conciliacao_recebimentos (
                         empresa_id, origem, data_venda, valor_bruto, valor_desconto, valor_liquido,
                         identificador, descricao, pagador, parcela, total_parcelas, status,
                         arquivo_origem, CMCONTADOR, tipo_operacao, bandeira, nsu_transacao,
-                        autorizacao, numero_estabelecimento
+                        autorizacao, numero_estabelecimento, id_granito, id_transacao
                     ) VALUES (
-                        ?, ?, ?, ?, 0, ?, ?, ?, 'GRANITO', 1, 1, ?, ?, ?, ?, ?, ?, ?, ?
+                        ?, ?, ?, ?, 0, ?, ?, ?, 'GRANITO', 1, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
                     )
                 ");
                 $stmt->execute([
@@ -107,13 +115,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['arquivo'])) {
                     $codTransacao,
                     $autorizacao,
                     $pdv,
+                    $idGranito,
+                    $idGranito,
                 ]);
 
                 $importados++;
+                $atualizadosComAgenda += aplicarGranitoAgendaTaxaNoRecebimento($pdo_master, $empresa_id, $identificador) > 0 ? 1 : 0;
             }
 
             fclose($handle);
-            echo "<div class='alert alert-success'>Importacao concluida! Registros importados: <strong>{$importados}</strong></div>";
+            echo "<div class='alert alert-success'>Importacao concluida! Registros importados: <strong>{$importados}</strong>. Duplicados: <strong>{$duplicados}</strong>. Atualizados com agenda: <strong>{$atualizadosComAgenda}</strong>.</div>";
         }
     }
 }

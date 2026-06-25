@@ -2,10 +2,11 @@
 require '../../config/auth.php';
 require '../../config/conexao.php';
 require_once '../../config/importacao_recebimentos.php';
-require '../../layout/header.php';
 
 $empresaId = (int)($_SESSION['empresa_id'] ?? 0);
 $ehMaster = strtoupper((string)($_SESSION['nivel'] ?? '')) === 'MASTER';
+$mensagem = null;
+$erro = null;
 
 if (!$ehMaster) {
     renderizarAcessoNegadoModulo('Somente usuario master pode acessar a importacao de recebimentos do financeiro.');
@@ -13,20 +14,6 @@ if (!$ehMaster) {
 }
 
 garantirTabelaTaxasAdquirentes($pdo_master);
-
-$mensagensGet = [
-    'taxa_salva' => 'Taxa salva com sucesso.',
-    'taxa_desativada' => 'Taxa desativada.',
-];
-
-$mensagem = $mensagensGet[$_GET['msg'] ?? ''] ?? null;
-$erro = null;
-
-function taxaPostDecimal(string $campo): float
-{
-    $valor = str_replace(',', '.', trim((string)($_POST[$campo] ?? '0')));
-    return (float)$valor;
-}
 
 function origemAdquirenteSql(): string
 {
@@ -61,93 +48,30 @@ function rotuloTipoOperacao(string $tipo): string
     };
 }
 
-if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    $acao = $_POST['acao'] ?? '';
-
-    try {
-        if ($acao === 'salvar_taxa') {
-            $id = (int)($_POST['id'] ?? 0);
-            $parcelasDe = max(1, (int)($_POST['parcelas_de'] ?? 1));
-            $parcelasAte = max($parcelasDe, (int)($_POST['parcelas_ate'] ?? $parcelasDe));
-            $dados = [
-                'adquirente' => strtoupper(trim((string)($_POST['adquirente'] ?? ''))),
-                'grupo' => strtoupper(trim((string)($_POST['grupo'] ?? ''))),
-                'tipo_operacao' => strtoupper(trim((string)($_POST['tipo_operacao'] ?? ''))),
-                'bandeira' => strtoupper(trim((string)($_POST['bandeira'] ?? 'TODAS'))) ?: 'TODAS',
-                'parcelas_de' => $parcelasDe,
-                'parcelas_ate' => $parcelasAte,
-                'taxa_percentual' => taxaPostDecimal('taxa_percentual'),
-                'tolerancia_percentual' => taxaPostDecimal('tolerancia_percentual'),
-                'ativo' => ($_POST['ativo'] ?? 'S') === 'S' ? 'S' : 'N',
-            ];
-
-            if ($dados['adquirente'] === '' || $dados['grupo'] === '' || $dados['tipo_operacao'] === '') {
-                throw new RuntimeException('Informe adquirente, grupo e tipo.');
-            }
-
-            if ($id > 0) {
-                $stmt = $pdo_master->prepare("
-                    UPDATE fechamento_adquirente_taxas
-                    SET adquirente = ?, grupo = ?, tipo_operacao = ?, bandeira = ?,
-                        parcelas_de = ?, parcelas_ate = ?, taxa_percentual = ?,
-                        tolerancia_percentual = ?, ativo = ?
-                    WHERE id = ? AND empresa_id = ?
-                ");
-                $stmt->execute([
-                    $dados['adquirente'], $dados['grupo'], $dados['tipo_operacao'], $dados['bandeira'],
-                    $dados['parcelas_de'], $dados['parcelas_ate'], $dados['taxa_percentual'],
-                    $dados['tolerancia_percentual'], $dados['ativo'], $id, $empresaId,
-                ]);
-            } else {
-                $stmt = $pdo_master->prepare("
-                    INSERT INTO fechamento_adquirente_taxas (
-                        empresa_id, adquirente, grupo, tipo_operacao, bandeira,
-                        parcelas_de, parcelas_ate, taxa_percentual, tolerancia_percentual, ativo
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ");
-                $stmt->execute([
-                    $empresaId, $dados['adquirente'], $dados['grupo'], $dados['tipo_operacao'], $dados['bandeira'],
-                    $dados['parcelas_de'], $dados['parcelas_ate'], $dados['taxa_percentual'],
-                    $dados['tolerancia_percentual'], $dados['ativo'],
-                ]);
-            }
-
-            header('Location: importacao_recebimentos.php?msg=taxa_salva');
-            exit;
-        } elseif ($acao === 'desativar_taxa') {
-            $id = (int)($_POST['id'] ?? 0);
-            $stmt = $pdo_master->prepare("UPDATE fechamento_adquirente_taxas SET ativo = 'N' WHERE id = ? AND empresa_id = ?");
-            $stmt->execute([$id, $empresaId]);
-            header('Location: importacao_recebimentos.php?msg=taxa_desativada');
-            exit;
-        }
-    } catch (Throwable $e) {
-        $erro = $e->getMessage();
-    }
-}
-
-$taxaEditar = null;
-if (isset($_GET['editar'])) {
-    $stmtEditar = $pdo_master->prepare("SELECT * FROM fechamento_adquirente_taxas WHERE id = ? AND empresa_id = ?");
-    $stmtEditar->execute([(int)$_GET['editar'], $empresaId]);
-    $taxaEditar = $stmtEditar->fetch(PDO::FETCH_ASSOC) ?: null;
+function numeroTransacaoRecebimento(array $transacao): string
+{
+    $identificador = (string)($transacao['identificador'] ?? '');
+    $identificador = preg_replace('/^(GRANITO_POS_|GRANITO_PIX_|SIPAG_POS_|SIPAG_PIX_|PAGSEGURO_PIX_)/', '', $identificador);
+    return $identificador !== '' ? $identificador : ('#' . (int)$transacao['id']);
 }
 
 $stmtTaxas = $pdo_master->prepare("
     SELECT *
     FROM fechamento_adquirente_taxas
-    WHERE empresa_id = ?
-    ORDER BY ativo DESC, adquirente, grupo, tipo_operacao, bandeira, parcelas_de
+    WHERE empresa_id = ? AND ativo = 'S'
+    ORDER BY adquirente, grupo, tipo_operacao, bandeira, parcelas_de
 ");
 $stmtTaxas->execute([$empresaId]);
-$taxas = $stmtTaxas->fetchAll(PDO::FETCH_ASSOC);
+$taxasAtivas = $stmtTaxas->fetchAll(PDO::FETCH_ASSOC);
 
-$taxasAtivas = array_values(array_filter($taxas, static fn($taxa) => ($taxa['ativo'] ?? 'N') === 'S'));
-
-$filtroDataIni = $_GET['data_ini'] ?? date('Y-m-01');
-$filtroDataFim = $_GET['data_fim'] ?? date('Y-m-d');
+$filtroDataIni = $_GET['data_ini'] ?? '';
+$filtroDataFim = $_GET['data_fim'] ?? '';
+$filtroVencIni = $_GET['venc_ini'] ?? date('Y-m-01');
+$filtroVencFim = $_GET['venc_fim'] ?? date('Y-m-t');
 $filtroAdquirente = strtoupper(trim((string)($_GET['adquirente'] ?? '')));
 $filtroGrupo = strtoupper(trim((string)($_GET['grupo'] ?? '')));
+$filtroTipo = strtoupper(trim((string)($_GET['tipo'] ?? '')));
+$filtroBandeira = strtoupper(trim((string)($_GET['bandeira'] ?? '')));
 $filtroSituacao = $_GET['situacao'] ?? 'todos';
 
 $where = ["empresa_id = ?"];
@@ -163,6 +87,16 @@ if ($filtroDataFim !== '') {
     $params[] = $filtroDataFim;
 }
 
+if ($filtroVencIni !== '') {
+    $where[] = "DATE(COALESCE(data_recebimento, data_prevista)) >= ?";
+    $params[] = $filtroVencIni;
+}
+
+if ($filtroVencFim !== '') {
+    $where[] = "DATE(COALESCE(data_recebimento, data_prevista)) <= ?";
+    $params[] = $filtroVencFim;
+}
+
 if ($filtroAdquirente !== '') {
     $where[] = origemAdquirenteSql() . " = ?";
     $params[] = $filtroAdquirente;
@@ -173,8 +107,31 @@ if ($filtroGrupo !== '') {
     $params[] = $filtroGrupo;
 }
 
-$sqlRelatorios = "
+if ($filtroTipo !== '') {
+    $where[] = "tipo_operacao = ?";
+    $params[] = $filtroTipo;
+}
+
+if ($filtroBandeira !== '') {
+    $where[] = "UPPER(COALESCE(NULLIF(bandeira, ''), 'TODAS')) = ?";
+    $params[] = $filtroBandeira;
+}
+
+$stmtBandeiras = $pdo_master->prepare("
+    SELECT DISTINCT UPPER(COALESCE(NULLIF(bandeira, ''), 'TODAS')) AS bandeira
+    FROM armazem_conciliacao_recebimentos
+    WHERE empresa_id = ?
+    ORDER BY bandeira
+");
+$stmtBandeiras->execute([$empresaId]);
+$bandeiras = array_values(array_filter(array_column($stmtBandeiras->fetchAll(PDO::FETCH_ASSOC), 'bandeira')));
+
+$sqlTransacoes = "
     SELECT
+        id,
+        data_venda,
+        data_prevista,
+        data_recebimento,
         arquivo_origem,
         origem,
         " . origemAdquirenteSql() . " AS adquirente,
@@ -182,23 +139,31 @@ $sqlRelatorios = "
         tipo_operacao,
         COALESCE(NULLIF(bandeira, ''), 'TODAS') AS bandeira,
         COALESCE(NULLIF(total_parcelas, 0), 1) AS parcelas,
-        COUNT(*) AS qtd,
-        COALESCE(SUM(valor_bruto), 0) AS total_bruto,
-        COALESCE(SUM(valor_desconto), 0) AS total_taxa,
-        COALESCE(SUM(valor_liquido), 0) AS total_liquido,
-        MIN(data_venda) AS data_ini,
-        MAX(data_venda) AS data_fim,
-        MIN(criado_em) AS importado_em
+        COALESCE(valor_bruto, 0) AS total_bruto,
+        COALESCE(valor_desconto, 0) AS total_taxa,
+        COALESCE(valor_liquido, 0) AS total_liquido,
+        identificador,
+        descricao,
+        pagador,
+        criado_em AS importado_em,
+        (
+            SELECT COUNT(*)
+            FROM fechamento_granito_agenda_taxas ag
+            WHERE ag.empresa_id = armazem_conciliacao_recebimentos.empresa_id
+              AND ag.identificador = armazem_conciliacao_recebimentos.identificador
+        ) AS agenda_qtd
     FROM armazem_conciliacao_recebimentos
     WHERE " . implode(' AND ', $where) . "
-    GROUP BY arquivo_origem, origem, adquirente, grupo, tipo_operacao, bandeira, parcelas
-    ORDER BY importado_em DESC, arquivo_origem, tipo_operacao, bandeira
-    LIMIT 500
+    ORDER BY
+        COALESCE(data_recebimento, data_prevista) IS NULL,
+        COALESCE(data_recebimento, data_prevista) ASC,
+        data_venda ASC,
+        id ASC
 ";
 
-$stmtRelatorios = $pdo_master->prepare($sqlRelatorios);
-$stmtRelatorios->execute($params);
-$relatorios = $stmtRelatorios->fetchAll(PDO::FETCH_ASSOC);
+$stmtTransacoes = $pdo_master->prepare($sqlTransacoes);
+$stmtTransacoes->execute($params);
+$transacoes = $stmtTransacoes->fetchAll(PDO::FETCH_ASSOC);
 
 function buscarTaxaEsperada(array $taxasAtivas, array $relatorio): ?array
 {
@@ -233,7 +198,11 @@ function buscarTaxaEsperada(array $taxasAtivas, array $relatorio): ?array
 
 function relatorioDemonstraTaxa(array $relatorio): bool
 {
-    return abs((float)$relatorio['total_taxa']) > 0.0001;
+    if (strtoupper((string)($relatorio['tipo_operacao'] ?? '')) === 'P') {
+        return true;
+    }
+
+    return ((int)($relatorio['agenda_qtd'] ?? 0) > 0) || abs((float)$relatorio['total_taxa']) > 0.0001;
 }
 
 function situacaoTaxaRelatorio(array $relatorio, array $taxasAtivas): array
@@ -263,12 +232,12 @@ function situacaoTaxaRelatorio(array $relatorio, array $taxasAtivas): array
     ];
 }
 
-$relatorios = array_values(array_filter($relatorios, function ($relatorio) use ($taxasAtivas, $filtroSituacao) {
+$transacoes = array_values(array_filter($transacoes, function ($transacao) use ($taxasAtivas, $filtroSituacao) {
     if ($filtroSituacao === 'todos') {
         return true;
     }
 
-    $situacao = situacaoTaxaRelatorio($relatorio, $taxasAtivas);
+    $situacao = situacaoTaxaRelatorio($transacao, $taxasAtivas);
     return match ($filtroSituacao) {
         'divergentes' => $situacao['texto'] === 'Divergente',
         'sem_taxa' => $situacao['texto'] === 'Sem taxa cadastrada',
@@ -278,9 +247,38 @@ $relatorios = array_values(array_filter($relatorios, function ($relatorio) use (
     };
 }));
 
+$totaisTransacoes = [
+    'qtd' => count($transacoes),
+    'bruto' => 0.0,
+    'taxa' => 0.0,
+    'taxa_esperada' => 0.0,
+    'liquido' => 0.0,
+    'diferenca_valor' => 0.0,
+];
+
+foreach ($transacoes as $transacaoResumo) {
+    $situacaoResumo = situacaoTaxaRelatorio($transacaoResumo, $taxasAtivas);
+    $totaisTransacoes['bruto'] += (float)$transacaoResumo['total_bruto'];
+    $totaisTransacoes['taxa'] += (float)$transacaoResumo['total_taxa'];
+    $totaisTransacoes['liquido'] += (float)$transacaoResumo['total_liquido'];
+
+    if ($situacaoResumo['esperada']) {
+        $taxaEsperadaResumo = (float)$situacaoResumo['esperada']['taxa_percentual'];
+        $valorEsperadoResumo = ((float)$transacaoResumo['total_bruto']) * ($taxaEsperadaResumo / 100);
+        $totaisTransacoes['taxa_esperada'] += $valorEsperadoResumo;
+
+        if (relatorioDemonstraTaxa($transacaoResumo)) {
+            $taxaAplicadaResumo = (float)$situacaoResumo['taxa_media'];
+            $totaisTransacoes['diferenca_valor'] += ((float)$transacaoResumo['total_bruto']) * (($taxaAplicadaResumo - $taxaEsperadaResumo) / 100);
+        }
+    }
+}
+
 $adquirentes = ['GRANITO', 'SIPAG', 'PAGSEGURO'];
 $grupos = ['COMERCIAL', 'OUTROS', 'GERAL'];
 $tipos = ['DEBITO', 'CREDITO', 'PIX'];
+
+require '../../layout/header.php';
 ?>
 
 <section class="mb-4">
@@ -288,9 +286,8 @@ $tipos = ['DEBITO', 'CREDITO', 'PIX'];
         <div class="row align-items-center g-3">
             <div class="col-lg-8">
                 <span class="badge text-bg-warning mb-3">Recebimentos</span>
-                <h1 class="h3 fw-bold mb-2">Importacao de Recebimentos</h1>
-                <p class="text-muted mb-0">Cadastre taxas e condicoes das adquirentes e acompanhe os relatorios importados.</p>
-                <p class="text-muted small mt-2 mb-0">Na Granito, o arquivo de transacoes fica como base operacional; a conferencia de taxa usa o arquivo de agenda, quando ele traz a taxa/desconto demonstrado.</p>
+                <h1 class="h3 fw-bold mb-2">Relatorio dos Recebimentos</h1>
+                <p class="text-muted mb-0">Acompanhe as transacoes importadas e a conferencia das taxas aplicadas pelas adquirentes.</p>
             </div>
             <div class="col-lg-4 text-lg-end">
                 <a href="menu_financeiro.php" class="btn btn-outline-secondary">Voltar</a>
@@ -307,143 +304,16 @@ $tipos = ['DEBITO', 'CREDITO', 'PIX'];
     <div class="alert alert-danger"><?= htmlspecialchars($erro) ?></div>
 <?php endif; ?>
 
-<section class="mb-4">
-    <div class="card shadow-sm">
-        <div class="card-header">
-            <h2 class="h5 mb-0"><?= $taxaEditar ? 'Editar taxa' : 'Cadastrar taxa' ?></h2>
-        </div>
-        <div class="card-body">
-            <form method="post" class="row g-3">
-                <input type="hidden" name="acao" value="salvar_taxa">
-                <input type="hidden" name="id" value="<?= (int)($taxaEditar['id'] ?? 0) ?>">
-
-                <div class="col-md-3">
-                    <label class="form-label">Adquirente</label>
-                    <select name="adquirente" class="form-select" required>
-                        <?php foreach ($adquirentes as $adquirente): ?>
-                            <option value="<?= $adquirente ?>" <?= (($taxaEditar['adquirente'] ?? '') === $adquirente) ? 'selected' : '' ?>><?= $adquirente ?></option>
-                        <?php endforeach; ?>
-                    </select>
-                </div>
-
-                <div class="col-md-3">
-                    <label class="form-label">Grupo</label>
-                    <select name="grupo" class="form-select" required>
-                        <?php foreach ($grupos as $grupo): ?>
-                            <option value="<?= $grupo ?>" <?= (($taxaEditar['grupo'] ?? '') === $grupo) ? 'selected' : '' ?>><?= $grupo ?></option>
-                        <?php endforeach; ?>
-                    </select>
-                </div>
-
-                <div class="col-md-3">
-                    <label class="form-label">Tipo</label>
-                    <select name="tipo_operacao" class="form-select" required>
-                        <?php foreach ($tipos as $tipo): ?>
-                            <option value="<?= $tipo ?>" <?= (($taxaEditar['tipo_operacao'] ?? '') === $tipo) ? 'selected' : '' ?>><?= $tipo ?></option>
-                        <?php endforeach; ?>
-                    </select>
-                </div>
-
-                <div class="col-md-3">
-                    <label class="form-label">Bandeira</label>
-                    <input type="text" name="bandeira" class="form-control" value="<?= htmlspecialchars((string)($taxaEditar['bandeira'] ?? 'TODAS')) ?>" placeholder="TODAS, VISA, MASTERCARD">
-                </div>
-
-                <div class="col-md-2">
-                    <label class="form-label">Parcelas de</label>
-                    <input type="number" name="parcelas_de" min="1" class="form-control" value="<?= (int)($taxaEditar['parcelas_de'] ?? 1) ?>">
-                </div>
-
-                <div class="col-md-2">
-                    <label class="form-label">Parcelas ate</label>
-                    <input type="number" name="parcelas_ate" min="1" class="form-control" value="<?= (int)($taxaEditar['parcelas_ate'] ?? 1) ?>">
-                </div>
-
-                <div class="col-md-3">
-                    <label class="form-label">Taxa acordada %</label>
-                    <input type="number" step="0.0001" name="taxa_percentual" min="0" class="form-control" value="<?= htmlspecialchars((string)($taxaEditar['taxa_percentual'] ?? '0.0000')) ?>">
-                </div>
-
-                <div class="col-md-3">
-                    <label class="form-label">Tolerancia %</label>
-                    <input type="number" step="0.0001" name="tolerancia_percentual" min="0" class="form-control" value="<?= htmlspecialchars((string)($taxaEditar['tolerancia_percentual'] ?? '0.0500')) ?>">
-                </div>
-
-                <div class="col-md-2">
-                    <label class="form-label">Ativo</label>
-                    <select name="ativo" class="form-select">
-                        <option value="S" <?= (($taxaEditar['ativo'] ?? 'S') === 'S') ? 'selected' : '' ?>>Sim</option>
-                        <option value="N" <?= (($taxaEditar['ativo'] ?? 'S') === 'N') ? 'selected' : '' ?>>Nao</option>
-                    </select>
-                </div>
-
-                <div class="col-12 d-flex gap-2">
-                    <button class="btn btn-primary"><?= $taxaEditar ? 'Salvar alteracao' : 'Cadastrar taxa' ?></button>
-                    <?php if ($taxaEditar): ?>
-                        <a href="importacao_recebimentos.php" class="btn btn-outline-secondary">Cancelar edicao</a>
-                    <?php endif; ?>
-                </div>
-            </form>
-        </div>
-    </div>
-</section>
-
-<section class="mb-4">
-    <div class="card shadow-sm">
-        <div class="card-header">
-            <h2 class="h5 mb-0">Taxas cadastradas</h2>
-        </div>
-        <div class="table-responsive">
-            <table class="table table-sm table-hover align-middle mb-0">
-                <thead class="table-dark">
-                    <tr>
-                        <th>Adquirente</th>
-                        <th>Grupo</th>
-                        <th>Tipo</th>
-                        <th>Bandeira</th>
-                        <th>Parcelas</th>
-                        <th class="text-end">Taxa %</th>
-                        <th class="text-end">Tol. %</th>
-                        <th>Status</th>
-                        <th class="text-end">Acoes</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    <?php foreach ($taxas as $taxa): ?>
-                        <tr>
-                            <td><?= htmlspecialchars($taxa['adquirente']) ?></td>
-                            <td><?= htmlspecialchars($taxa['grupo']) ?></td>
-                            <td><?= htmlspecialchars($taxa['tipo_operacao']) ?></td>
-                            <td><?= htmlspecialchars($taxa['bandeira']) ?></td>
-                            <td><?= (int)$taxa['parcelas_de'] ?> a <?= (int)$taxa['parcelas_ate'] ?></td>
-                            <td class="text-end"><?= number_format((float)$taxa['taxa_percentual'], 4, ',', '.') ?></td>
-                            <td class="text-end"><?= number_format((float)$taxa['tolerancia_percentual'], 4, ',', '.') ?></td>
-                            <td><span class="badge text-bg-<?= $taxa['ativo'] === 'S' ? 'success' : 'secondary' ?>"><?= $taxa['ativo'] === 'S' ? 'Ativa' : 'Inativa' ?></span></td>
-                            <td class="text-end">
-                                <a href="?editar=<?= (int)$taxa['id'] ?>" class="btn btn-sm btn-outline-primary">Editar</a>
-                                <?php if ($taxa['ativo'] === 'S'): ?>
-                                    <form method="post" class="d-inline" onsubmit="return confirm('Desativar esta taxa?')">
-                                        <input type="hidden" name="acao" value="desativar_taxa">
-                                        <input type="hidden" name="id" value="<?= (int)$taxa['id'] ?>">
-                                        <button class="btn btn-sm btn-outline-danger">Desativar</button>
-                                    </form>
-                                <?php endif; ?>
-                            </td>
-                        </tr>
-                    <?php endforeach; ?>
-                    <?php if (empty($taxas)): ?>
-                        <tr><td colspan="9" class="text-center text-muted py-4">Nenhuma taxa cadastrada.</td></tr>
-                    <?php endif; ?>
-                </tbody>
-            </table>
-        </div>
-    </div>
-</section>
-
 <section>
     <div class="card shadow-sm">
-        <div class="card-header">
-            <h2 class="h5 mb-0">Relatorios importados</h2>
+        <div class="card-header bg-light">
+            <div class="d-flex flex-column flex-lg-row justify-content-between gap-2">
+                <div>
+                    <h2 class="h5 mb-1">Relatorio dos Recebimentos</h2>
+                    <div class="text-muted small">Transacoes importadas com comparacao entre taxa acordada e taxa aplicada pela adquirente.</div>
+                </div>
+                <div class="text-muted small align-self-lg-center">Na Granito, a taxa de POS vem da agenda; o arquivo de transacoes fica como base operacional.</div>
+            </div>
         </div>
         <div class="card-body border-bottom">
             <form method="get" class="row g-2 align-items-end">
@@ -454,6 +324,14 @@ $tipos = ['DEBITO', 'CREDITO', 'PIX'];
                 <div class="col-md-2">
                     <label class="form-label">Data final</label>
                     <input type="date" name="data_fim" value="<?= htmlspecialchars($filtroDataFim) ?>" class="form-control">
+                </div>
+                <div class="col-md-2">
+                    <label class="form-label">Venc./Pagto. inicial</label>
+                    <input type="date" name="venc_ini" value="<?= htmlspecialchars($filtroVencIni) ?>" class="form-control">
+                </div>
+                <div class="col-md-2">
+                    <label class="form-label">Venc./Pagto. final</label>
+                    <input type="date" name="venc_fim" value="<?= htmlspecialchars($filtroVencFim) ?>" class="form-control">
                 </div>
                 <div class="col-md-2">
                     <label class="form-label">Adquirente</label>
@@ -474,6 +352,24 @@ $tipos = ['DEBITO', 'CREDITO', 'PIX'];
                     </select>
                 </div>
                 <div class="col-md-2">
+                    <label class="form-label">Tipo</label>
+                    <select name="tipo" class="form-select">
+                        <option value="">Todos</option>
+                        <option value="D" <?= $filtroTipo === 'D' ? 'selected' : '' ?>>Debito</option>
+                        <option value="C" <?= $filtroTipo === 'C' ? 'selected' : '' ?>>Credito</option>
+                        <option value="P" <?= $filtroTipo === 'P' ? 'selected' : '' ?>>Pix</option>
+                    </select>
+                </div>
+                <div class="col-md-2">
+                    <label class="form-label">Bandeira</label>
+                    <select name="bandeira" class="form-select">
+                        <option value="">Todas</option>
+                        <?php foreach ($bandeiras as $bandeira): ?>
+                            <option value="<?= htmlspecialchars($bandeira) ?>" <?= $filtroBandeira === $bandeira ? 'selected' : '' ?>><?= htmlspecialchars($bandeira) ?></option>
+                        <?php endforeach; ?>
+                    </select>
+                </div>
+                <div class="col-md-2">
                     <label class="form-label">Situacao taxa</label>
                     <select name="situacao" class="form-select">
                         <option value="todos" <?= $filtroSituacao === 'todos' ? 'selected' : '' ?>>Todas</option>
@@ -488,51 +384,103 @@ $tipos = ['DEBITO', 'CREDITO', 'PIX'];
                 </div>
             </form>
         </div>
+        <div class="card-body border-bottom">
+            <div class="row g-3">
+                <div class="col-md-3">
+                    <div class="border rounded-2 p-3 h-100">
+                        <div class="text-muted small">Transacoes filtradas</div>
+                        <div class="h5 mb-0"><?= number_format($totaisTransacoes['qtd'], 0, ',', '.') ?></div>
+                    </div>
+                </div>
+                <div class="col-md-3">
+                    <div class="border rounded-2 p-3 h-100">
+                        <div class="text-muted small">Valor bruto</div>
+                        <div class="h5 mb-0">R$ <?= number_format($totaisTransacoes['bruto'], 2, ',', '.') ?></div>
+                    </div>
+                </div>
+                <div class="col-md-3">
+                    <div class="border rounded-2 p-3 h-100">
+                        <div class="text-muted small">Taxa aplicada demonstrada</div>
+                        <div class="h5 mb-0">R$ <?= number_format($totaisTransacoes['taxa'], 2, ',', '.') ?></div>
+                    </div>
+                </div>
+                <div class="col-md-3">
+                    <div class="border rounded-2 p-3 h-100">
+                        <div class="text-muted small">Taxa acordada estimada</div>
+                        <div class="h5 mb-0">R$ <?= number_format($totaisTransacoes['taxa_esperada'], 2, ',', '.') ?></div>
+                    </div>
+                </div>
+                <div class="col-md-3">
+                    <div class="border rounded-2 p-3 h-100">
+                        <div class="text-muted small">Diferenca demonstrada</div>
+                        <div class="h5 mb-0 <?= abs($totaisTransacoes['diferenca_valor']) > 0.009 ? 'text-danger' : 'text-success' ?>">
+                            R$ <?= number_format($totaisTransacoes['diferenca_valor'], 2, ',', '.') ?>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
         <div class="table-responsive">
             <table class="table table-sm table-hover align-middle mb-0">
                 <thead class="table-dark">
                     <tr>
-                        <th>Arquivo</th>
-                        <th>Periodo</th>
+                        <th>Venc./Pagto.</th>
+                        <th>Data</th>
+                        <th>Transacao</th>
                         <th>Adq.</th>
                         <th>Grupo</th>
                         <th>Tipo</th>
                         <th>Bandeira</th>
                         <th>Parc.</th>
-                        <th class="text-end">Qtd</th>
                         <th class="text-end">Bruto</th>
-                        <th class="text-end">Taxa</th>
-                        <th class="text-end">Taxa media</th>
+                        <th class="text-end">Taxa aplicada R$</th>
+                        <th class="text-end">Taxa acordada R$</th>
+                        <th class="text-end">Aplicada</th>
                         <th class="text-end">Acordada</th>
+                        <th class="text-end">Dif. %</th>
+                        <th class="text-end">Dif. R$</th>
                         <th>Sit.</th>
                     </tr>
                 </thead>
                 <tbody>
-                    <?php foreach ($relatorios as $relatorio): ?>
-                        <?php $situacao = situacaoTaxaRelatorio($relatorio, $taxasAtivas); ?>
+                    <?php foreach ($transacoes as $transacao): ?>
+                        <?php
+                            $situacao = situacaoTaxaRelatorio($transacao, $taxasAtivas);
+                            $taxaAplicada = (float)$situacao['taxa_media'];
+                            $taxaAcordada = $situacao['esperada'] ? (float)$situacao['esperada']['taxa_percentual'] : null;
+                            $taxaDemonstrada = relatorioDemonstraTaxa($transacao);
+                            $valorTaxaAcordada = $taxaAcordada !== null ? ((float)$transacao['total_bruto']) * ($taxaAcordada / 100) : null;
+                            $difPercentual = ($taxaAcordada !== null && $taxaDemonstrada) ? $taxaAplicada - $taxaAcordada : null;
+                            $difValor = $difPercentual !== null ? ((float)$transacao['total_bruto']) * ($difPercentual / 100) : null;
+                            $dataPagamento = $transacao['data_recebimento'] ?: $transacao['data_prevista'];
+                        ?>
                         <tr>
-                            <td class="small"><?= htmlspecialchars($relatorio['arquivo_origem'] ?: 'Sem arquivo') ?></td>
-                            <td class="small">
-                                <?= date('d/m/Y', strtotime($relatorio['data_ini'])) ?>
-                                a <?= date('d/m/Y', strtotime($relatorio['data_fim'])) ?>
-                            </td>
-                            <td><?= htmlspecialchars($relatorio['adquirente']) ?></td>
-                            <td><?= htmlspecialchars($relatorio['grupo']) ?></td>
-                            <td><?= htmlspecialchars(rotuloTipoOperacao((string)$relatorio['tipo_operacao'])) ?></td>
-                            <td><?= htmlspecialchars($relatorio['bandeira']) ?></td>
-                            <td><?= (int)$relatorio['parcelas'] ?></td>
-                            <td class="text-end"><?= (int)$relatorio['qtd'] ?></td>
-                            <td class="text-end"><?= number_format((float)$relatorio['total_bruto'], 2, ',', '.') ?></td>
-                            <td class="text-end"><?= number_format((float)$relatorio['total_taxa'], 2, ',', '.') ?></td>
-                            <td class="text-end"><?= number_format((float)$situacao['taxa_media'], 4, ',', '.') ?>%</td>
+                            <td class="small"><?= $dataPagamento ? date('d/m/Y', strtotime($dataPagamento)) : '<span class="text-muted">Sem agenda</span>' ?></td>
+                            <td class="small"><?= date('d/m/Y H:i', strtotime($transacao['data_venda'])) ?></td>
+                            <td class="small"><?= htmlspecialchars(numeroTransacaoRecebimento($transacao)) ?></td>
+                            <td><?= htmlspecialchars($transacao['adquirente']) ?></td>
+                            <td><?= htmlspecialchars($transacao['grupo']) ?></td>
+                            <td><?= htmlspecialchars(rotuloTipoOperacao((string)$transacao['tipo_operacao'])) ?></td>
+                            <td><?= htmlspecialchars($transacao['bandeira']) ?></td>
+                            <td><?= (int)$transacao['parcelas'] ?></td>
+                            <td class="text-end"><?= number_format((float)$transacao['total_bruto'], 2, ',', '.') ?></td>
+                            <td class="text-end"><?= $taxaDemonstrada ? number_format((float)$transacao['total_taxa'], 2, ',', '.') : '<span class="text-muted">Sem agenda</span>' ?></td>
+                            <td class="text-end"><?= $valorTaxaAcordada !== null ? number_format($valorTaxaAcordada, 2, ',', '.') : '-' ?></td>
+                            <td class="text-end"><?= $taxaDemonstrada ? number_format($taxaAplicada, 4, ',', '.') . '%' : '<span class="text-muted">Sem agenda</span>' ?></td>
                             <td class="text-end">
-                                <?= $situacao['esperada'] ? number_format((float)$situacao['esperada']['taxa_percentual'], 4, ',', '.') . '%' : '-' ?>
+                                <?= $taxaAcordada !== null ? number_format($taxaAcordada, 4, ',', '.') . '%' : '-' ?>
+                            </td>
+                            <td class="text-end <?= $difPercentual !== null && abs($difPercentual) > 0.0001 ? 'text-danger' : '' ?>">
+                                <?= $difPercentual !== null ? number_format($difPercentual, 4, ',', '.') . '%' : '-' ?>
+                            </td>
+                            <td class="text-end <?= $difValor !== null && abs($difValor) > 0.009 ? 'text-danger' : '' ?>">
+                                <?= $difValor !== null ? number_format($difValor, 2, ',', '.') : '-' ?>
                             </td>
                             <td><span class="badge text-bg-<?= htmlspecialchars($situacao['classe']) ?>"><?= htmlspecialchars($situacao['texto']) ?></span></td>
                         </tr>
                     <?php endforeach; ?>
-                    <?php if (empty($relatorios)): ?>
-                        <tr><td colspan="13" class="text-center text-muted py-4">Nenhum relatorio encontrado para os filtros.</td></tr>
+                    <?php if (empty($transacoes)): ?>
+                        <tr><td colspan="16" class="text-center text-muted py-4">Nenhuma transacao encontrada para os filtros.</td></tr>
                     <?php endif; ?>
                 </tbody>
             </table>

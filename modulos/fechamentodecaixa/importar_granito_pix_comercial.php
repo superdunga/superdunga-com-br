@@ -10,6 +10,8 @@ error_reporting(E_ALL);
 
 $empresa_id = (int)$_SESSION['empresa_id'];
 $regraImportacao = buscarRegraImportacao($pdo_master, $empresa_id, 'granito_pix_comercial', []);
+garantirCamposGranitoRecebimentos($pdo_master);
+garantirTabelaGranitoAgendaTaxas($pdo_master);
 $mensagens = [];
 $previewInterPix = [];
 $previewDiagnosticoInter = [];
@@ -43,6 +45,72 @@ function granitoPixDataHora($valor) {
 function granitoPixData($valor) {
     $dt = DateTime::createFromFormat('d/m/Y', trim((string)$valor));
     return $dt ? $dt->format('Y-m-d') : null;
+}
+
+function granitoAgendaTipoOperacao(string $tipo): string {
+    $tipoOriginal = trim($tipo);
+    $tipoNormalizado = iconv('UTF-8', 'ASCII//TRANSLIT//IGNORE', $tipoOriginal);
+    $tipo = strtolower($tipoNormalizado !== false ? $tipoNormalizado : $tipoOriginal);
+    $tipo = preg_replace('/[^a-z0-9]+/', '', $tipo) ?? $tipo;
+
+    if (strpos($tipo, 'instant') !== false || strpos($tipo, 'pix') !== false) {
+        return 'P';
+    }
+
+    if (strpos($tipo, 'debito') !== false) {
+        return 'D';
+    }
+
+    if (strpos($tipo, 'credito') !== false) {
+        return 'C';
+    }
+
+    if (strpos($tipo, 'débito') !== false || strpos($tipo, 'debito') !== false || strpos($tipo, 'dã©bito') !== false) {
+        return 'D';
+    }
+
+    if (strpos($tipo, 'crédito') !== false || strpos($tipo, 'credito') !== false || strpos($tipo, 'crã©dito') !== false) {
+        return 'C';
+    }
+
+    return '';
+}
+
+function granitoAgendaParcela(string $parcelaTexto): array {
+    $textoOriginal = trim($parcelaTexto);
+    $texto = strtolower($textoOriginal);
+    $texto = iconv('UTF-8', 'ASCII//TRANSLIT//IGNORE', $texto);
+    $texto = $texto !== false ? $texto : strtolower($textoOriginal);
+
+    $mapaMeses = [
+        'jan' => 1,
+        'fev' => 2,
+        'feb' => 2,
+        'mar' => 3,
+        'abr' => 4,
+        'apr' => 4,
+        'mai' => 5,
+        'may' => 5,
+        'jun' => 6,
+        'jul' => 7,
+        'ago' => 8,
+        'aug' => 8,
+        'set' => 9,
+        'sep' => 9,
+        'out' => 10,
+        'oct' => 10,
+        'nov' => 11,
+        'dez' => 12,
+        'dec' => 12,
+    ];
+
+    $partes = array_map('trim', explode('/', $texto));
+    $parcela = isset($partes[0]) ? (int)preg_replace('/\D+/', '', $partes[0]) : 1;
+    $totalTexto = $partes[1] ?? '1';
+    $totalNumerico = (int)preg_replace('/\D+/', '', $totalTexto);
+    $total = $totalNumerico > 0 ? $totalNumerico : ($mapaMeses[substr($totalTexto, 0, 3)] ?? 1);
+
+    return [max(1, $parcela), max(1, $total)];
 }
 
 function granitoPixNormalizarCabecalho($valor) {
@@ -346,6 +414,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['acao'] ?? '') === 'upload_
         } else {
             $linha = 0;
             $importados = 0;
+            $posAtualizados = 0;
+            $posSemTransacao = 0;
             $cabecalho = [];
 
             while (($dados = fgetcsv($handle, 0, ';')) !== false) {
@@ -394,13 +464,44 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['acao'] ?? '') === 'upload_
                     'documento pagador',
                 ]);
 
-                if ($idTransacao === '' || $dataVenda === null || strcasecmp($tipo, 'Pagamento Instantâneo') !== 0 || strcasecmp($status, 'Pago') !== 0 || $valorBruto <= 0) {
+                $tipoOperacaoAgenda = granitoAgendaTipoOperacao($tipo);
+
+                if ($idTransacao === '' || $dataVenda === null || strcasecmp($status, 'Pago') !== 0 || $valorBruto <= 0 || $tipoOperacaoAgenda === '') {
                     continue;
                 }
 
-                [$parcela, $totalParcelas] = array_pad(array_map('intval', explode('/', $parcelaTexto)), 2, 1);
+                [$parcela, $totalParcelas] = granitoAgendaParcela($parcelaTexto);
+
+                if ($tipoOperacaoAgenda !== 'P') {
+                    $identificadorPos = identificadorGranitoPos($idTransacao);
+                    salvarGranitoAgendaTaxa(
+                        $pdo_master,
+                        $empresa_id,
+                        $identificadorPos,
+                        $dataVenda,
+                        $dataPagamento,
+                        $valorBruto,
+                        $valorTaxa + $valorAntecipacao,
+                        $valorLiquido,
+                        $parcela ?: 1,
+                        $totalParcelas ?: 1,
+                        $status,
+                        $bandeira,
+                        $tipoOperacaoAgenda,
+                        $nomeArquivo
+                    );
+
+                    if (aplicarGranitoAgendaTaxaNoRecebimento($pdo_master, $empresa_id, $identificadorPos) > 0) {
+                        $posAtualizados++;
+                    } else {
+                        $posSemTransacao++;
+                    }
+
+                    continue;
+                }
+
                 $origem = $regraImportacao['origem'];
-                $identificador = 'GRANITO_PIX_' . $idTransacao;
+                $identificador = identificadorGranitoPix($idTransacao);
 
                 $check = $pdo_master->prepare("SELECT id FROM armazem_conciliacao_recebimentos WHERE empresa_id = ? AND identificador = ?");
                 $check->execute([$empresa_id, $identificador]);
@@ -423,10 +524,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['acao'] ?? '') === 'upload_
                         empresa_id, origem, data_venda, data_prevista, data_recebimento,
                         valor_bruto, valor_desconto, valor_liquido, identificador, descricao,
                         pagador, parcela, total_parcelas, status, arquivo_origem, CMCONTADOR,
-                        tipo_operacao, bandeira, nsu_transacao, numero_estabelecimento
+                        tipo_operacao, bandeira, nsu_transacao, numero_estabelecimento, id_transacao
                     ) VALUES (
                         ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PIX - GRANITO', ?,
-                        ?, ?, ?, ?, ?, 'P', ?, ?, ''
+                        ?, ?, ?, ?, ?, 'P', ?, ?, '', ?
                     )
                 ");
                 $stmt->execute([
@@ -447,13 +548,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['acao'] ?? '') === 'upload_
                     (int)$regraImportacao['cm_pix'],
                     $bandeira,
                     $idTransacao,
+                    $idTransacao,
                 ]);
 
                 $importados++;
             }
 
             fclose($handle);
-            $mensagens[] = ['tipo' => 'success', 'texto' => "Importacao concluida! Registros importados: {$importados}"];
+            $mensagens[] = [
+                'tipo' => 'success',
+                'texto' => "Importacao concluida! Pix importados: {$importados}. POS atualizados com taxas da agenda: {$posAtualizados}. POS gravados na agenda aguardando transacao: {$posSemTransacao}.",
+            ];
         }
     }
 }
