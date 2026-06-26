@@ -77,8 +77,13 @@ $stmtPendCR->execute([$inicio, $fim, $empresa_id, $empresa_id, $inicio, $fim, $e
 $pendentesCR001 = $stmtPendCR->fetchAll(PDO::FETCH_ASSOC);
 
 $stmtExcluidosCR = $pdo_master->prepare("
-    SELECT c.*
+    SELECT
+        c.*,
+        COALESCE(NULLIF(cli.NOME, ''), NULLIF(cli.APELIDO, ''), '') AS cliente_nome
     FROM armazem_cr001 c
+    LEFT JOIN armazem_cr002 cli
+        ON cli.EMPRESA = c.EMPRESA
+       AND cli.CLICONTADOR = c.CLICONTADOR
     WHERE c.DTLANC BETWEEN ? AND ?
       AND c.EMPRESA = ?
       AND COALESCE(c.excluido_firebird, 'N') = 'S'
@@ -306,6 +311,7 @@ $diferencaPendentes = $totalPendenteSistema - $totalPendenteCR001;
                             <th>Data</th>
                             <th>Valor</th>
                             <th>CM</th>
+                            <th>Cliente</th>
                             <th></th>
                             <th>Recebivel</th>
                             <th>Marcado em</th>
@@ -319,12 +325,21 @@ $diferencaPendentes = $totalPendenteSistema - $totalPendenteCR001;
                                 <?php
                                     $vendaOrigem = (int)($c['NUMDOCORIGEM'] ?? 0);
                                     $collapseId = 'itens-cr-excluido-' . (int)$c['CRCONTADOR'];
+                                    $clienteNome = trim((string)($c['cliente_nome'] ?? ''));
+                                    $clienteLabel = $clienteNome !== ''
+                                        ? $clienteNome
+                                        : (!empty($c['CLICONTADOR']) ? 'Cliente ' . (int)$c['CLICONTADOR'] : '-');
                                 ?>
                                 <tr>
                                     <td><?= htmlspecialchars($c['NUMDOCORIGEM'] ?? '') ?></td>
                                     <td><?= !empty($c['DTLANC']) ? date('d/m/Y H:i', strtotime($c['DTLANC'])) : '-' ?></td>
                                     <td>R$ <?= number_format($c['VLRPARCELA'], 2, ',', '.') ?></td>
                                     <td><?= $c['CMCONTADOR'] ?></td>
+                                    <td class="text-start">
+                                        <span class="d-inline-block text-truncate" style="max-width: 220px;" title="<?= htmlspecialchars($clienteLabel) ?>">
+                                            <?= htmlspecialchars($clienteLabel) ?>
+                                        </span>
+                                    </td>
                                     <td>
                                         <button class="btn btn-sm btn-outline-primary"
                                                 type="button"
@@ -338,7 +353,7 @@ $diferencaPendentes = $totalPendenteSistema - $totalPendenteCR001;
                                     <td><?= !empty($c['data_exclusao_firebird']) ? date('d/m/Y H:i', strtotime($c['data_exclusao_firebird'])) : '-' ?></td>
                                 </tr>
                                 <tr class="collapse" id="<?= $collapseId ?>">
-                                    <td colspan="7" class="bg-light">
+                                    <td colspan="8" class="bg-light">
                                         <?php renderizarItensVendaDiagnostico($itensPorVenda[$vendaOrigem] ?? []); ?>
                                     </td>
                                 </tr>
