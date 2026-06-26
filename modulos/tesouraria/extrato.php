@@ -139,6 +139,44 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['acao'] ?? '') === 'excluir
 }
 
 /* =========================
+   DESFAZER MATCH FIREBIRD (MASTER)
+========================= */
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['acao'] ?? '') === 'desfazer_match_firebird') {
+    if (!$isMaster) {
+        die('Acesso negado.');
+    }
+
+    $movId = (int)($_POST['movimentacao_id'] ?? 0);
+    $redirectQuery = preg_replace('/[^a-zA-Z0-9_%=&.+\-]/', '', $_POST['redirect_query'] ?? '');
+    $redirectUrl = 'extrato.php' . ($redirectQuery !== '' ? '?' . $redirectQuery : '');
+
+    if ($movId <= 0) {
+        header("Location: {$redirectUrl}");
+        exit;
+    }
+
+    try {
+        $stmtDesfazer = $pdo_master->prepare("
+            UPDATE tesouraria_movimentacoes
+            SET firebird_id = NULL,
+                firebird_tabela = NULL,
+                conciliado = 'N'
+            WHERE id = ?
+              AND empresa_id = ?
+              AND conciliado = 'S'
+              AND firebird_id IS NOT NULL
+        ");
+        $stmtDesfazer->execute([$movId, $empresa_id]);
+
+        $separador = strpos($redirectUrl, '?') === false ? '?' : '&';
+        header("Location: {$redirectUrl}{$separador}match_desfeito=" . ($stmtDesfazer->rowCount() === 1 ? '1' : '0'));
+        exit;
+    } catch (Throwable $e) {
+        die('Erro ao desfazer match: ' . $e->getMessage());
+    }
+}
+
+/* =========================
    FILTROS
 ========================= */
 
@@ -269,6 +307,18 @@ require '../../layout/header.php';
             </div>
         <?php endif; ?>
 
+        <?php if (isset($_GET['match_desfeito'])): ?>
+            <?php if ($_GET['match_desfeito'] === '1'): ?>
+                <div class="alert alert-success">
+                    Match Firebird desfeito com sucesso.
+                </div>
+            <?php else: ?>
+                <div class="alert alert-warning">
+                    Nenhum match Firebird ativo foi encontrado para desfazer.
+                </div>
+            <?php endif; ?>
+        <?php endif; ?>
+
         <!-- FILTROS -->
         <form method="GET" class="row g-2 mb-3">
 
@@ -395,6 +445,20 @@ require '../../layout/header.php';
 
                                     }
                                     ?>
+
+                                    <?php if ($isMaster && ($m['conciliado'] ?? '') === 'S' && !empty($m['firebird_id'])): ?>
+                                        <form method="POST" class="d-inline"
+                                              onsubmit="return confirm('Desfazer o match Firebird da movimentacao #<?= (int)$m['id'] ?>?');">
+                                            <input type="hidden" name="acao" value="desfazer_match_firebird">
+                                            <input type="hidden" name="movimentacao_id" value="<?= (int)$m['id'] ?>">
+                                            <input type="hidden" name="redirect_query" value="<?= htmlspecialchars($queryAtual) ?>">
+                                            <button type="submit"
+                                                    class="btn btn-sm btn-outline-warning"
+                                                    title="Desfazer match Firebird <?= (int)$m['firebird_id'] ?>">
+                                                &#8634;
+                                            </button>
+                                        </form>
+                                    <?php endif; ?>
 
                                 </div>
                             </td>

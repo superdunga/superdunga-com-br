@@ -13,6 +13,11 @@ $erro_conciliacao = '';
 $erro_manual = $_GET['erro_manual'] ?? '';
 $sucesso_manual = isset($_GET['manual']) && $_GET['manual'] === '1';
 $sucesso_conferido = isset($_GET['conferido']) && $_GET['conferido'] === '1';
+$conciliadosDataIni = $_GET['conc_data_ini'] ?? date('Y-m-01');
+$conciliadosDataFim = $_GET['conc_data_fim'] ?? date('Y-m-t');
+$conciliadosId = trim((string)($_GET['conc_id'] ?? ''));
+$conciliadosFirebird = trim((string)($_GET['conc_firebird'] ?? ''));
+$conciliadosObs = trim((string)($_GET['conc_obs'] ?? ''));
 
 function garantirTabelaFirebirdConferidos(PDO $pdo): void
 {
@@ -224,7 +229,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['acao'] ?? '') === 'marcar_
 
 // EXECUTA A CONCILIACAO AUTOMATICA AO ABRIR A PAGINA
 try {
-
     $sql = "
     UPDATE tesouraria_movimentacoes t
     INNER JOIN (
@@ -353,6 +357,38 @@ if (!empty($pendentes)) {
     }
 }
 
+$whereConciliados = [
+    "conciliado = 'S'",
+    "empresa_id = ?",
+    "tipo_operacao <> 'T'",
+];
+$paramsConciliados = [$empresa_id];
+
+if ($conciliadosDataIni !== '') {
+    $whereConciliados[] = "DATE(data_mov) >= ?";
+    $paramsConciliados[] = $conciliadosDataIni;
+}
+
+if ($conciliadosDataFim !== '') {
+    $whereConciliados[] = "DATE(data_mov) <= ?";
+    $paramsConciliados[] = $conciliadosDataFim;
+}
+
+if ($conciliadosId !== '') {
+    $whereConciliados[] = "id = ?";
+    $paramsConciliados[] = (int)$conciliadosId;
+}
+
+if ($conciliadosFirebird !== '') {
+    $whereConciliados[] = "firebird_id = ?";
+    $paramsConciliados[] = (int)$conciliadosFirebird;
+}
+
+if ($conciliadosObs !== '') {
+    $whereConciliados[] = "observacao LIKE ?";
+    $paramsConciliados[] = '%' . $conciliadosObs . '%';
+}
+
 // CONCILIADOS
 $stmtConciliados = $pdo_master->prepare("
     SELECT
@@ -362,12 +398,10 @@ $stmtConciliados = $pdo_master->prepare("
         firebird_id,
         observacao
     FROM tesouraria_movimentacoes
-    WHERE conciliado = 'S'
-    AND empresa_id = ?
-    AND tipo_operacao <> 'T'
+    WHERE " . implode(' AND ', $whereConciliados) . "
     ORDER BY data_mov DESC
 ");
-$stmtConciliados->execute([$empresa_id]);
+$stmtConciliados->execute($paramsConciliados);
 $conciliados = $stmtConciliados->fetchAll(PDO::FETCH_ASSOC);
 
 // FIREBIRD NAO CONCILIADOS
@@ -615,6 +649,35 @@ require '../../layout/header.php';
 <div class="card shadow-sm mb-3">
     <div class="card-body">
         <h5>Conciliados (<?= count($conciliados) ?>)</h5>
+
+        <form method="GET" class="row g-2 align-items-end mb-3">
+            <div class="col-md-2">
+                <label class="form-label">Data inicial</label>
+                <input type="date" name="conc_data_ini" value="<?= htmlspecialchars($conciliadosDataIni) ?>" class="form-control">
+            </div>
+            <div class="col-md-2">
+                <label class="form-label">Data final</label>
+                <input type="date" name="conc_data_fim" value="<?= htmlspecialchars($conciliadosDataFim) ?>" class="form-control">
+            </div>
+            <div class="col-md-2">
+                <label class="form-label">ID tesouraria</label>
+                <input type="number" name="conc_id" value="<?= htmlspecialchars($conciliadosId) ?>" class="form-control" inputmode="numeric">
+            </div>
+            <div class="col-md-2">
+                <label class="form-label">Firebird</label>
+                <input type="number" name="conc_firebird" value="<?= htmlspecialchars($conciliadosFirebird) ?>" class="form-control" inputmode="numeric">
+            </div>
+            <div class="col-md-2">
+                <label class="form-label">Obs</label>
+                <input type="text" name="conc_obs" value="<?= htmlspecialchars($conciliadosObs) ?>" class="form-control">
+            </div>
+            <div class="col-md-2 d-grid">
+                <button class="btn btn-primary">Filtrar</button>
+            </div>
+            <div class="col-md-2 d-grid">
+                <a href="conciliar.php" class="btn btn-outline-secondary">Mes corrente</a>
+            </div>
+        </form>
 
         <div class="table-responsive">
             <table class="table table-sm table-bordered">
