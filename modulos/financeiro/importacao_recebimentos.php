@@ -63,12 +63,16 @@ function origemGrupoSql(): string
 
 function rotuloTipoOperacao(string $tipo): string
 {
-    return match (strtoupper($tipo)) {
-        'D' => 'DEBITO',
-        'C' => 'CREDITO',
-        'P' => 'PIX',
-        default => strtoupper($tipo),
-    };
+    switch (strtoupper($tipo)) {
+        case 'D':
+            return 'DEBITO';
+        case 'C':
+            return 'CREDITO';
+        case 'P':
+            return 'PIX';
+        default:
+            return strtoupper($tipo);
+    }
 }
 
 function numeroTransacaoRecebimento(array $transacao): string
@@ -501,13 +505,18 @@ $transacoes = array_values(array_filter($transacoes, function ($transacao) use (
     }
 
     $situacao = situacaoTaxaRelatorio($transacao, $taxasAtivas);
-    return match ($filtroSituacao) {
-        'divergentes' => $situacao['texto'] === 'Divergente',
-        'sem_taxa' => $situacao['texto'] === 'Sem taxa cadastrada',
-        'sem_taxa_demonstrada' => $situacao['texto'] === 'Sem taxa demonstrada',
-        'ok' => $situacao['texto'] === 'OK',
-        default => true,
-    };
+    switch ($filtroSituacao) {
+        case 'divergentes':
+            return $situacao['texto'] === 'Divergente';
+        case 'sem_taxa':
+            return $situacao['texto'] === 'Sem taxa cadastrada';
+        case 'sem_taxa_demonstrada':
+            return $situacao['texto'] === 'Sem taxa demonstrada';
+        case 'ok':
+            return $situacao['texto'] === 'OK';
+        default:
+            return true;
+    }
 }));
 
 $totaisTransacoes = [
@@ -674,7 +683,9 @@ if (!empty($mapasConferencia)) {
             'diferenca' => $diferenca,
             'ok' => abs($diferenca) < 0.01,
             'qtd_regras' => count($regrasHistoricoConf),
-            'historicos' => implode(', ', array_map(static fn($regra) => (string)$regra['historico_padrao'], $regrasHistoricoConf)),
+            'historicos' => implode(', ', array_map(static function ($regra) {
+                return (string)$regra['historico_padrao'];
+            }, $regrasHistoricoConf)),
         ];
     }
 }
