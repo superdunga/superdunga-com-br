@@ -41,7 +41,6 @@ function garantirCamposContasReceberClientes(PDO $pdo): void
             empresa_id INT NOT NULL,
             clicontador INT NOT NULL,
             ativo_whatsapp CHAR(1) NOT NULL DEFAULT 'N',
-            numero_whatsapp VARCHAR(30) NULL,
             observacao VARCHAR(255) NULL,
             usuario_id INT NULL,
             criado_em DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -50,6 +49,18 @@ function garantirCamposContasReceberClientes(PDO $pdo): void
             KEY idx_fin_cli_whatsapp_ativo (empresa_id, ativo_whatsapp)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
     ");
+
+    $stmtWhatsappCampo = $pdo->prepare("
+        SELECT COUNT(*)
+        FROM information_schema.COLUMNS
+        WHERE TABLE_SCHEMA = DATABASE()
+          AND TABLE_NAME = 'financeiro_clientes_whatsapp'
+          AND COLUMN_NAME = 'numero_whatsapp'
+    ");
+    $stmtWhatsappCampo->execute();
+    if ((int)$stmtWhatsappCampo->fetchColumn() > 0) {
+        $pdo->exec("ALTER TABLE financeiro_clientes_whatsapp DROP COLUMN numero_whatsapp");
+    }
 }
 
 garantirCamposContasReceberClientes($pdo_master);
@@ -117,7 +128,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['acao'] ?? '') === 'verific
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['acao'] ?? '') === 'salvar_whatsapp_cliente') {
     $clicontador = (int)($_POST['clicontador'] ?? 0);
     $ativoWhatsapp = ($_POST['ativo_whatsapp'] ?? 'N') === 'S' ? 'S' : 'N';
-    $numeroWhatsapp = preg_replace('/\D+/', '', (string)($_POST['numero_whatsapp'] ?? ''));
     $observacaoWhatsapp = trim((string)($_POST['observacao_whatsapp'] ?? ''));
     if ($observacaoWhatsapp !== '') {
         $observacaoWhatsapp = substr($observacaoWhatsapp, 0, 255);
@@ -126,12 +136,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['acao'] ?? '') === 'salvar_
     if ($clicontador > 0) {
         $stmt = $pdo_master->prepare("
             INSERT INTO financeiro_clientes_whatsapp
-                (empresa_id, clicontador, ativo_whatsapp, numero_whatsapp, observacao, usuario_id)
+                (empresa_id, clicontador, ativo_whatsapp, observacao, usuario_id)
             VALUES
-                (?, ?, ?, ?, ?, ?)
+                (?, ?, ?, ?, ?)
             ON DUPLICATE KEY UPDATE
                 ativo_whatsapp = VALUES(ativo_whatsapp),
-                numero_whatsapp = VALUES(numero_whatsapp),
                 observacao = VALUES(observacao),
                 usuario_id = VALUES(usuario_id),
                 atualizado_em = NOW()
@@ -140,7 +149,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['acao'] ?? '') === 'salvar_
             $empresaId,
             $clicontador,
             $ativoWhatsapp,
-            $numeroWhatsapp !== '' ? $numeroWhatsapp : null,
             $observacaoWhatsapp !== '' ? $observacaoWhatsapp : null,
             $usuarioId,
         ]);
@@ -209,7 +217,7 @@ if ($whatsappFiltro === 'ativos') {
 } elseif ($whatsappFiltro === 'inativos') {
     $where[] = "COALESCE(wc.ativo_whatsapp, 'N') <> 'S'";
 } elseif ($whatsappFiltro === 'sem_telefone') {
-    $where[] = "COALESCE(NULLIF(wc.numero_whatsapp, ''), NULLIF(cli.CELULAR, ''), '') = ''";
+    $where[] = "COALESCE(NULLIF(cli.CELULAR, ''), '') = ''";
 }
 
 $whereSql = implode("\n      AND ", $where);
@@ -230,7 +238,6 @@ if ($visao === 'sintetico') {
             COALESCE(cli.NOME, cli.APELIDO, CONCAT('Cliente ', c.CLICONTADOR)) AS nome_cliente,
             MAX(cli.CELULAR) AS telefone_cliente,
             MAX(COALESCE(wc.ativo_whatsapp, 'N')) AS whatsapp_ativo,
-            MAX(wc.numero_whatsapp) AS whatsapp_numero_config,
             MAX(wc.observacao) AS whatsapp_observacao,
             COUNT(*) AS qtd,
             COALESCE(SUM(c.VLRPARCELA), 0) AS total_parcela,
@@ -293,7 +300,6 @@ if ($visao !== 'sintetico' || $exportar === 'pdf') {
             c.NUMDOCORIGEM,
             cli.CELULAR AS telefone_cliente,
             COALESCE(wc.ativo_whatsapp, 'N') AS whatsapp_ativo,
-            wc.numero_whatsapp AS whatsapp_numero_config,
             wc.observacao AS whatsapp_observacao,
             v.DTVENDA AS venda_data,
             v.HRVENDA AS venda_hora,
@@ -1222,8 +1228,7 @@ require '../../layout/header.php';
                         <?php
                             $whatsappAtivo = ($linha['whatsapp_ativo'] ?? 'N') === 'S';
                             $telefoneCliente = telefoneFinanceiroClientes($linha['telefone_cliente'] ?? '');
-                            $numeroWhatsapp = telefoneFinanceiroClientes($linha['whatsapp_numero_config'] ?? '') ?: $telefoneCliente;
-                            $semTelefoneWhatsapp = $numeroWhatsapp === '';
+                            $semTelefoneWhatsapp = $telefoneCliente === '';
                         ?>
                         <tr>
                             <td data-label="Cod." class="fw-semibold col-id"><?= (int)$linha['CLICONTADOR'] ?></td>
@@ -1245,15 +1250,10 @@ require '../../layout/header.php';
                                         <input type="hidden" name="acao" value="salvar_whatsapp_cliente">
                                         <input type="hidden" name="clicontador" value="<?= (int)$linha['CLICONTADOR'] ?>">
                                         <div class="col-md-5">
-                                            <label class="form-label small mb-1">Numero</label>
-                                            <input
-                                                type="tel"
-                                                inputmode="numeric"
-                                                name="numero_whatsapp"
-                                                class="form-control form-control-sm"
-                                                value="<?= htmlspecialchars($numeroWhatsapp) ?>"
-                                                placeholder="DDD + numero"
-                                            >
+                                            <label class="form-label small mb-1">Telefone Firebird</label>
+                                            <div class="form-control form-control-sm bg-light text-muted">
+                                                <?= $telefoneCliente !== '' ? htmlspecialchars($telefoneCliente) : 'Sem telefone' ?>
+                                            </div>
                                         </div>
                                         <div class="col-md-3">
                                             <label class="form-label small mb-1">Enviar</label>
@@ -1310,7 +1310,7 @@ require '../../layout/header.php';
                         <?php
                             $verificadoRegistro = ($registro['financeiro_verificado'] ?? 'N') === 'S';
                             $whatsappAtivo = ($registro['whatsapp_ativo'] ?? 'N') === 'S';
-                            $numeroWhatsapp = telefoneFinanceiroClientes($registro['whatsapp_numero_config'] ?? '') ?: telefoneFinanceiroClientes($registro['telefone_cliente'] ?? '');
+                            $telefoneCliente = telefoneFinanceiroClientes($registro['telefone_cliente'] ?? '');
                             $vendaOrigem = (int)($registro['NUMDOCORIGEM'] ?? 0);
                             $itensVenda = $vendaOrigem > 0 ? ($itensPorVenda[$vendaOrigem] ?? []) : [];
                             $collapseItensId = 'itens-cr-' . (int)$registro['CRCONTADOR'];
@@ -1335,8 +1335,8 @@ require '../../layout/header.php';
                                     <?php else: ?>
                                         <span class="badge text-bg-secondary">WhatsApp inativo</span>
                                     <?php endif; ?>
-                                    <?php if ($numeroWhatsapp !== ''): ?>
-                                        <span class="text-muted ms-1"><?= htmlspecialchars($numeroWhatsapp) ?></span>
+                                    <?php if ($telefoneCliente !== ''): ?>
+                                        <span class="text-muted ms-1"><?= htmlspecialchars($telefoneCliente) ?></span>
                                     <?php else: ?>
                                         <span class="text-warning ms-1">sem telefone</span>
                                     <?php endif; ?>
