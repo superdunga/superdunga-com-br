@@ -341,6 +341,19 @@ $geradoresSistema = whatsappGeradoresSistema();
 $stmt = $pdo_master->prepare("SELECT * FROM whatsapp_destinatarios WHERE empresa_id = ? ORDER BY ativo DESC, tipo, nome");
 $stmt->execute([$empresaId]);
 $destinatarios = $stmt->fetchAll(PDO::FETCH_ASSOC);
+$clientesFechamentoMarcados = 0;
+try {
+    $stmt = $pdo_master->prepare("
+        SELECT COUNT(*)
+        FROM financeiro_clientes_whatsapp
+        WHERE empresa_id = ?
+          AND ativo_whatsapp = 'S'
+    ");
+    $stmt->execute([$empresaId]);
+    $clientesFechamentoMarcados = (int)$stmt->fetchColumn();
+} catch (Exception $e) {
+    $clientesFechamentoMarcados = 0;
+}
 $stmt = $pdo_master->prepare("SELECT * FROM whatsapp_mensagens WHERE empresa_id = ? ORDER BY ativo DESC, categoria, titulo");
 $stmt->execute([$empresaId]);
 $mensagens = $stmt->fetchAll(PDO::FETCH_ASSOC);
@@ -759,7 +772,14 @@ require __DIR__ . '/../../layout/header.php';
                                     <?= htmlspecialchars($r['codigo'] === 'resumo_diario' ? 'Gerada pelo sistema' : 'Sem mensagem') ?>
                                 <?php endif; ?>
                             </td>
-                            <td><?= count($selecionados) ?> vinculado(s)</td>
+                            <td>
+                                <?php if (($r['gerador_sistema'] ?? '') === 'fechamento_compras_clientes_pdf'): ?>
+                                    <strong><?= (int)$clientesFechamentoMarcados ?></strong> cliente(s) marcado(s)
+                                    <br><small class="text-muted">Busca em Contas a Receber &gt; Clientes</small>
+                                <?php else: ?>
+                                    <?= count($selecionados) ?> vinculado(s)
+                                <?php endif; ?>
+                            </td>
                             <td><?= htmlspecialchars($agenda) ?></td>
                             <td>
                                 <?php if (empty($agendamentos)): ?>

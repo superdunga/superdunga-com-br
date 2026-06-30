@@ -132,6 +132,21 @@ function whatsappEnsureTables(PDO $pdo): void
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
     ");
 
+    $pdo->exec("
+        CREATE TABLE IF NOT EXISTS financeiro_clientes_whatsapp (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            empresa_id INT NOT NULL,
+            clicontador INT NOT NULL,
+            ativo_whatsapp CHAR(1) NOT NULL DEFAULT 'N',
+            observacao VARCHAR(255) NULL,
+            usuario_id INT NULL,
+            criado_em DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            atualizado_em DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            UNIQUE KEY uniq_fin_cli_whatsapp (empresa_id, clicontador),
+            KEY idx_fin_cli_whatsapp_ativo (empresa_id, ativo_whatsapp)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    ");
+
     $stmt = $pdo->query("SELECT COUNT(*) FROM whatsapp_config WHERE empresa_id = 1");
     if ((int)$stmt->fetchColumn() === 0) {
         $stmt = $pdo->prepare("
@@ -215,6 +230,50 @@ function whatsappEnsureTables(PDO $pdo): void
             $stmt = $pdo->prepare("INSERT IGNORE INTO whatsapp_rotina_destinatarios (rotina_id, destinatario_id) VALUES (?, ?)");
             $stmt->execute([$rotinaId, $destinatarioId]);
         }
+    }
+
+    $stmt = $pdo->prepare("SELECT id FROM whatsapp_rotinas WHERE empresa_id = 1 AND codigo = 'fechamento_compras_clientes_pdf'");
+    $stmt->execute();
+    $rotinaFechamentoId = (int)$stmt->fetchColumn();
+    if ($rotinaFechamentoId <= 0) {
+        $stmt = $pdo->prepare("
+            INSERT INTO whatsapp_rotinas
+                (empresa_id, codigo, nome, descricao, mensagem_id, origem_mensagem, gerador_sistema, ativo, evitar_duplicidade_diaria, periodicidade, horario, proxima_execucao)
+            VALUES
+                (1, 'fechamento_compras_clientes_pdf', 'Fechamento de compras dos clientes', 'Envia PDF individual com fechamento de compras para clientes marcados.', NULL, 'SISTEMA', 'fechamento_compras_clientes_pdf', 'S', 'S', 'MANUAL', '08:00:00', NULL)
+        ");
+        $stmt->execute();
+    } else {
+        $stmt = $pdo->prepare("
+            UPDATE whatsapp_rotinas
+            SET nome = 'Fechamento de compras dos clientes',
+                origem_mensagem = 'SISTEMA',
+                gerador_sistema = 'fechamento_compras_clientes_pdf',
+                mensagem_id = NULL
+            WHERE id = ?
+              AND empresa_id = 1
+        ");
+        $stmt->execute([$rotinaFechamentoId]);
+    }
+
+    try {
+        $empresaIds = $pdo->query("SELECT id FROM empresas ORDER BY id")->fetchAll(PDO::FETCH_COLUMN);
+        $stmt = $pdo->prepare("
+            INSERT INTO whatsapp_rotinas
+                (empresa_id, codigo, nome, descricao, mensagem_id, origem_mensagem, gerador_sistema, ativo, evitar_duplicidade_diaria, periodicidade, horario, proxima_execucao)
+            VALUES
+                (?, 'fechamento_compras_clientes_pdf', 'Fechamento de compras dos clientes', 'Envia PDF individual com fechamento de compras para clientes marcados.', NULL, 'SISTEMA', 'fechamento_compras_clientes_pdf', 'S', 'S', 'MANUAL', '08:00:00', NULL)
+            ON DUPLICATE KEY UPDATE
+                nome = VALUES(nome),
+                descricao = VALUES(descricao),
+                mensagem_id = NULL,
+                origem_mensagem = 'SISTEMA',
+                gerador_sistema = 'fechamento_compras_clientes_pdf'
+        ");
+        foreach ($empresaIds as $empresaRotinaId) {
+            $stmt->execute([(int)$empresaRotinaId]);
+        }
+    } catch (Throwable $e) {
     }
 }
 
@@ -301,6 +360,12 @@ function whatsappGeradoresSistema(): array
             'arquivo' => 'modulos/whatsapp/whatsapp_lib.php',
             'funcao' => 'whatsappMensagemClientesVencidos',
         ],
+        'fechamento_compras_clientes_pdf' => [
+            'nome' => 'Fechamento de compras dos clientes',
+            'descricao' => 'Envia um PDF individual para cada cliente marcado em Contas a Receber > Clientes.',
+            'arquivo' => 'modulos/whatsapp/whatsapp_lib.php',
+            'funcao' => 'whatsappMensagemFechamentoComprasClientesPreview',
+        ],
         'apresentacao_caixa' => [
             'nome' => 'Apresentacao do Caixa',
             'descricao' => 'Mostra a diferenca do dinheiro de todos os operadores do dia, das 07:00 ate 03:00.',
@@ -365,6 +430,61 @@ function whatsappSend(PDO $pdo, array $config, array $destinatario, string $mens
     $erro = $apiSuccess ? null : ('HTTP ' . $httpCode . ' - ' . $response);
 
     return whatsappRegisterSend($pdo, $mensagemId, $destinatario, $mensagem, $status, $response, $erro, $usuarioId, $rotinaId);
+}
+
+function whatsappSendDocument(PDO $pdo, array $config, array $destinatario, string $mensagemRegistro, string $arquivoPdf, string $nomeArquivo, ?int $usuarioId, ?int $rotinaId = null): array
+{
+    $token = trim($config['token'] ?? '');
+    $apiBase = rtrim(trim($config['api_base_url'] ?? ''), '/');
+    $numero = trim($destinatario['numero'] ?? '');
+
+    if ($token === '' || $apiBase === '') {
+        return whatsappRegisterSend($pdo, null, $destinatario, $mensagemRegistro, 'ERRO', null, 'Token ou URL da API nao configurado.', $usuarioId, $rotinaId);
+    }
+
+    if ($numero === '') {
+        return whatsappRegisterSend($pdo, null, $destinatario, $mensagemRegistro, 'ERRO', null, 'Numero do destinatario vazio.', $usuarioId, $rotinaId);
+    }
+
+    if (!is_file($arquivoPdf)) {
+        return whatsappRegisterSend($pdo, null, $destinatario, $mensagemRegistro, 'ERRO', null, 'Arquivo PDF nao encontrado.', $usuarioId, $rotinaId);
+    }
+
+    $apiDocumento = str_replace('/enviar-texto', '/enviar-documento', $apiBase);
+    if ($apiDocumento === $apiBase && substr($apiDocumento, -4) !== '/api') {
+        $apiDocumento = preg_replace('#/api/[^/]+$#', '/api/enviar-documento', $apiDocumento);
+    }
+
+    $url = rtrim($apiDocumento, '/') . '/' . rawurlencode($token);
+    $base64 = 'data:application/pdf;base64,' . base64_encode((string)file_get_contents($arquivoPdf));
+    $payload = [
+        'phone' => $numero,
+        'base64' => $base64,
+        'name' => $nomeArquivo,
+    ];
+
+    $ch = curl_init($url);
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    curl_setopt($ch, CURLOPT_POST, true);
+    curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($payload, JSON_UNESCAPED_UNICODE));
+    curl_setopt($ch, CURLOPT_HTTPHEADER, ['Content-Type: application/json']);
+    curl_setopt($ch, CURLOPT_TIMEOUT, 45);
+
+    $response = curl_exec($ch);
+    $curlError = curl_error($ch);
+    $httpCode = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    curl_close($ch);
+
+    if ($response === false) {
+        return whatsappRegisterSend($pdo, null, $destinatario, $mensagemRegistro, 'ERRO', null, $curlError ?: 'Erro desconhecido no cURL.', $usuarioId, $rotinaId);
+    }
+
+    $decoded = json_decode($response, true);
+    $apiSuccess = is_array($decoded) && array_key_exists('success', $decoded) ? (bool)$decoded['success'] : ($httpCode >= 200 && $httpCode < 300);
+    $status = $apiSuccess ? 'OK' : 'ERRO';
+    $erro = $apiSuccess ? null : ('HTTP ' . $httpCode . ' - ' . $response);
+
+    return whatsappRegisterSend($pdo, null, $destinatario, $mensagemRegistro, $status, $response, $erro, $usuarioId, $rotinaId);
 }
 
 function whatsappRegisterSend(PDO $pdo, ?int $mensagemId, array $destinatario, string $mensagem, string $status, ?string $resposta, ?string $erro, ?int $usuarioId, ?int $rotinaId = null): array
@@ -433,6 +553,14 @@ function whatsappEnviarRotina(PDO $pdo, array $rotina, string $mensagem, ?int $m
 
     if (($rotina['ativo'] ?? 'N') !== 'S') {
         throw new Exception('Rotina inativa.');
+    }
+
+    if (($rotina['origem_mensagem'] ?? 'TEXTO') === 'SISTEMA' && ($rotina['gerador_sistema'] ?? '') === 'fechamento_compras_clientes_pdf') {
+        $resultado = whatsappEnviarFechamentoComprasClientesPdf($pdo, $config, $rotina, $usuarioId);
+        $stmt = $pdo->prepare("UPDATE whatsapp_rotinas SET ultima_execucao = NOW() WHERE id = ?");
+        $stmt->execute([(int)$rotina['id']]);
+        whatsappAtualizarProximaExecucao($pdo, (int)$rotina['id']);
+        return $resultado;
     }
 
     $destinatarios = whatsappDestinatariosRotina($pdo, (int)$rotina['id']);
@@ -575,6 +703,10 @@ function whatsappMensagemRotina(PDO $pdo, array $rotina): array
             return [whatsappMensagemClientesVencidos($pdo, null, $empresaId), null];
         }
 
+        if ($gerador === 'fechamento_compras_clientes_pdf') {
+            return [whatsappMensagemFechamentoComprasClientesPreview($pdo, null, $empresaId), null];
+        }
+
         if ($gerador === 'apresentacao_caixa' || $gerador === 'apresentacao_caixa_1') {
             return [whatsappMensagemApresentacaoCaixa($pdo, null, $empresaId), null];
         }
@@ -645,6 +777,296 @@ function whatsappExecutarAgendamentos(PDO $pdo): array
     }
 
     return $resultado;
+}
+
+function whatsappFechamentoComprasPeriodo(?DateTime $base = null): array
+{
+    $base = $base ?: new DateTime('now');
+    $inicio = (clone $base)->modify('first day of previous month')->setTime(0, 0, 0);
+    $fim = (clone $base)->modify('last day of previous month')->setTime(23, 59, 59);
+
+    return [
+        'inicio' => $inicio,
+        'fim' => $fim,
+        'competencia' => $inicio->format('m/Y'),
+    ];
+}
+
+function whatsappClientesFechamentoCompras(PDO $pdo, int $empresaId, DateTime $fim): array
+{
+    $stmt = $pdo->prepare("
+        SELECT
+            c.CLICONTADOR,
+            COALESCE(NULLIF(cli.NOME, ''), NULLIF(cli.APELIDO, ''), CONCAT('Cliente ', c.CLICONTADOR)) AS nome_cliente,
+            cli.CELULAR AS telefone_cliente,
+            c.CRCONTADOR,
+            c.NUMDOCORIGEM,
+            DATE(COALESCE(v.DTVENDA, c.DTEMISSAO)) AS data_compra,
+            COALESCE(NULLIF(c.VLRRESTANTE, 0), c.VLRPARCELA, 0) AS valor_compra
+        FROM armazem_cr001 c
+        INNER JOIN financeiro_clientes_whatsapp w
+            ON w.empresa_id = c.EMPRESA
+           AND w.clicontador = c.CLICONTADOR
+           AND w.ativo_whatsapp = 'S'
+        LEFT JOIN armazem_cr002 cli
+            ON cli.EMPRESA = c.EMPRESA
+           AND cli.CLICONTADOR = c.CLICONTADOR
+        LEFT JOIN armazem_est007 v
+            ON v.EMPRESA = c.EMPRESA
+           AND v.VENDACONTADOR = c.NUMDOCORIGEM
+        WHERE c.EMPRESA = ?
+          AND c.CMCONTADOR = 9
+          AND (c.STATUS IS NULL OR c.STATUS <> 'QT')
+          AND COALESCE(c.excluido_firebird, 'N') <> 'S'
+          AND DATE(COALESCE(v.DTVENDA, c.DTEMISSAO)) <= ?
+        ORDER BY nome_cliente ASC, data_compra ASC, c.CRCONTADOR ASC
+    ");
+    $stmt->execute([$empresaId, $fim->format('Y-m-d')]);
+
+    $clientes = [];
+    while ($linha = $stmt->fetch(PDO::FETCH_ASSOC)) {
+        $clicontador = (int)$linha['CLICONTADOR'];
+        if (!isset($clientes[$clicontador])) {
+            $clientes[$clicontador] = [
+                'clicontador' => $clicontador,
+                'nome_cliente' => (string)$linha['nome_cliente'],
+                'telefone_cliente' => whatsappNormalizarTelefoneBrasil((string)($linha['telefone_cliente'] ?? '')),
+                'compras' => [],
+                'total' => 0.0,
+            ];
+        }
+
+        $valor = (float)$linha['valor_compra'];
+        $clientes[$clicontador]['compras'][] = [
+            'crcontador' => (int)$linha['CRCONTADOR'],
+            'venda' => (string)($linha['NUMDOCORIGEM'] ?? ''),
+            'data_compra' => (string)$linha['data_compra'],
+            'valor' => $valor,
+        ];
+        $clientes[$clicontador]['total'] += $valor;
+    }
+
+    return array_values(array_filter($clientes, static function (array $cliente): bool {
+        return $cliente['telefone_cliente'] !== '' && !empty($cliente['compras']) && (float)$cliente['total'] > 0;
+    }));
+}
+
+function whatsappNormalizarTelefoneBrasil(string $telefone): string
+{
+    $digitos = preg_replace('/\D+/', '', $telefone);
+    $digitos = ltrim($digitos, '0');
+    $tamanho = strlen($digitos);
+
+    if ($tamanho === 11) {
+        $digitos = substr($digitos, 0, 2) . substr($digitos, 3);
+        return '55' . $digitos;
+    }
+
+    if ($tamanho === 10) {
+        return '55' . $digitos;
+    }
+
+    if ($tamanho === 13 && substr($digitos, 0, 2) === '55') {
+        return substr($digitos, 0, 4) . substr($digitos, 5);
+    }
+
+    return $digitos;
+}
+
+function whatsappNomeEmpresa(PDO $pdo, int $empresaId): string
+{
+    $stmt = $pdo->prepare("SELECT COALESCE(NULLIF(nome_fantasia, ''), NULLIF(razao_social, ''), CONCAT('Empresa ', id)) FROM empresas WHERE id = ?");
+    $stmt->execute([$empresaId]);
+    $nome = trim((string)$stmt->fetchColumn());
+    return $nome !== '' ? $nome : ('Empresa ' . $empresaId);
+}
+
+function whatsappPdfTexto(string $texto): string
+{
+    $texto = preg_replace('/\s+/', ' ', trim($texto));
+    $convertido = iconv('UTF-8', 'ISO-8859-1//TRANSLIT', $texto);
+    $texto = $convertido === false ? $texto : $convertido;
+    return str_replace(['\\', '(', ')'], ['\\\\', '\\(', '\\)'], $texto);
+}
+
+function whatsappPdfComandoTexto(float $x, float $y, int $tamanho, string $texto, bool $negrito = false): string
+{
+    $fonte = $negrito ? 'F2' : 'F1';
+    return "BT /{$fonte} {$tamanho} Tf 1 0 0 1 " . number_format($x, 2, '.', '') . ' ' . number_format($y, 2, '.', '') . ' Tm (' . whatsappPdfTexto($texto) . ") Tj ET\n";
+}
+
+function whatsappPdfRetangulo(float $x, float $y, float $w, float $h, string $cor = '0.93 0.96 1.00'): string
+{
+    return $cor . " rg\n" . number_format($x, 2, '.', '') . ' ' . number_format($y, 2, '.', '') . ' ' . number_format($w, 2, '.', '') . ' ' . number_format($h, 2, '.', '') . " re f\n";
+}
+
+function whatsappGerarPdfFechamentoCliente(string $arquivo, string $empresa, array $cliente, DateTime $fim, string $competencia): void
+{
+    $largura = 595;
+    $altura = 842;
+    $margem = 36;
+    $linhaAltura = 18;
+    $paginas = [];
+    $compras = $cliente['compras'];
+    $porPaginaPrimeira = 29;
+    $porPaginaDemais = 34;
+    $indice = 0;
+    $paginaNumero = 1;
+
+    do {
+        $limite = $paginaNumero === 1 ? $porPaginaPrimeira : $porPaginaDemais;
+        $linhasPagina = array_slice($compras, $indice, $limite);
+        $indice += count($linhasPagina);
+        $conteudo = "";
+
+        $conteudo .= whatsappPdfRetangulo(0, $altura - 86, $largura, 86, '0.07 0.23 0.48');
+        $conteudo .= "1 1 1 rg\n";
+        $conteudo .= whatsappPdfComandoTexto($margem, $altura - 35, 16, 'FECHAMENTO DE COMPRAS', true);
+        $conteudo .= whatsappPdfComandoTexto($margem, $altura - 58, 10, $empresa);
+        $conteudo .= whatsappPdfComandoTexto($margem, $altura - 74, 9, 'Competencia: ' . $competencia . ' | Compras ate: ' . $fim->format('d/m/Y'));
+
+        $y = $altura - 122;
+        $conteudo .= whatsappPdfRetangulo($margem, $y - 8, $largura - ($margem * 2), 54, '0.94 0.97 1.00');
+        $conteudo .= "0 0 0 rg\n";
+        $conteudo .= whatsappPdfComandoTexto($margem + 12, $y + 24, 11, 'Cliente: ' . $cliente['nome_cliente'], true);
+        $conteudo .= whatsappPdfComandoTexto($margem + 12, $y + 6, 10, 'Telefone: ' . $cliente['telefone_cliente']);
+        $conteudo .= whatsappPdfComandoTexto($margem + 330, $y + 6, 10, 'Codigo: ' . (int)$cliente['clicontador']);
+
+        $y -= 50;
+        $conteudo .= whatsappPdfRetangulo($margem, $y, $largura - ($margem * 2), 22, '0.86 0.91 0.98');
+        $conteudo .= "0 0 0 rg\n";
+        $conteudo .= whatsappPdfComandoTexto($margem + 10, $y + 7, 9, 'Data da compra', true);
+        $conteudo .= whatsappPdfComandoTexto($margem + 150, $y + 7, 9, 'Venda/CR', true);
+        $conteudo .= whatsappPdfComandoTexto($margem + 410, $y + 7, 9, 'Valor da compra', true);
+        $y -= 20;
+
+        foreach ($linhasPagina as $linha) {
+            $conteudo .= whatsappPdfComandoTexto($margem + 10, $y + 5, 9, date('d/m/Y', strtotime($linha['data_compra'])));
+            $doc = trim((string)$linha['venda']) !== '' ? ('Venda ' . $linha['venda']) : ('CR ' . $linha['crcontador']);
+            $conteudo .= whatsappPdfComandoTexto($margem + 150, $y + 5, 9, $doc);
+            $conteudo .= whatsappPdfComandoTexto($margem + 410, $y + 5, 9, 'R$ ' . number_format((float)$linha['valor'], 2, ',', '.'));
+            $y -= $linhaAltura;
+        }
+
+        if ($indice >= count($compras)) {
+            $y -= 14;
+            $conteudo .= whatsappPdfRetangulo($margem, $y - 3, $largura - ($margem * 2), 30, '0.07 0.23 0.48');
+            $conteudo .= "1 1 1 rg\n";
+            $conteudo .= whatsappPdfComandoTexto($margem + 10, $y + 8, 11, 'Valor total do fechamento', true);
+            $conteudo .= whatsappPdfComandoTexto($margem + 390, $y + 8, 11, 'R$ ' . number_format((float)$cliente['total'], 2, ',', '.'), true);
+        }
+
+        $conteudo .= "0.40 0.45 0.52 rg\n";
+        $conteudo .= whatsappPdfComandoTexto($margem, 24, 8, 'Gerado pelo SuperDunga em ' . date('d/m/Y H:i') . ' - Pagina ' . $paginaNumero);
+        $paginas[] = $conteudo;
+        $paginaNumero++;
+    } while ($indice < count($compras));
+
+    $objetos = [
+        1 => "<< /Type /Catalog /Pages 2 0 R >>",
+    ];
+    $kids = [];
+    $fontRegularId = 3 + (count($paginas) * 2);
+    $fontBoldId = $fontRegularId + 1;
+    $objId = 3;
+    foreach ($paginas as $idx => $conteudoPagina) {
+        $paginaId = $objId++;
+        $conteudoId = $objId++;
+        $kids[] = $paginaId . ' 0 R';
+        $objetos[$paginaId] = "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 {$largura} {$altura}] /Resources << /Font << /F1 {$fontRegularId} 0 R /F2 {$fontBoldId} 0 R >> >> /Contents {$conteudoId} 0 R >>";
+        $stream = $conteudoPagina;
+        $objetos[$conteudoId] = "<< /Length " . strlen($stream) . " >>\nstream\n{$stream}endstream";
+    }
+    $objetos[2] = "<< /Type /Pages /Kids [" . implode(' ', $kids) . "] /Count " . count($paginas) . " >>";
+    $objetos[$fontRegularId] = "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>";
+    $objetos[$fontBoldId] = "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>";
+    ksort($objetos);
+
+    $pdf = "%PDF-1.4\n";
+    $offsets = [0];
+    foreach ($objetos as $id => $objeto) {
+        $offsets[$id] = strlen($pdf);
+        $pdf .= $id . " 0 obj\n" . $objeto . "\nendobj\n";
+    }
+    $xref = strlen($pdf);
+    $maxObjetoId = max(array_keys($objetos));
+    $pdf .= "xref\n0 " . ($maxObjetoId + 1) . "\n0000000000 65535 f \n";
+    for ($i = 1; $i <= $maxObjetoId; $i++) {
+        $pdf .= str_pad((string)($offsets[$i] ?? 0), 10, '0', STR_PAD_LEFT) . " 00000 n \n";
+    }
+    $pdf .= "trailer\n<< /Size " . ($maxObjetoId + 1) . " /Root 1 0 R >>\nstartxref\n{$xref}\n%%EOF";
+
+    $dir = dirname($arquivo);
+    if (!is_dir($dir)) {
+        mkdir($dir, 0775, true);
+    }
+    file_put_contents($arquivo, $pdf);
+}
+
+function whatsappArquivoNomeSeguro(string $texto): string
+{
+    $texto = iconv('UTF-8', 'ASCII//TRANSLIT', $texto) ?: $texto;
+    $texto = strtolower(preg_replace('/[^a-zA-Z0-9]+/', '_', $texto));
+    return trim($texto, '_') ?: 'cliente';
+}
+
+function whatsappEnviarFechamentoComprasClientesPdf(PDO $pdo, array $config, array $rotina, ?int $usuarioId): array
+{
+    $empresaId = (int)($rotina['empresa_id'] ?? 1);
+    $periodo = whatsappFechamentoComprasPeriodo();
+    $empresa = whatsappNomeEmpresa($pdo, $empresaId);
+    $clientes = whatsappClientesFechamentoCompras($pdo, $empresaId, $periodo['fim']);
+
+    $ok = 0;
+    $falha = 0;
+    $baseDir = dirname(__DIR__, 2) . '/storage/whatsapp_fechamentos/empresa_' . $empresaId . '/' . $periodo['fim']->format('Y_m');
+
+    foreach ($clientes as $cliente) {
+        $nomeSeguro = whatsappArquivoNomeSeguro($cliente['nome_cliente']);
+        $nomeArquivo = 'fechamento_compras_' . $periodo['fim']->format('Ym') . '_' . $nomeSeguro . '.pdf';
+        $arquivo = $baseDir . '/' . $nomeArquivo;
+        whatsappGerarPdfFechamentoCliente($arquivo, $empresa, $cliente, $periodo['fim'], $periodo['competencia']);
+
+        $destinatario = [
+            'id' => null,
+            'empresa_id' => $empresaId,
+            'nome' => $cliente['nome_cliente'],
+            'numero' => $cliente['telefone_cliente'],
+        ];
+        $texto = 'Ola ' . $cliente['nome_cliente'] . ', segue o fechamento das suas compras!';
+
+        $textoResultado = whatsappSend($pdo, $config, $destinatario, $texto, null, $usuarioId, (int)$rotina['id']);
+        $pdfResultado = whatsappSendDocument($pdo, $config, $destinatario, 'PDF fechamento compras: ' . $nomeArquivo, $arquivo, $nomeArquivo, $usuarioId, (int)$rotina['id']);
+
+        if ($textoResultado['status'] === 'OK' && $pdfResultado['status'] === 'OK') {
+            $ok++;
+        } else {
+            $falha++;
+        }
+    }
+
+    return ['ok' => $ok, 'falha' => $falha];
+}
+
+function whatsappMensagemFechamentoComprasClientesPreview(PDO $pdo, ?DateTime $base = null, int $empresaId = 1): string
+{
+    $periodo = whatsappFechamentoComprasPeriodo($base);
+    $clientes = whatsappClientesFechamentoCompras($pdo, $empresaId, $periodo['fim']);
+    $total = 0.0;
+    foreach ($clientes as $cliente) {
+        $total += (float)$cliente['total'];
+    }
+
+    $msg = "*Fechamento de compras dos clientes*\n\n";
+    $msg .= "Empresa: " . whatsappNomeEmpresa($pdo, $empresaId) . "\n";
+    $msg .= "Competencia: " . $periodo['competencia'] . "\n";
+    $msg .= "Compras ate: " . $periodo['fim']->format('d/m/Y') . "\n";
+    $msg .= "Clientes marcados com telefone: " . count($clientes) . "\n";
+    $msg .= "Valor total previsto: R$ " . number_format($total, 2, ',', '.') . "\n\n";
+    $msg .= "No envio real, o sistema envia um PDF individual para cada cliente.\n";
+    $msg .= "Texto enviado junto do PDF: Ola Nome do cliente, segue o fechamento das suas compras!";
+
+    return $msg;
 }
 
 function whatsappMensagemResumoDiario(PDO $pdo, int $empresaId = 1): string
