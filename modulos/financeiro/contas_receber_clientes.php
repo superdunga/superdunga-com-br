@@ -34,6 +34,22 @@ function garantirCamposContasReceberClientes(PDO $pdo): void
             $pdo->exec($sql);
         }
     }
+
+    $pdo->exec("
+        CREATE TABLE IF NOT EXISTS financeiro_clientes_whatsapp (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            empresa_id INT NOT NULL,
+            clicontador INT NOT NULL,
+            ativo_whatsapp CHAR(1) NOT NULL DEFAULT 'N',
+            numero_whatsapp VARCHAR(30) NULL,
+            observacao VARCHAR(255) NULL,
+            usuario_id INT NULL,
+            criado_em DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            atualizado_em DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            UNIQUE KEY uniq_fin_cli_whatsapp (empresa_id, clicontador),
+            KEY idx_fin_cli_whatsapp_ativo (empresa_id, ativo_whatsapp)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    ");
 }
 
 garantirCamposContasReceberClientes($pdo_master);
@@ -45,6 +61,7 @@ $compraFim = trim($_GET['compra_fim'] ?? '');
 $vencInicio = trim($_GET['venc_ini'] ?? '');
 $vencFim = trim($_GET['venc_fim'] ?? '');
 $verificado = trim($_GET['verificado'] ?? '');
+$whatsappFiltro = trim($_GET['whatsapp'] ?? '');
 $visaoPadrao = 'analitico';
 $visao = ($_GET['visao'] ?? $visaoPadrao) === 'sintetico' ? 'sintetico' : 'analitico';
 $exportar = $_GET['exportar'] ?? '';
@@ -90,6 +107,43 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['acao'] ?? '') === 'verific
               AND CRCONTADOR IN ($placeholders)
         ");
         $stmt->execute(array_merge([$usuarioId, $empresaId], $crcontadores));
+    }
+
+    $query = $_GET ? '?' . http_build_query($_GET) : '';
+    header('Location: contas_receber_clientes.php' . $query);
+    exit;
+}
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['acao'] ?? '') === 'salvar_whatsapp_cliente') {
+    $clicontador = (int)($_POST['clicontador'] ?? 0);
+    $ativoWhatsapp = ($_POST['ativo_whatsapp'] ?? 'N') === 'S' ? 'S' : 'N';
+    $numeroWhatsapp = preg_replace('/\D+/', '', (string)($_POST['numero_whatsapp'] ?? ''));
+    $observacaoWhatsapp = trim((string)($_POST['observacao_whatsapp'] ?? ''));
+    if ($observacaoWhatsapp !== '') {
+        $observacaoWhatsapp = substr($observacaoWhatsapp, 0, 255);
+    }
+
+    if ($clicontador > 0) {
+        $stmt = $pdo_master->prepare("
+            INSERT INTO financeiro_clientes_whatsapp
+                (empresa_id, clicontador, ativo_whatsapp, numero_whatsapp, observacao, usuario_id)
+            VALUES
+                (?, ?, ?, ?, ?, ?)
+            ON DUPLICATE KEY UPDATE
+                ativo_whatsapp = VALUES(ativo_whatsapp),
+                numero_whatsapp = VALUES(numero_whatsapp),
+                observacao = VALUES(observacao),
+                usuario_id = VALUES(usuario_id),
+                atualizado_em = NOW()
+        ");
+        $stmt->execute([
+            $empresaId,
+            $clicontador,
+            $ativoWhatsapp,
+            $numeroWhatsapp !== '' ? $numeroWhatsapp : null,
+            $observacaoWhatsapp !== '' ? $observacaoWhatsapp : null,
+            $usuarioId,
+        ]);
     }
 
     $query = $_GET ? '?' . http_build_query($_GET) : '';
@@ -150,7 +204,20 @@ if (in_array($verificado, ['S', 'N'], true)) {
     $params[] = $verificado;
 }
 
+if ($whatsappFiltro === 'ativos') {
+    $where[] = "COALESCE(wc.ativo_whatsapp, 'N') = 'S'";
+} elseif ($whatsappFiltro === 'inativos') {
+    $where[] = "COALESCE(wc.ativo_whatsapp, 'N') <> 'S'";
+} elseif ($whatsappFiltro === 'sem_telefone') {
+    $where[] = "COALESCE(NULLIF(wc.numero_whatsapp, ''), NULLIF(cli.CELULAR, ''), '') = ''";
+}
+
 $whereSql = implode("\n      AND ", $where);
+$joinWhatsappSql = "
+        LEFT JOIN financeiro_clientes_whatsapp wc
+            ON wc.empresa_id = c.EMPRESA
+           AND wc.clicontador = c.CLICONTADOR
+";
 
 $registros = [];
 $sintetico = [];
@@ -162,6 +229,9 @@ if ($visao === 'sintetico') {
             c.CLICONTADOR,
             COALESCE(cli.NOME, cli.APELIDO, CONCAT('Cliente ', c.CLICONTADOR)) AS nome_cliente,
             MAX(cli.CELULAR) AS telefone_cliente,
+            MAX(COALESCE(wc.ativo_whatsapp, 'N')) AS whatsapp_ativo,
+            MAX(wc.numero_whatsapp) AS whatsapp_numero_config,
+            MAX(wc.observacao) AS whatsapp_observacao,
             COUNT(*) AS qtd,
             COALESCE(SUM(c.VLRPARCELA), 0) AS total_parcela,
             COALESCE(SUM(c.VLRRESTANTE), 0) AS total_restante
@@ -169,6 +239,7 @@ if ($visao === 'sintetico') {
         LEFT JOIN armazem_cr002 cli
             ON cli.EMPRESA = c.EMPRESA
            AND cli.CLICONTADOR = c.CLICONTADOR
+        {$joinWhatsappSql}
         LEFT JOIN armazem_est007 v
             ON v.EMPRESA = c.EMPRESA
            AND v.VENDACONTADOR = c.NUMDOCORIGEM
@@ -196,6 +267,7 @@ if ($visao !== 'sintetico') {
         LEFT JOIN armazem_cr002 cli
             ON cli.EMPRESA = c.EMPRESA
            AND cli.CLICONTADOR = c.CLICONTADOR
+        {$joinWhatsappSql}
         LEFT JOIN armazem_est007 v
             ON v.EMPRESA = c.EMPRESA
            AND v.VENDACONTADOR = c.NUMDOCORIGEM
@@ -220,6 +292,9 @@ if ($visao !== 'sintetico' || $exportar === 'pdf') {
             c.STATUS,
             c.NUMDOCORIGEM,
             cli.CELULAR AS telefone_cliente,
+            COALESCE(wc.ativo_whatsapp, 'N') AS whatsapp_ativo,
+            wc.numero_whatsapp AS whatsapp_numero_config,
+            wc.observacao AS whatsapp_observacao,
             v.DTVENDA AS venda_data,
             v.HRVENDA AS venda_hora,
             COALESCE(c.financeiro_verificado, 'N') AS financeiro_verificado
@@ -227,6 +302,7 @@ if ($visao !== 'sintetico' || $exportar === 'pdf') {
         LEFT JOIN armazem_cr002 cli
             ON cli.EMPRESA = c.EMPRESA
            AND cli.CLICONTADOR = c.CLICONTADOR
+        {$joinWhatsappSql}
         LEFT JOIN armazem_est007 v
             ON v.EMPRESA = c.EMPRESA
            AND v.VENDACONTADOR = c.NUMDOCORIGEM
@@ -1003,7 +1079,13 @@ require '../../layout/header.php';
             text-align: left !important;
         }
 
-        .financeiro-grid td[data-label="Cliente"]::before {
+        .financeiro-grid td[data-label="WhatsApp"] {
+            display: block;
+            text-align: left !important;
+        }
+
+        .financeiro-grid td[data-label="Cliente"]::before,
+        .financeiro-grid td[data-label="WhatsApp"]::before {
             display: block;
             margin-bottom: .25rem;
         }
@@ -1078,6 +1160,15 @@ require '../../layout/header.php';
                     <option value="S" <?= $verificado === 'S' ? 'selected' : '' ?>>Sim</option>
                 </select>
             </div>
+            <div class="col-md-2">
+                <label class="form-label">WhatsApp</label>
+                <select name="whatsapp" class="form-select">
+                    <option value="">Todos</option>
+                    <option value="ativos" <?= $whatsappFiltro === 'ativos' ? 'selected' : '' ?>>Ativos</option>
+                    <option value="inativos" <?= $whatsappFiltro === 'inativos' ? 'selected' : '' ?>>Inativos</option>
+                    <option value="sem_telefone" <?= $whatsappFiltro === 'sem_telefone' ? 'selected' : '' ?>>Sem telefone</option>
+                </select>
+            </div>
             <div class="col-12 d-flex gap-2 justify-content-end">
                 <a href="contas_receber_clientes.php<?= $isRecebiveis ? '?carteira=recebiveis' : '' ?>" class="btn btn-outline-secondary">Limpar</a>
                 <a href="contas_receber_clientes.php?<?= htmlspecialchars(queryFinanceiroClientes(['exportar' => 'excel'])) ?>" class="btn btn-success">Excel</a>
@@ -1123,20 +1214,65 @@ require '../../layout/header.php';
                         <th>Cliente</th>
                         <th class="text-end col-cm">Qtd</th>
                         <th class="text-end col-money">Aberto</th>
+                        <th>WhatsApp</th>
                     </tr>
                 </thead>
                 <tbody>
                     <?php foreach ($sintetico as $linha): ?>
+                        <?php
+                            $whatsappAtivo = ($linha['whatsapp_ativo'] ?? 'N') === 'S';
+                            $telefoneCliente = telefoneFinanceiroClientes($linha['telefone_cliente'] ?? '');
+                            $numeroWhatsapp = telefoneFinanceiroClientes($linha['whatsapp_numero_config'] ?? '') ?: $telefoneCliente;
+                            $semTelefoneWhatsapp = $numeroWhatsapp === '';
+                        ?>
                         <tr>
                             <td data-label="Cod." class="fw-semibold col-id"><?= (int)$linha['CLICONTADOR'] ?></td>
                             <td data-label="Cliente"><?= htmlspecialchars($linha['nome_cliente']) ?></td>
                             <td data-label="Qtd" class="text-end col-cm"><?= (int)$linha['qtd'] ?></td>
                             <td data-label="Aberto" class="text-end fw-semibold col-money"><?= moedaFinanceiroClientes($linha['total_restante']) ?></td>
+                            <td data-label="WhatsApp">
+                                <div class="d-flex flex-column gap-2">
+                                    <div>
+                                        <?php if ($whatsappAtivo): ?>
+                                            <span class="badge text-bg-success">Ativo</span>
+                                        <?php elseif ($semTelefoneWhatsapp): ?>
+                                            <span class="badge text-bg-warning">Sem telefone</span>
+                                        <?php else: ?>
+                                            <span class="badge text-bg-secondary">Inativo</span>
+                                        <?php endif; ?>
+                                    </div>
+                                    <form method="POST" class="row g-2 align-items-end financeiro-whatsapp-form">
+                                        <input type="hidden" name="acao" value="salvar_whatsapp_cliente">
+                                        <input type="hidden" name="clicontador" value="<?= (int)$linha['CLICONTADOR'] ?>">
+                                        <div class="col-md-5">
+                                            <label class="form-label small mb-1">Numero</label>
+                                            <input
+                                                type="tel"
+                                                inputmode="numeric"
+                                                name="numero_whatsapp"
+                                                class="form-control form-control-sm"
+                                                value="<?= htmlspecialchars($numeroWhatsapp) ?>"
+                                                placeholder="DDD + numero"
+                                            >
+                                        </div>
+                                        <div class="col-md-3">
+                                            <label class="form-label small mb-1">Enviar</label>
+                                            <select name="ativo_whatsapp" class="form-select form-select-sm">
+                                                <option value="N" <?= !$whatsappAtivo ? 'selected' : '' ?>>Nao</option>
+                                                <option value="S" <?= $whatsappAtivo ? 'selected' : '' ?>>Sim</option>
+                                            </select>
+                                        </div>
+                                        <div class="col-md-4">
+                                            <button type="submit" class="btn btn-sm btn-primary w-100">Salvar</button>
+                                        </div>
+                                    </form>
+                                </div>
+                            </td>
                         </tr>
                     <?php endforeach; ?>
                     <?php if (empty($sintetico)): ?>
                         <tr>
-                            <td colspan="4" class="text-center text-muted py-4">Nenhum cliente encontrado com os filtros informados.</td>
+                            <td colspan="5" class="text-center text-muted py-4">Nenhum cliente encontrado com os filtros informados.</td>
                         </tr>
                     <?php endif; ?>
                 </tbody>
@@ -1173,6 +1309,8 @@ require '../../layout/header.php';
                     <?php foreach ($registros as $registro): ?>
                         <?php
                             $verificadoRegistro = ($registro['financeiro_verificado'] ?? 'N') === 'S';
+                            $whatsappAtivo = ($registro['whatsapp_ativo'] ?? 'N') === 'S';
+                            $numeroWhatsapp = telefoneFinanceiroClientes($registro['whatsapp_numero_config'] ?? '') ?: telefoneFinanceiroClientes($registro['telefone_cliente'] ?? '');
                             $vendaOrigem = (int)($registro['NUMDOCORIGEM'] ?? 0);
                             $itensVenda = $vendaOrigem > 0 ? ($itensPorVenda[$vendaOrigem] ?? []) : [];
                             $collapseItensId = 'itens-cr-' . (int)$registro['CRCONTADOR'];
@@ -1191,6 +1329,18 @@ require '../../layout/header.php';
                             <td data-label="Cliente">
                                 <div class="fw-semibold cliente-principal"><?= htmlspecialchars($registro['nome_cliente'] ?: 'Cliente ' . $registro['CLICONTADOR']) ?></div>
                                 <div class="small text-muted cliente-meta">Cod. <?= (int)$registro['CLICONTADOR'] ?> | Venda <?= htmlspecialchars((string)$registro['NUMDOCORIGEM']) ?></div>
+                                <div class="small mt-1">
+                                    <?php if ($whatsappAtivo): ?>
+                                        <span class="badge text-bg-success">WhatsApp ativo</span>
+                                    <?php else: ?>
+                                        <span class="badge text-bg-secondary">WhatsApp inativo</span>
+                                    <?php endif; ?>
+                                    <?php if ($numeroWhatsapp !== ''): ?>
+                                        <span class="text-muted ms-1"><?= htmlspecialchars($numeroWhatsapp) ?></span>
+                                    <?php else: ?>
+                                        <span class="text-warning ms-1">sem telefone</span>
+                                    <?php endif; ?>
+                                </div>
                             </td>
                             <td data-label="Venc." class="col-date"><?= dataFinanceiroClientes($registro['DTVENC']) ?></td>
                             <td data-label="Emis." class="col-date"><?= dataFinanceiroClientes($registro['DTEMISSAO']) ?></td>
