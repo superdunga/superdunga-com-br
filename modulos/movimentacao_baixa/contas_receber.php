@@ -487,6 +487,126 @@ function crbBaixarTitulos(PDO $pdo, $empresaId, $usuarioId, array $dados)
     }
 }
 
+function crbAgruparTitulos(PDO $pdo, $empresaId, $usuarioId, array $dados)
+{
+    $crcontadores = array_values(array_unique(array_filter(array_map('intval', (array)($dados['crcontadores'] ?? [])))));
+    if (count($crcontadores) < 2) {
+        throw new RuntimeException('Selecione ao menos dois titulos para agrupar.');
+    }
+
+    $novoVencimento = $dados['novo_vencimento'] ?? '';
+    $novoTitulo = trim((string)($dados['novo_titulo'] ?? ''));
+    $observacao = trim((string)($dados['observacao_agrupamento'] ?? ''));
+    $tipoes = (int)($dados['tipoes_agrupamento'] ?? 0);
+
+    if ($novoVencimento === '') {
+        throw new RuntimeException('Informe o vencimento do novo titulo.');
+    }
+    if ($novoTitulo === '') {
+        throw new RuntimeException('Informe o documento/titulo do agrupamento.');
+    }
+    if ($tipoes <= 0 || !crbBuscarTipoes($pdo, $empresaId, $tipoes)) {
+        throw new RuntimeException('Informe um TIPOES valido para o novo titulo.');
+    }
+
+    $titulos = crbCarregarTitulosParaBaixa($pdo, $empresaId, $crcontadores);
+    if (count($titulos) !== count($crcontadores)) {
+        throw new RuntimeException('Um ou mais titulos selecionados nao estao abertos para agrupamento.');
+    }
+
+    $clientes = array_values(array_unique(array_map(static function ($titulo) {
+        return (int)($titulo['CLICONTADOR'] ?? 0);
+    }, $titulos)));
+    if (count($clientes) !== 1 || (int)$clientes[0] <= 0) {
+        throw new RuntimeException('Para agrupar, todos os titulos devem ser do mesmo cliente.');
+    }
+
+    $total = 0.0;
+    $origens = [];
+    foreach ($titulos as $titulo) {
+        if (($titulo['CONTROLE'] ?? '') === 'AGRUPADO_MOV_BAIXA') {
+            throw new RuntimeException('O CR #' . (int)$titulo['CRCONTADOR'] . ' ja esta agrupado.');
+        }
+        $valor = (float)($titulo['VLRRESTANTE'] ?? 0);
+        if ($valor <= 0) {
+            $valor = (float)($titulo['VLRPARCELA'] ?? 0);
+        }
+        if ($valor <= 0) {
+            throw new RuntimeException('O CR #' . (int)$titulo['CRCONTADOR'] . ' nao possui valor para agrupamento.');
+        }
+        $total += $valor;
+        $origens[] = (int)$titulo['CRCONTADOR'];
+    }
+    $total = round($total, 2);
+
+    $pdo->beginTransaction();
+    try {
+        $novoCrcontador = crbProximoCrcontador($pdo, $empresaId);
+        $chave = 'MOVBAIXA-CR-AGRUP-' . $empresaId . '-' . $novoCrcontador;
+        $obsNovo = trim(($observacao !== '' ? $observacao . ' | ' : '') . 'Agrupa CR ' . implode(', CR ', $origens));
+
+        $stmtNovo = $pdo->prepare("
+            INSERT INTO armazem_cr001 (
+                EMPRESA, CRCONTADOR, DTVENDA, NUMPARCELA, TITULO, VALORVENDA,
+                CLICONTADOR, OBSERVACAO, DTEMISSAO, VLRPARCELA, PARCELA, DTVENC,
+                VLRRESTANTE, VLRPAGO, STATUS, TIPODOCORIGEM, NUMDOCORIGEM, CONTROLE,
+                TIPOCR, TIPOES, REGSTAMP, USERLANC, DTLANC, USERALT, DTALT,
+                CHAVEINTEGRACAO, financeiro_verificado, excluido_firebird
+            ) VALUES (
+                ?, ?, CURDATE(), 1, ?, ?, ?, ?, CURDATE(), ?, '1/1', ?,
+                ?, 0, 'AB', 'SUPERDUNGA', ?, 'AGRUPAMENTO_MOV_BAIXA',
+                'CR', ?, NOW(), ?, NOW(), ?, NOW(), ?, 'N', 'N'
+            )
+        ");
+        $stmtNovo->execute([
+            $empresaId,
+            $novoCrcontador,
+            $novoTitulo,
+            $total,
+            (int)$clientes[0],
+            $obsNovo,
+            $total,
+            $novoVencimento,
+            $total,
+            $novoCrcontador,
+            $tipoes,
+            $usuarioId ?: null,
+            $usuarioId ?: null,
+            $chave,
+        ]);
+
+        $stmtOrigem = $pdo->prepare("
+            UPDATE armazem_cr001
+            SET STATUS = 'QT',
+                VLRPAGO = COALESCE(NULLIF(VLRRESTANTE, 0), VLRPARCELA, 0),
+                VLRRESTANTE = 0,
+                NUMDOCORIGEM = ?,
+                CONTROLE = 'AGRUPADO_MOV_BAIXA',
+                OBSERVACAO = TRIM(CONCAT(COALESCE(OBSERVACAO, ''), CASE WHEN COALESCE(OBSERVACAO, '') <> '' THEN ' | ' ELSE '' END, ?)),
+                USERALT = ?,
+                DTALT = NOW(),
+                REGSTAMP = NOW()
+            WHERE EMPRESA = ?
+              AND CRCONTADOR = ?
+        ");
+        foreach ($titulos as $titulo) {
+            $stmtOrigem->execute([
+                $novoCrcontador,
+                'Agrupado no CR #' . $novoCrcontador,
+                $usuarioId ?: null,
+                $empresaId,
+                (int)$titulo['CRCONTADOR'],
+            ]);
+        }
+
+        $pdo->commit();
+        return $novoCrcontador;
+    } catch (Throwable $e) {
+        $pdo->rollBack();
+        throw $e;
+    }
+}
+
 function crbTituloVinculadoAcerto(PDO $pdo, $empresaId, $crcontador)
 {
     $stmt = $pdo->prepare("
@@ -680,6 +800,8 @@ $mensagem = '';
 $erro = '';
 $titulosBaixa = [];
 $idsBaixaSelecionados = [];
+$titulosAgrupamento = [];
+$idsAgrupamentoSelecionados = [];
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $acao = $_POST['acao'] ?? 'salvar_titulo';
@@ -690,6 +812,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if (!$titulosBaixa) {
             $erro = 'Selecione ao menos um titulo aberto para baixa.';
         }
+    } elseif ($acao === 'preparar_agrupamento') {
+        $idsAgrupamentoSelecionados = array_values(array_unique(array_filter(array_map('intval', (array)($_POST['crcontadores'] ?? [])))));
+        $titulosAgrupamento = crbCarregarTitulosParaBaixa($pdo, $empresaId, $idsAgrupamentoSelecionados);
+        if (count($titulosAgrupamento) < 2) {
+            $erro = 'Selecione ao menos dois titulos abertos para agrupar.';
+        }
     } elseif ($acao === 'confirmar_baixa') {
         try {
             $baixados = crbBaixarTitulos($pdo, $empresaId, $usuarioId, $_POST);
@@ -698,6 +826,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $erro = $e->getMessage();
             $idsBaixaSelecionados = array_values(array_unique(array_filter(array_map('intval', (array)($_POST['crcontadores'] ?? [])))));
             $titulosBaixa = crbCarregarTitulosParaBaixa($pdo, $empresaId, $idsBaixaSelecionados);
+        }
+    } elseif ($acao === 'confirmar_agrupamento') {
+        try {
+            $novoCr = crbAgruparTitulos($pdo, $empresaId, $usuarioId, $_POST);
+            $mensagem = 'Titulos agrupados no novo CR #' . (int)$novoCr . '.';
+        } catch (Throwable $e) {
+            $erro = $e->getMessage();
+            $idsAgrupamentoSelecionados = array_values(array_unique(array_filter(array_map('intval', (array)($_POST['crcontadores'] ?? [])))));
+            $titulosAgrupamento = crbCarregarTitulosParaBaixa($pdo, $empresaId, $idsAgrupamentoSelecionados);
         }
     } elseif ($acao === 'excluir_titulo') {
         try {
@@ -901,6 +1038,22 @@ $idsTitulosLista = array_map(static function ($titulo) {
     return (int)$titulo['CRCONTADOR'];
 }, $titulos);
 $baixasPorTitulo = crbMovimentosBaixaPorTitulo($pdo, $empresaId, $idsTitulosLista);
+$agrupadosPorTitulo = [];
+if ($idsTitulosLista) {
+    $placeholdersAgrupados = implode(',', array_fill(0, count($idsTitulosLista), '?'));
+    $stmtAgrupados = $pdo->prepare("
+        SELECT *
+        FROM armazem_cr001
+        WHERE EMPRESA = ?
+          AND CONTROLE = 'AGRUPADO_MOV_BAIXA'
+          AND NUMDOCORIGEM IN ($placeholdersAgrupados)
+        ORDER BY NUMDOCORIGEM, DTVENC, CRCONTADOR
+    ");
+    $stmtAgrupados->execute(array_merge([$empresaId], $idsTitulosLista));
+    foreach ($stmtAgrupados as $agrupado) {
+        $agrupadosPorTitulo[(int)$agrupado['NUMDOCORIGEM']][] = $agrupado;
+    }
+}
 
 require '../../layout/header.php';
 ?>
@@ -1061,6 +1214,104 @@ require '../../layout/header.php';
 
                 <div class="crb-actions">
                     <button type="submit" class="crb-btn">Confirmar baixa</button>
+                    <a href="contas_receber.php" class="crb-btn light">Cancelar</a>
+                </div>
+            </form>
+        </div>
+    <?php endif; ?>
+
+    <?php if ($titulosAgrupamento): ?>
+        <?php
+            $totalAgrupamento = 0.0;
+            $clientesAgrupamento = [];
+            $vencimentosAgrupamento = [];
+            foreach ($titulosAgrupamento as $tituloAgrupar) {
+                $valorAgrupar = (float)($tituloAgrupar['VLRRESTANTE'] ?? 0);
+                if ($valorAgrupar <= 0) {
+                    $valorAgrupar = (float)($tituloAgrupar['VLRPARCELA'] ?? 0);
+                }
+                $totalAgrupamento += $valorAgrupar;
+                $clientesAgrupamento[(int)($tituloAgrupar['CLICONTADOR'] ?? 0)] = true;
+                if (!empty($tituloAgrupar['DTVENC'])) {
+                    $vencimentosAgrupamento[] = date('Y-m-d', strtotime($tituloAgrupar['DTVENC']));
+                }
+            }
+            sort($vencimentosAgrupamento);
+            $novoVencimentoPadrao = $_POST['novo_vencimento'] ?? ($vencimentosAgrupamento[0] ?? date('Y-m-d'));
+        ?>
+        <div class="crb-card" id="agrupamento">
+            <h2 class="crb-title">Agrupar titulos selecionados</h2>
+            <?php if (count($clientesAgrupamento) !== 1): ?>
+                <div class="crb-alert err">Para agrupar, todos os titulos devem ser do mesmo cliente.</div>
+            <?php endif; ?>
+            <form method="post" autocomplete="off" onsubmit="return confirm('Confirmar agrupamento dos titulos selecionados?');">
+                <input type="hidden" name="acao" value="confirmar_agrupamento">
+                <?php foreach ($titulosAgrupamento as $tituloAgrupar): ?>
+                    <input type="hidden" name="crcontadores[]" value="<?= (int)$tituloAgrupar['CRCONTADOR'] ?>">
+                <?php endforeach; ?>
+
+                <div class="crb-grid">
+                    <div class="crb-field w3">
+                        <label for="novo_vencimento">Vencimento do novo titulo</label>
+                        <input type="date" id="novo_vencimento" name="novo_vencimento" value="<?= crbH($novoVencimentoPadrao) ?>" required>
+                    </div>
+                    <div class="crb-field w4">
+                        <label for="novo_titulo">Documento/Titulo do agrupamento</label>
+                        <input type="text" id="novo_titulo" name="novo_titulo" value="<?= crbH($_POST['novo_titulo'] ?? ('AGRUPAMENTO ' . date('d/m/Y'))) ?>" required>
+                    </div>
+                    <div class="crb-field w5">
+                        <label for="tipoes_agrupamento">TIPOES do novo titulo</label>
+                        <select id="tipoes_agrupamento" name="tipoes_agrupamento" required>
+                            <option value="">Selecione</option>
+                            <?php foreach ($tipos as $tipo): ?>
+                                <option value="<?= (int)$tipo['ESCONTADOR'] ?>" <?= (string)($_POST['tipoes_agrupamento'] ?? ($titulosAgrupamento[0]['TIPOES'] ?? '')) === (string)$tipo['ESCONTADOR'] ? 'selected' : '' ?>>
+                                    <?= crbH($tipo['ESCONTADOR'] . ' - ' . ($tipo['DESCES'] ?? '')) ?>
+                                </option>
+                            <?php endforeach; ?>
+                        </select>
+                    </div>
+                    <div class="crb-field w12">
+                        <label for="observacao_agrupamento">Observacao</label>
+                        <input type="text" id="observacao_agrupamento" name="observacao_agrupamento" value="<?= crbH($_POST['observacao_agrupamento'] ?? '') ?>">
+                    </div>
+                </div>
+
+                <div class="crb-table-wrap" style="margin-top:14px;">
+                    <table class="crb-table">
+                        <thead>
+                            <tr>
+                                <th>CR origem</th>
+                                <th>Vencimento</th>
+                                <th>Cliente</th>
+                                <th>Documento</th>
+                                <th>Valor</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <?php foreach ($titulosAgrupamento as $tituloAgrupar): ?>
+                                <?php
+                                    $valorAgrupar = (float)($tituloAgrupar['VLRRESTANTE'] ?? 0);
+                                    if ($valorAgrupar <= 0) {
+                                        $valorAgrupar = (float)($tituloAgrupar['VLRPARCELA'] ?? 0);
+                                    }
+                                ?>
+                                <tr>
+                                    <td><?= (int)$tituloAgrupar['CRCONTADOR'] ?></td>
+                                    <td><?= crbH(crbData($tituloAgrupar['DTVENC'])) ?></td>
+                                    <td><?= crbH(($tituloAgrupar['CLICONTADOR'] ?? '') . ' - ' . ($tituloAgrupar['cliente_nome'] ?? '')) ?></td>
+                                    <td><?= crbH($tituloAgrupar['TITULO'] ?? '') ?></td>
+                                    <td><?= crbH(crbMoeda($valorAgrupar)) ?></td>
+                                </tr>
+                            <?php endforeach; ?>
+                            <tr>
+                                <td colspan="4" style="text-align:right;font-weight:700;">Novo titulo</td>
+                                <td style="font-weight:700;"><?= crbH(crbMoeda($totalAgrupamento)) ?></td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+                <div class="crb-actions">
+                    <button type="submit" class="crb-btn" <?= count($clientesAgrupamento) !== 1 ? 'disabled' : '' ?>>Confirmar agrupamento</button>
                     <a href="contas_receber.php" class="crb-btn light">Cancelar</a>
                 </div>
             </form>
@@ -1243,9 +1494,7 @@ require '../../layout/header.php';
 
     <div class="crb-card">
         <h2 class="crb-title">Titulos lancados</h2>
-        <form method="post" autocomplete="off" id="form-preparar-baixa">
-            <input type="hidden" name="acao" value="preparar_baixa">
-        </form>
+        <form method="post" autocomplete="off" id="form-titulos-selecionados"></form>
         <div class="crb-summary">
                 <div class="crb-summary-item">
                     <div class="crb-summary-label">Total valor</div>
@@ -1261,7 +1510,8 @@ require '../../layout/header.php';
                 </div>
             </div>
             <div class="crb-actions" style="margin-top:0;margin-bottom:12px;">
-                <button type="submit" form="form-preparar-baixa" class="crb-btn">Baixar titulos selecionados</button>
+                <button type="submit" name="acao" value="preparar_baixa" form="form-titulos-selecionados" class="crb-btn">Baixar titulos selecionados</button>
+                <button type="submit" name="acao" value="preparar_agrupamento" form="form-titulos-selecionados" class="crb-btn secondary">Agrupar selecionados</button>
             </div>
             <div class="crb-table-wrap">
                 <table class="crb-table">
@@ -1292,6 +1542,7 @@ require '../../layout/header.php';
                             <?php
                                 $crIdLinha = (int)$titulo['CRCONTADOR'];
                                 $baixasLinha = $baixasPorTitulo[$crIdLinha] ?? [];
+                                $agrupadosLinha = $agrupadosPorTitulo[$crIdLinha] ?? [];
                             ?>
                             <tr>
                                 <td>
@@ -1301,7 +1552,7 @@ require '../../layout/header.php';
                                             name="crcontadores[]"
                                             value="<?= (int)$titulo['CRCONTADOR'] ?>"
                                             data-restante="<?= crbH((float)($titulo['VLRRESTANTE'] ?? 0)) ?>"
-                                            form="form-preparar-baixa"
+                                            form="form-titulos-selecionados"
                                         >
                                     <?php endif; ?>
                                 </td>
@@ -1330,6 +1581,11 @@ require '../../layout/header.php';
                                             Baixa
                                         </button>
                                     <?php endif; ?>
+                                    <?php if ($agrupadosLinha): ?>
+                                        <button type="button" class="crb-btn light crb-toggle-baixa" data-target="detalhe-agrupamento-<?= $crIdLinha ?>">
+                                            Desdobramento
+                                        </button>
+                                    <?php endif; ?>
                                     <?php if ($statusLinha !== 'QT' && ($titulo['TIPODOCORIGEM'] ?? '') === 'SUPERDUNGA' && ($titulo['CONTROLE'] ?? '') === 'MOVIMENTACAO_BAIXA'): ?>
                                         <a class="crb-btn light" href="contas_receber.php?editar=<?= (int)$titulo['CRCONTADOR'] ?>">Editar</a>
                                         <form method="post" style="display:inline;" onsubmit="return confirm('Excluir este titulo aberto? Esta acao nao sera permitida se ele estiver vinculado a acerto.');">
@@ -1344,6 +1600,49 @@ require '../../layout/header.php';
                                     <?php endif; ?>
                                 </td>
                             </tr>
+                            <?php if ($agrupadosLinha): ?>
+                                <tr id="detalhe-agrupamento-<?= $crIdLinha ?>" class="crb-detalhe-baixa" style="display:none;">
+                                    <td colspan="12">
+                                        <div class="crb-table-wrap">
+                                            <table class="crb-table" style="min-width:760px;">
+                                                <thead>
+                                                    <tr>
+                                                        <th>CR origem</th>
+                                                        <th>Vencimento</th>
+                                                        <th>Documento</th>
+                                                        <th>Valor</th>
+                                                        <th>Status</th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody>
+                                                    <?php $totalAgrupadoLinha = 0.0; ?>
+                                                    <?php foreach ($agrupadosLinha as $agrupado): ?>
+                                                        <?php
+                                                            $valorAgrupadoLinha = (float)($agrupado['VLRPAGO'] ?? 0);
+                                                            if ($valorAgrupadoLinha <= 0) {
+                                                                $valorAgrupadoLinha = (float)($agrupado['VLRPARCELA'] ?? 0);
+                                                            }
+                                                            $totalAgrupadoLinha += $valorAgrupadoLinha;
+                                                        ?>
+                                                        <tr>
+                                                            <td><?= (int)$agrupado['CRCONTADOR'] ?></td>
+                                                            <td><?= crbH(crbData($agrupado['DTVENC'])) ?></td>
+                                                            <td><?= crbH($agrupado['TITULO'] ?? '') ?></td>
+                                                            <td><?= crbH(crbMoeda($valorAgrupadoLinha)) ?></td>
+                                                            <td><?= crbH($agrupado['STATUS'] ?? '') ?></td>
+                                                        </tr>
+                                                    <?php endforeach; ?>
+                                                    <tr>
+                                                        <td colspan="3" style="text-align:right;font-weight:700;">Total agrupado</td>
+                                                        <td style="font-weight:700;"><?= crbH(crbMoeda($totalAgrupadoLinha)) ?></td>
+                                                        <td></td>
+                                                    </tr>
+                                                </tbody>
+                                            </table>
+                                        </div>
+                                    </td>
+                                </tr>
+                            <?php endif; ?>
                             <tr id="detalhe-baixa-<?= $crIdLinha ?>" class="crb-detalhe-baixa" style="display:none;">
                                 <td colspan="12">
                                     <?php if ($baixasLinha): ?>
@@ -1486,13 +1785,15 @@ require '../../layout/header.php';
 (function () {
     document.querySelectorAll('.crb-toggle-baixa').forEach(function (botao) {
         botao.addEventListener('click', function () {
-            const alvo = document.getElementById(botao.getAttribute('data-target'));
+            const alvoId = botao.getAttribute('data-target');
+            const alvo = document.getElementById(alvoId);
             if (!alvo) {
                 return;
             }
             const aberto = alvo.style.display !== 'none';
             alvo.style.display = aberto ? 'none' : '';
-            botao.textContent = aberto ? 'Baixa' : 'Ocultar baixa';
+            const labelFechado = alvoId.indexOf('agrupamento') !== -1 ? 'Desdobramento' : 'Baixa';
+            botao.textContent = aberto ? labelFechado : 'Ocultar';
         });
     });
 })();

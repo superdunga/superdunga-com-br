@@ -449,6 +449,126 @@ function cpbBaixarTitulos(PDO $pdo, $empresaId, $usuarioId, array $dados)
     }
 }
 
+function cpbAgruparTitulos(PDO $pdo, $empresaId, $usuarioId, array $dados)
+{
+    $cpcontadores = array_values(array_unique(array_filter(array_map('intval', (array)($dados['cpcontadores'] ?? [])))));
+    if (count($cpcontadores) < 2) {
+        throw new RuntimeException('Selecione ao menos dois titulos para agrupar.');
+    }
+
+    $novoVencimento = $dados['novo_vencimento'] ?? '';
+    $novoTitulo = trim((string)($dados['novo_titulo'] ?? ''));
+    $observacao = trim((string)($dados['observacao_agrupamento'] ?? ''));
+    $tipoes = (int)($dados['tipoes_agrupamento'] ?? 0);
+
+    if ($novoVencimento === '') {
+        throw new RuntimeException('Informe o vencimento do novo titulo.');
+    }
+    if ($novoTitulo === '') {
+        throw new RuntimeException('Informe o documento/titulo do agrupamento.');
+    }
+    if ($tipoes <= 0 || !cpbBuscarTipoes($pdo, $empresaId, $tipoes)) {
+        throw new RuntimeException('Informe um TIPOES valido para o novo titulo.');
+    }
+
+    $titulos = cpbCarregarTitulosParaBaixa($pdo, $empresaId, $cpcontadores);
+    if (count($titulos) !== count($cpcontadores)) {
+        throw new RuntimeException('Um ou mais titulos selecionados nao estao abertos para agrupamento.');
+    }
+
+    $fornecedores = array_values(array_unique(array_map(static function ($titulo) {
+        return (int)($titulo['FCONTADOR'] ?? 0);
+    }, $titulos)));
+    if (count($fornecedores) !== 1 || (int)$fornecedores[0] <= 0) {
+        throw new RuntimeException('Para agrupar, todos os titulos devem ser do mesmo fornecedor.');
+    }
+
+    $total = 0.0;
+    $origens = [];
+    foreach ($titulos as $titulo) {
+        if (($titulo['CONTROLE'] ?? '') === 'AGRUPADO_MOV_BAIXA') {
+            throw new RuntimeException('O CP #' . (int)$titulo['CPCONTADOR'] . ' ja esta agrupado.');
+        }
+        $valor = (float)($titulo['VLRRESTANTE'] ?? 0);
+        if ($valor <= 0) {
+            $valor = (float)($titulo['VLRPARCELA'] ?? 0);
+        }
+        if ($valor <= 0) {
+            throw new RuntimeException('O CP #' . (int)$titulo['CPCONTADOR'] . ' nao possui valor para agrupamento.');
+        }
+        $total += $valor;
+        $origens[] = (int)$titulo['CPCONTADOR'];
+    }
+    $total = round($total, 2);
+
+    $pdo->beginTransaction();
+    try {
+        $novoCpcontador = cpbProximoCpcontador($pdo, $empresaId);
+        $chave = 'MOVBAIXA-CP-AGRUP-' . $empresaId . '-' . $novoCpcontador;
+        $obsNovo = trim(($observacao !== '' ? $observacao . ' | ' : '') . 'Agrupa CP ' . implode(', CP ', $origens));
+
+        $stmtNovo = $pdo->prepare("
+            INSERT INTO armazem_cp001 (
+                EMPRESA, CPCONTADOR, DTCOMPRA, NUMPARCELA, TITULO, VALORCOMPRA,
+                FCONTADOR, OBSERVACAO, DTEMISSAO, VLRPARCELA, PARCELA, DTVENC,
+                VLRRESTANTE, VLRPAGO, STATUS, TIPODOCORIGEM, NUMDOCORIGEM, CONTROLE,
+                TIPOCP, TIPOES, REGSTAMP, REGIMPORT, USERLANC, DTLANC, USERALT, DTALT,
+                CHAVEINTEGRACAO, financeiro_verificado, excluido_firebird
+            ) VALUES (
+                ?, ?, CURDATE(), 1, ?, ?, ?, ?, CURDATE(), ?, '1/1', ?,
+                ?, 0, 'AB', 'SUPERDUNGA', ?, 'AGRUPAMENTO_MOV_BAIXA',
+                'CP', ?, NOW(), 'S', ?, NOW(), ?, NOW(), ?, 'N', 'N'
+            )
+        ");
+        $stmtNovo->execute([
+            $empresaId,
+            $novoCpcontador,
+            $novoTitulo,
+            $total,
+            (int)$fornecedores[0],
+            $obsNovo,
+            $total,
+            $novoVencimento,
+            $total,
+            $novoCpcontador,
+            $tipoes,
+            $usuarioId ?: null,
+            $usuarioId ?: null,
+            $chave,
+        ]);
+
+        $stmtOrigem = $pdo->prepare("
+            UPDATE armazem_cp001
+            SET STATUS = 'QT',
+                VLRPAGO = COALESCE(NULLIF(VLRRESTANTE, 0), VLRPARCELA, 0),
+                VLRRESTANTE = 0,
+                NUMDOCORIGEM = ?,
+                CONTROLE = 'AGRUPADO_MOV_BAIXA',
+                OBSERVACAO = TRIM(CONCAT(COALESCE(OBSERVACAO, ''), CASE WHEN COALESCE(OBSERVACAO, '') <> '' THEN ' | ' ELSE '' END, ?)),
+                USERALT = ?,
+                DTALT = NOW(),
+                REGSTAMP = NOW()
+            WHERE EMPRESA = ?
+              AND CPCONTADOR = ?
+        ");
+        foreach ($titulos as $titulo) {
+            $stmtOrigem->execute([
+                $novoCpcontador,
+                'Agrupado no CP #' . $novoCpcontador,
+                $usuarioId ?: null,
+                $empresaId,
+                (int)$titulo['CPCONTADOR'],
+            ]);
+        }
+
+        $pdo->commit();
+        return $novoCpcontador;
+    } catch (Throwable $e) {
+        $pdo->rollBack();
+        throw $e;
+    }
+}
+
 function cpbTituloVinculadoAcerto(PDO $pdo, $empresaId, $cpcontador)
 {
     $stmt = $pdo->prepare("
@@ -642,6 +762,8 @@ $mensagem = '';
 $erro = '';
 $titulosBaixa = [];
 $idsBaixaSelecionados = [];
+$titulosAgrupamento = [];
+$idsAgrupamentoSelecionados = [];
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $acao = $_POST['acao'] ?? 'salvar_titulo';
@@ -652,6 +774,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if (!$titulosBaixa) {
             $erro = 'Selecione ao menos um titulo aberto para baixa.';
         }
+    } elseif ($acao === 'preparar_agrupamento') {
+        $idsAgrupamentoSelecionados = array_values(array_unique(array_filter(array_map('intval', (array)($_POST['cpcontadores'] ?? [])))));
+        $titulosAgrupamento = cpbCarregarTitulosParaBaixa($pdo, $empresaId, $idsAgrupamentoSelecionados);
+        if (count($titulosAgrupamento) < 2) {
+            $erro = 'Selecione ao menos dois titulos abertos para agrupar.';
+        }
     } elseif ($acao === 'confirmar_baixa') {
         try {
             $baixados = cpbBaixarTitulos($pdo, $empresaId, $usuarioId, $_POST);
@@ -660,6 +788,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $erro = $e->getMessage();
             $idsBaixaSelecionados = array_values(array_unique(array_filter(array_map('intval', (array)($_POST['cpcontadores'] ?? [])))));
             $titulosBaixa = cpbCarregarTitulosParaBaixa($pdo, $empresaId, $idsBaixaSelecionados);
+        }
+    } elseif ($acao === 'confirmar_agrupamento') {
+        try {
+            $novoCp = cpbAgruparTitulos($pdo, $empresaId, $usuarioId, $_POST);
+            $mensagem = 'Titulos agrupados no novo CP #' . (int)$novoCp . '.';
+        } catch (Throwable $e) {
+            $erro = $e->getMessage();
+            $idsAgrupamentoSelecionados = array_values(array_unique(array_filter(array_map('intval', (array)($_POST['cpcontadores'] ?? [])))));
+            $titulosAgrupamento = cpbCarregarTitulosParaBaixa($pdo, $empresaId, $idsAgrupamentoSelecionados);
         }
     } elseif ($acao === 'excluir_titulo') {
         try {
@@ -867,6 +1004,22 @@ $idsTitulosLista = array_map(static function ($titulo) {
     return (int)$titulo['CPCONTADOR'];
 }, $titulos);
 $baixasPorTitulo = cpbMovimentosBaixaPorTitulo($pdo, $empresaId, $idsTitulosLista);
+$agrupadosPorTitulo = [];
+if ($idsTitulosLista) {
+    $placeholdersAgrupados = implode(',', array_fill(0, count($idsTitulosLista), '?'));
+    $stmtAgrupados = $pdo->prepare("
+        SELECT *
+        FROM armazem_cp001
+        WHERE EMPRESA = ?
+          AND CONTROLE = 'AGRUPADO_MOV_BAIXA'
+          AND NUMDOCORIGEM IN ($placeholdersAgrupados)
+        ORDER BY NUMDOCORIGEM, DTVENC, CPCONTADOR
+    ");
+    $stmtAgrupados->execute(array_merge([$empresaId], $idsTitulosLista));
+    foreach ($stmtAgrupados as $agrupado) {
+        $agrupadosPorTitulo[(int)$agrupado['NUMDOCORIGEM']][] = $agrupado;
+    }
+}
 
 require '../../layout/header.php';
 ?>
@@ -1013,6 +1166,104 @@ require '../../layout/header.php';
 
                 <div class="cpb-actions">
                     <button type="submit" class="cpb-btn">Confirmar baixa</button>
+                    <a href="contas_pagar.php" class="cpb-btn light">Cancelar</a>
+                </div>
+            </form>
+        </div>
+    <?php endif; ?>
+
+    <?php if ($titulosAgrupamento): ?>
+        <?php
+            $totalAgrupamento = 0.0;
+            $fornecedoresAgrupamento = [];
+            $vencimentosAgrupamento = [];
+            foreach ($titulosAgrupamento as $tituloAgrupar) {
+                $valorAgrupar = (float)($tituloAgrupar['VLRRESTANTE'] ?? 0);
+                if ($valorAgrupar <= 0) {
+                    $valorAgrupar = (float)($tituloAgrupar['VLRPARCELA'] ?? 0);
+                }
+                $totalAgrupamento += $valorAgrupar;
+                $fornecedoresAgrupamento[(int)($tituloAgrupar['FCONTADOR'] ?? 0)] = true;
+                if (!empty($tituloAgrupar['DTVENC'])) {
+                    $vencimentosAgrupamento[] = date('Y-m-d', strtotime($tituloAgrupar['DTVENC']));
+                }
+            }
+            sort($vencimentosAgrupamento);
+            $novoVencimentoPadrao = $_POST['novo_vencimento'] ?? ($vencimentosAgrupamento[0] ?? date('Y-m-d'));
+        ?>
+        <div class="cpb-card" id="agrupamento">
+            <h2 class="cpb-title">Agrupar titulos selecionados</h2>
+            <?php if (count($fornecedoresAgrupamento) !== 1): ?>
+                <div class="cpb-alert err">Para agrupar, todos os titulos devem ser do mesmo fornecedor.</div>
+            <?php endif; ?>
+            <form method="post" autocomplete="off" onsubmit="return confirm('Confirmar agrupamento dos titulos selecionados?');">
+                <input type="hidden" name="acao" value="confirmar_agrupamento">
+                <?php foreach ($titulosAgrupamento as $tituloAgrupar): ?>
+                    <input type="hidden" name="cpcontadores[]" value="<?= (int)$tituloAgrupar['CPCONTADOR'] ?>">
+                <?php endforeach; ?>
+
+                <div class="cpb-grid">
+                    <div class="cpb-field w3">
+                        <label for="novo_vencimento">Vencimento do novo titulo</label>
+                        <input type="date" id="novo_vencimento" name="novo_vencimento" value="<?= cpbH($novoVencimentoPadrao) ?>" required>
+                    </div>
+                    <div class="cpb-field w4">
+                        <label for="novo_titulo">Documento/Titulo do agrupamento</label>
+                        <input type="text" id="novo_titulo" name="novo_titulo" value="<?= cpbH($_POST['novo_titulo'] ?? ('AGRUPAMENTO ' . date('d/m/Y'))) ?>" required>
+                    </div>
+                    <div class="cpb-field w5">
+                        <label for="tipoes_agrupamento">TIPOES do novo titulo</label>
+                        <select id="tipoes_agrupamento" name="tipoes_agrupamento" required>
+                            <option value="">Selecione</option>
+                            <?php foreach ($tipos as $tipo): ?>
+                                <option value="<?= (int)$tipo['ESCONTADOR'] ?>" <?= (string)($_POST['tipoes_agrupamento'] ?? ($titulosAgrupamento[0]['TIPOES'] ?? '')) === (string)$tipo['ESCONTADOR'] ? 'selected' : '' ?>>
+                                    <?= cpbH($tipo['ESCONTADOR'] . ' - ' . ($tipo['DESCES'] ?? '')) ?>
+                                </option>
+                            <?php endforeach; ?>
+                        </select>
+                    </div>
+                    <div class="cpb-field w12">
+                        <label for="observacao_agrupamento">Observacao</label>
+                        <input type="text" id="observacao_agrupamento" name="observacao_agrupamento" value="<?= cpbH($_POST['observacao_agrupamento'] ?? '') ?>">
+                    </div>
+                </div>
+
+                <div class="cpb-table-wrap" style="margin-top:14px;">
+                    <table class="cpb-table">
+                        <thead>
+                            <tr>
+                                <th>CP origem</th>
+                                <th>Vencimento</th>
+                                <th>Fornecedor</th>
+                                <th>Documento</th>
+                                <th>Valor</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <?php foreach ($titulosAgrupamento as $tituloAgrupar): ?>
+                                <?php
+                                    $valorAgrupar = (float)($tituloAgrupar['VLRRESTANTE'] ?? 0);
+                                    if ($valorAgrupar <= 0) {
+                                        $valorAgrupar = (float)($tituloAgrupar['VLRPARCELA'] ?? 0);
+                                    }
+                                ?>
+                                <tr>
+                                    <td><?= (int)$tituloAgrupar['CPCONTADOR'] ?></td>
+                                    <td><?= cpbH(cpbData($tituloAgrupar['DTVENC'])) ?></td>
+                                    <td><?= cpbH(($tituloAgrupar['FCONTADOR'] ?? '') . ' - ' . ($tituloAgrupar['fornecedor_nome'] ?? '')) ?></td>
+                                    <td><?= cpbH($tituloAgrupar['TITULO'] ?? '') ?></td>
+                                    <td><?= cpbH(cpbMoeda($valorAgrupar)) ?></td>
+                                </tr>
+                            <?php endforeach; ?>
+                            <tr>
+                                <td colspan="4" style="text-align:right;font-weight:700;">Novo titulo</td>
+                                <td style="font-weight:700;"><?= cpbH(cpbMoeda($totalAgrupamento)) ?></td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+                <div class="cpb-actions">
+                    <button type="submit" class="cpb-btn" <?= count($fornecedoresAgrupamento) !== 1 ? 'disabled' : '' ?>>Confirmar agrupamento</button>
                     <a href="contas_pagar.php" class="cpb-btn light">Cancelar</a>
                 </div>
             </form>
@@ -1196,9 +1447,7 @@ require '../../layout/header.php';
 
     <div class="cpb-card">
         <h2 class="cpb-title">Titulos lancados</h2>
-        <form method="post" autocomplete="off" id="form-preparar-baixa">
-            <input type="hidden" name="acao" value="preparar_baixa">
-        </form>
+        <form method="post" autocomplete="off" id="form-titulos-selecionados"></form>
         <div class="cpb-summary">
                 <div class="cpb-summary-item">
                     <div class="cpb-summary-label">Total valor</div>
@@ -1214,7 +1463,8 @@ require '../../layout/header.php';
                 </div>
             </div>
             <div class="cpb-actions" style="margin-top:0;margin-bottom:12px;">
-                <button type="submit" form="form-preparar-baixa" class="cpb-btn">Baixar titulos selecionados</button>
+                <button type="submit" name="acao" value="preparar_baixa" form="form-titulos-selecionados" class="cpb-btn">Baixar titulos selecionados</button>
+                <button type="submit" name="acao" value="preparar_agrupamento" form="form-titulos-selecionados" class="cpb-btn secondary">Agrupar selecionados</button>
             </div>
             <div class="cpb-table-wrap">
                 <table class="cpb-table">
@@ -1245,6 +1495,7 @@ require '../../layout/header.php';
                             <?php
                                 $cpIdLinha = (int)$titulo['CPCONTADOR'];
                                 $baixasLinha = $baixasPorTitulo[$cpIdLinha] ?? [];
+                                $agrupadosLinha = $agrupadosPorTitulo[$cpIdLinha] ?? [];
                             ?>
                             <tr>
                                 <td>
@@ -1254,7 +1505,7 @@ require '../../layout/header.php';
                                             name="cpcontadores[]"
                                             value="<?= (int)$titulo['CPCONTADOR'] ?>"
                                             data-restante="<?= cpbH((float)($titulo['VLRRESTANTE'] ?? 0)) ?>"
-                                            form="form-preparar-baixa"
+                                            form="form-titulos-selecionados"
                                         >
                                     <?php endif; ?>
                                 </td>
@@ -1283,6 +1534,11 @@ require '../../layout/header.php';
                                             Baixa
                                         </button>
                                     <?php endif; ?>
+                                    <?php if ($agrupadosLinha): ?>
+                                        <button type="button" class="cpb-btn light cpb-toggle-baixa" data-target="detalhe-agrupamento-<?= $cpIdLinha ?>">
+                                            Desdobramento
+                                        </button>
+                                    <?php endif; ?>
                                     <?php if ($statusLinha !== 'QT' && ($titulo['TIPODOCORIGEM'] ?? '') === 'SUPERDUNGA' && ($titulo['CONTROLE'] ?? '') === 'MOVIMENTACAO_BAIXA'): ?>
                                         <a class="cpb-btn light" href="contas_pagar.php?editar=<?= (int)$titulo['CPCONTADOR'] ?>">Editar</a>
                                         <form method="post" style="display:inline;" onsubmit="return confirm('Excluir este titulo aberto? Esta acao nao sera permitida se ele estiver vinculado a acerto.');">
@@ -1297,6 +1553,49 @@ require '../../layout/header.php';
                                     <?php endif; ?>
                                 </td>
                             </tr>
+                            <?php if ($agrupadosLinha): ?>
+                                <tr id="detalhe-agrupamento-<?= $cpIdLinha ?>" class="cpb-detalhe-baixa" style="display:none;">
+                                    <td colspan="12">
+                                        <div class="cpb-table-wrap">
+                                            <table class="cpb-table" style="min-width:760px;">
+                                                <thead>
+                                                    <tr>
+                                                        <th>CP origem</th>
+                                                        <th>Vencimento</th>
+                                                        <th>Documento</th>
+                                                        <th>Valor</th>
+                                                        <th>Status</th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody>
+                                                    <?php $totalAgrupadoLinha = 0.0; ?>
+                                                    <?php foreach ($agrupadosLinha as $agrupado): ?>
+                                                        <?php
+                                                            $valorAgrupadoLinha = (float)($agrupado['VLRPAGO'] ?? 0);
+                                                            if ($valorAgrupadoLinha <= 0) {
+                                                                $valorAgrupadoLinha = (float)($agrupado['VLRPARCELA'] ?? 0);
+                                                            }
+                                                            $totalAgrupadoLinha += $valorAgrupadoLinha;
+                                                        ?>
+                                                        <tr>
+                                                            <td><?= (int)$agrupado['CPCONTADOR'] ?></td>
+                                                            <td><?= cpbH(cpbData($agrupado['DTVENC'])) ?></td>
+                                                            <td><?= cpbH($agrupado['TITULO'] ?? '') ?></td>
+                                                            <td><?= cpbH(cpbMoeda($valorAgrupadoLinha)) ?></td>
+                                                            <td><?= cpbH($agrupado['STATUS'] ?? '') ?></td>
+                                                        </tr>
+                                                    <?php endforeach; ?>
+                                                    <tr>
+                                                        <td colspan="3" style="text-align:right;font-weight:700;">Total agrupado</td>
+                                                        <td style="font-weight:700;"><?= cpbH(cpbMoeda($totalAgrupadoLinha)) ?></td>
+                                                        <td></td>
+                                                    </tr>
+                                                </tbody>
+                                            </table>
+                                        </div>
+                                    </td>
+                                </tr>
+                            <?php endif; ?>
                             <tr id="detalhe-baixa-<?= $cpIdLinha ?>" class="cpb-detalhe-baixa" style="display:none;">
                                 <td colspan="12">
                                     <?php if ($baixasLinha): ?>
@@ -1439,13 +1738,15 @@ require '../../layout/header.php';
 (function () {
     document.querySelectorAll('.cpb-toggle-baixa').forEach(function (botao) {
         botao.addEventListener('click', function () {
-            const alvo = document.getElementById(botao.getAttribute('data-target'));
+            const alvoId = botao.getAttribute('data-target');
+            const alvo = document.getElementById(alvoId);
             if (!alvo) {
                 return;
             }
             const aberto = alvo.style.display !== 'none';
             alvo.style.display = aberto ? 'none' : '';
-            botao.textContent = aberto ? 'Baixa' : 'Ocultar baixa';
+            const labelFechado = alvoId.indexOf('agrupamento') !== -1 ? 'Desdobramento' : 'Baixa';
+            botao.textContent = aberto ? labelFechado : 'Ocultar';
         });
     });
 })();
