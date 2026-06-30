@@ -389,6 +389,7 @@ function crbBaixarTitulos(PDO $pdo, $empresaId, $usuarioId, array $dados)
     }
 
     $tipoesBaixa = (int)($dados['tipoes_baixa'] ?? 0);
+    $valoresBaixa = is_array($dados['valor_baixa'] ?? null) ? $dados['valor_baixa'] : [];
     $titulos = crbCarregarTitulosParaBaixa($pdo, $empresaId, $crcontadores);
     if (!$titulos) {
         throw new RuntimeException('Nenhum titulo aberto encontrado para baixa.');
@@ -414,8 +415,12 @@ function crbBaixarTitulos(PDO $pdo, $empresaId, $usuarioId, array $dados)
             if ($valor <= 0) {
                 $valor = (float)($titulo['VLRPARCELA'] ?? 0);
             }
+            $valorInformado = $valoresBaixa[(int)$titulo['CRCONTADOR']] ?? null;
+            if ($valorInformado !== null && trim((string)$valorInformado) !== '') {
+                $valor = crbFloat($valorInformado);
+            }
             if ($valor <= 0) {
-                continue;
+                throw new RuntimeException('Informe um valor valido para o CR #' . (int)$titulo['CRCONTADOR'] . '.');
             }
 
             $movcontador = crbProximoMovcontador($pdo);
@@ -960,6 +965,16 @@ require '../../layout/header.php';
     <?php endif; ?>
 
     <?php if ($titulosBaixa): ?>
+        <?php
+            $dataBaixaPadrao = $_POST['data_baixa'] ?? '';
+            if ($dataBaixaPadrao === '') {
+                $vencimentosBaixa = array_filter(array_map(static function ($titulo) {
+                    return !empty($titulo['DTVENC']) ? date('Y-m-d', strtotime($titulo['DTVENC'])) : null;
+                }, $titulosBaixa));
+                sort($vencimentosBaixa);
+                $dataBaixaPadrao = $vencimentosBaixa[0] ?? date('Y-m-d');
+            }
+        ?>
         <div class="crb-card" id="baixa">
             <h2 class="crb-title">Confirmar baixa dos titulos selecionados</h2>
             <form method="post" autocomplete="off" onsubmit="return confirm('Confirmar baixa dos titulos selecionados?');">
@@ -971,7 +986,7 @@ require '../../layout/header.php';
                 <div class="crb-grid">
                     <div class="crb-field w3">
                         <label for="data_baixa">Data da baixa</label>
-                        <input type="date" id="data_baixa" name="data_baixa" value="<?= crbH($_POST['data_baixa'] ?? date('Y-m-d')) ?>" required>
+                        <input type="date" id="data_baixa" name="data_baixa" value="<?= crbH($dataBaixaPadrao) ?>" required>
                     </div>
                     <div class="crb-field w5">
                         <label for="cbcontador_baixa">Conta de baixa</label>
@@ -1010,7 +1025,7 @@ require '../../layout/header.php';
                                 <th>Cliente</th>
                                 <th>Documento</th>
                                 <th>TIPOES atual</th>
-                                <th>Valor restante</th>
+                                <th>Valor da baixa</th>
                             </tr>
                         </thead>
                         <tbody>
@@ -1021,7 +1036,8 @@ require '../../layout/header.php';
                                     if ($valorBaixa <= 0) {
                                         $valorBaixa = (float)($tituloBaixa['VLRPARCELA'] ?? 0);
                                     }
-                                    $totalBaixa += $valorBaixa;
+                                    $valorCampo = $_POST['valor_baixa'][$tituloBaixa['CRCONTADOR']] ?? number_format($valorBaixa, 2, ',', '.');
+                                    $totalBaixa += crbFloat($valorCampo);
                                 ?>
                                 <tr>
                                     <td><?= (int)$tituloBaixa['CRCONTADOR'] ?></td>
@@ -1029,7 +1045,10 @@ require '../../layout/header.php';
                                     <td><?= crbH(($tituloBaixa['CLICONTADOR'] ?? '') . ' - ' . ($tituloBaixa['cliente_nome'] ?? '')) ?></td>
                                     <td><?= crbH($tituloBaixa['TITULO'] ?? '') ?></td>
                                     <td><?= crbH($tituloBaixa['TIPOES'] ?? '') ?></td>
-                                    <td><?= crbH(crbMoeda($valorBaixa)) ?></td>
+                                    <td>
+                                        <input type="text" name="valor_baixa[<?= (int)$tituloBaixa['CRCONTADOR'] ?>]" value="<?= crbH($valorCampo) ?>" inputmode="decimal" style="width:120px;text-align:right;">
+                                        <div class="text-muted small">Restante: <?= crbH(crbMoeda($valorBaixa)) ?></div>
+                                    </td>
                                 </tr>
                             <?php endforeach; ?>
                             <tr>
