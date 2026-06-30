@@ -319,7 +319,7 @@ function crbSalvar(PDO $pdo, $empresaId, $usuarioId, array $dados, $crcontadorEd
             $parcelaAtual,
             $vencimentoParcela,
             $valorAtual,
-            $titulo,
+            $crcontador,
             (int)$dados['tipoes'],
             $notaFiscal !== '' ? $notaFiscal : null,
             $usuarioId ?: null,

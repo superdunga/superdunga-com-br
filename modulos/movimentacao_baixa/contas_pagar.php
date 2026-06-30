@@ -286,7 +286,7 @@ function cpbSalvar(PDO $pdo, $empresaId, $usuarioId, array $dados, $cpcontadorEd
             $parcelaAtual,
             $vencimentoParcela,
             $valorAtual,
-            $titulo,
+            $cpcontador,
             (int)$dados['tipoes'],
             $notaFiscal !== '' ? $notaFiscal : null,
             $usuarioId ?: null,
