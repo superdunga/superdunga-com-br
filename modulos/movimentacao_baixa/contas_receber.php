@@ -111,7 +111,14 @@ function crbVencimentoParcela($primeiroVencimento, $indice, $modo, $diaFixo)
         return crbSomarMesComDia($data, $indice - 1, $dia)->format('Y-m-d');
     }
 
-    $data->modify('+' . (30 * ($indice - 1)) . ' days');
+    $intervalosDias = [
+        '7dias' => 7,
+        '10dias' => 10,
+        '15dias' => 15,
+        '30dias' => 30,
+    ];
+    $dias = $intervalosDias[$modo] ?? 30;
+    $data->modify('+' . ($dias * ($indice - 1)) . ' days');
     return $data->format('Y-m-d');
 }
 
@@ -168,7 +175,7 @@ function crbValidar(PDO $pdo, $empresaId, array $dados)
     if ($qtdParcelas > 120) {
         $erros[] = 'Numero de parcelas invalido.';
     }
-    if ($qtdParcelas > 1 && !in_array(($dados['vencimento_modo'] ?? ''), ['fixo', '30dias'], true)) {
+    if ($qtdParcelas > 1 && !in_array(($dados['vencimento_modo'] ?? ''), ['fixo', '7dias', '10dias', '15dias', '30dias'], true)) {
         $erros[] = 'Informe como calcular o vencimento das proximas parcelas.';
     }
     if ($qtdParcelas > 1 && ($dados['vencimento_modo'] ?? '') === 'fixo') {
@@ -1057,7 +1064,12 @@ require '../../layout/header.php';
                     <input type="date" id="dtvenc" name="dtvenc" value="<?= crbH($form['dtvenc']) ?>" required>
                 </div>
                 <div class="crb-field w4">
-                    <label for="clicontador">Cliente</label>
+                    <label for="clicontador">
+                        Cliente
+                        <?php if ($empresaId === 2): ?>
+                            <a href="clientes.php" class="crb-btn light" style="padding:3px 8px;font-size:12px;margin-left:8px;">Cadastrar</a>
+                        <?php endif; ?>
+                    </label>
                     <select id="clicontador" name="clicontador" required>
                         <option value="">Selecione</option>
                         <?php foreach ($clientes as $cliente): ?>
@@ -1066,6 +1078,9 @@ require '../../layout/header.php';
                             </option>
                         <?php endforeach; ?>
                     </select>
+                    <?php if ($empresaId === 2 && empty($clientes)): ?>
+                        <small class="text-muted">Nenhum cliente cadastrado. Cadastre em Mov/Baixa &gt; Clientes.</small>
+                    <?php endif; ?>
                 </div>
                 <div class="crb-field w4">
                     <label for="tipoes">TIPOES</label>
@@ -1106,6 +1121,9 @@ require '../../layout/header.php';
                         <label for="vencimento_modo">Proximos vencimentos</label>
                         <select id="vencimento_modo" name="vencimento_modo">
                             <option value="fixo" <?= $form['vencimento_modo'] === 'fixo' ? 'selected' : '' ?>>Dia fixo de vencimento</option>
+                            <option value="7dias" <?= $form['vencimento_modo'] === '7dias' ? 'selected' : '' ?>>Acrescentar 7 dias</option>
+                            <option value="10dias" <?= $form['vencimento_modo'] === '10dias' ? 'selected' : '' ?>>Acrescentar 10 dias</option>
+                            <option value="15dias" <?= $form['vencimento_modo'] === '15dias' ? 'selected' : '' ?>>Acrescentar 15 dias</option>
                             <option value="30dias" <?= $form['vencimento_modo'] === '30dias' ? 'selected' : '' ?>>Acrescentar 30 dias</option>
                         </select>
                     </div>

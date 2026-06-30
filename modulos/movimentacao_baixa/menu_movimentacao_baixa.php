@@ -31,6 +31,22 @@ $opcoes = [
         'icone' => 'CR',
         'botao' => 'btn-info',
     ],
+    [
+        'titulo' => 'Clientes',
+        'descricao' => 'Cadastro de clientes da empresa 2 nas tabelas espelhadas.',
+        'href' => 'clientes.php',
+        'modulo' => 'movimentacao_baixa_clientes',
+        'icone' => 'CL',
+        'botao' => 'btn-warning',
+    ],
+    [
+        'titulo' => 'Fornecedores',
+        'descricao' => 'Cadastro de fornecedores da empresa 2 nas tabelas espelhadas.',
+        'href' => 'fornecedores.php',
+        'modulo' => 'movimentacao_baixa_fornecedores',
+        'icone' => 'FN',
+        'botao' => 'btn-secondary',
+    ],
 ];
 
 $opcoes = filtrarOpcoesPorModulo($pdo_master, $empresaId, $opcoes);
