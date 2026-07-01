@@ -1157,7 +1157,8 @@ require '../../layout/header.php';
                             <option value="">Selecione</option>
                             <?php foreach ($contasBaixa as $conta): ?>
                                 <?php
-                                    $nomeConta = trim(($conta['CBCONTADOR'] ?? '') . ' - ' . ($conta['NUMERO'] ?? '') . ' - ' . ($conta['DESCABREV'] ?: $conta['TITULAR']));
+                                    $descricaoConta = trim((string)($conta['DESCABREV'] ?: $conta['TITULAR'] ?: $conta['NUMERO']));
+                                    $nomeConta = trim($descricaoConta . ' (' . ($conta['CBCONTADOR'] ?? '') . ($conta['NUMERO'] ? ' - ' . $conta['NUMERO'] : '') . ')');
                                     $selecionada = (string)($_POST['cbcontador_baixa'] ?? '') === (string)$conta['CBCONTADOR'];
                                 ?>
                                 <option value="<?= (int)$conta['CBCONTADOR'] ?>" <?= $selecionada ? 'selected' : '' ?>>
@@ -1172,7 +1173,7 @@ require '../../layout/header.php';
                             <option value="">Manter TIPOES de cada titulo</option>
                             <?php foreach ($tipos as $tipo): ?>
                                 <option value="<?= (int)$tipo['ESCONTADOR'] ?>" <?= (string)($_POST['tipoes_baixa'] ?? '') === (string)$tipo['ESCONTADOR'] ? 'selected' : '' ?>>
-                                    <?= crbH($tipo['ESCONTADOR'] . ' - ' . ($tipo['DESCES'] ?? '')) ?>
+                                    <?= crbH(($tipo['DESCES'] ?? '') . ' (' . $tipo['ESCONTADOR'] . ')') ?>
                                 </option>
                             <?php endforeach; ?>
                         </select>
@@ -1275,7 +1276,7 @@ require '../../layout/header.php';
                             <option value="">Selecione</option>
                             <?php foreach ($tipos as $tipo): ?>
                                 <option value="<?= (int)$tipo['ESCONTADOR'] ?>" <?= (string)($_POST['tipoes_agrupamento'] ?? ($titulosAgrupamento[0]['TIPOES'] ?? '')) === (string)$tipo['ESCONTADOR'] ? 'selected' : '' ?>>
-                                    <?= crbH($tipo['ESCONTADOR'] . ' - ' . ($tipo['DESCES'] ?? '')) ?>
+                                    <?= crbH(($tipo['DESCES'] ?? '') . ' (' . $tipo['ESCONTADOR'] . ')') ?>
                                 </option>
                             <?php endforeach; ?>
                         </select>
@@ -1354,7 +1355,7 @@ require '../../layout/header.php';
                         <option value="">Selecione</option>
                         <?php foreach ($clientes as $cliente): ?>
                             <option value="<?= (int)$cliente['CLICONTADOR'] ?>" <?= (string)$form['clicontador'] === (string)$cliente['CLICONTADOR'] ? 'selected' : '' ?>>
-                                <?= crbH($cliente['CLICONTADOR'] . ' - ' . $cliente['nome']) ?>
+                                <?= crbH($cliente['nome'] . ' (' . $cliente['CLICONTADOR'] . ')') ?>
                             </option>
                         <?php endforeach; ?>
                     </select>
@@ -1368,7 +1369,7 @@ require '../../layout/header.php';
                         <option value="">Selecione</option>
                         <?php foreach ($tipos as $tipo): ?>
                             <option value="<?= (int)$tipo['ESCONTADOR'] ?>" <?= (string)$form['tipoes'] === (string)$tipo['ESCONTADOR'] ? 'selected' : '' ?>>
-                                <?= crbH($tipo['ESCONTADOR'] . ' - ' . ($tipo['DESCES'] ?? '')) ?>
+                                <?= crbH(($tipo['DESCES'] ?? '') . ' (' . $tipo['ESCONTADOR'] . ')') ?>
                             </option>
                         <?php endforeach; ?>
                     </select>
@@ -1496,7 +1497,7 @@ require '../../layout/header.php';
                     <option value="">Todos</option>
                     <?php foreach ($tipos as $tipo): ?>
                         <option value="<?= (int)$tipo['ESCONTADOR'] ?>" <?= (string)$fTipoes === (string)$tipo['ESCONTADOR'] ? 'selected' : '' ?>>
-                            <?= crbH($tipo['ESCONTADOR'] . ' - ' . ($tipo['DESCES'] ?? '')) ?>
+                            <?= crbH(($tipo['DESCES'] ?? '') . ' (' . $tipo['ESCONTADOR'] . ')') ?>
                         </option>
                     <?php endforeach; ?>
                 </select>

@@ -569,23 +569,33 @@ require '../../layout/header.php';
                     </select>
                 </div>
                 <div class="rec-field w4 rec-despesa">
-                    <label for="fcontador">Fornecedor</label>
+                    <label for="fcontador">
+                        Fornecedor
+                        <?php if ($empresaId === 2): ?>
+                            <a href="fornecedores.php" class="rec-btn light" style="padding:3px 8px;font-size:12px;margin-left:8px;">Cadastrar</a>
+                        <?php endif; ?>
+                    </label>
                     <select id="fcontador" name="fcontador">
                         <option value="">Selecione</option>
                         <?php foreach ($fornecedores as $fornecedor): ?>
                             <option value="<?= (int)$fornecedor['FCONTADOR'] ?>" <?= (string)$form['fcontador'] === (string)$fornecedor['FCONTADOR'] ? 'selected' : '' ?>>
-                                <?= recH($fornecedor['FCONTADOR'] . ' - ' . $fornecedor['nome']) ?>
+                                <?= recH($fornecedor['nome'] . ' (' . $fornecedor['FCONTADOR'] . ')') ?>
                             </option>
                         <?php endforeach; ?>
                     </select>
                 </div>
                 <div class="rec-field w4 rec-receita">
-                    <label for="clicontador">Cliente</label>
+                    <label for="clicontador">
+                        Cliente
+                        <?php if ($empresaId === 2): ?>
+                            <a href="clientes.php" class="rec-btn light" style="padding:3px 8px;font-size:12px;margin-left:8px;">Cadastrar</a>
+                        <?php endif; ?>
+                    </label>
                     <select id="clicontador" name="clicontador">
                         <option value="">Selecione</option>
                         <?php foreach ($clientes as $cliente): ?>
                             <option value="<?= (int)$cliente['CLICONTADOR'] ?>" <?= (string)$form['clicontador'] === (string)$cliente['CLICONTADOR'] ? 'selected' : '' ?>>
-                                <?= recH($cliente['CLICONTADOR'] . ' - ' . $cliente['nome']) ?>
+                                <?= recH($cliente['nome'] . ' (' . $cliente['CLICONTADOR'] . ')') ?>
                             </option>
                         <?php endforeach; ?>
                     </select>
@@ -596,7 +606,7 @@ require '../../layout/header.php';
                         <option value="">Selecione</option>
                         <?php foreach ($tipos as $tipo): ?>
                             <option value="<?= (int)$tipo['ESCONTADOR'] ?>" data-tipomov="<?= recH($tipo['TIPOMOV']) ?>" <?= (string)$form['tipoes'] === (string)$tipo['ESCONTADOR'] ? 'selected' : '' ?>>
-                                <?= recH($tipo['TIPOMOV'] . ' - ' . $tipo['ESCONTADOR'] . ' - ' . ($tipo['DESCES'] ?? '')) ?>
+                                <?= recH(($tipo['DESCES'] ?? '') . ' (' . $tipo['ESCONTADOR'] . ' - ' . $tipo['TIPOMOV'] . ')') ?>
                             </option>
                         <?php endforeach; ?>
                     </select>

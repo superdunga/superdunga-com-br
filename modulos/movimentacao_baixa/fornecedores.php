@@ -253,7 +253,7 @@ require '../../layout/header.php';
                             <option value="">Sem tipo padrao</option>
                             <?php foreach ($tipos as $tipo): ?>
                                 <option value="<?= (int)$tipo['ESCONTADOR'] ?>" <?= (string)$form['tipoes'] === (string)$tipo['ESCONTADOR'] ? 'selected' : '' ?>>
-                                    <?= mbfH($tipo['ESCONTADOR'] . ' - ' . $tipo['DESCES'] . ' (' . $tipo['TIPOMOV'] . ')') ?>
+                                    <?= mbfH($tipo['DESCES'] . ' (' . $tipo['ESCONTADOR'] . ' - ' . $tipo['TIPOMOV'] . ')') ?>
                                 </option>
                             <?php endforeach; ?>
                         </select>

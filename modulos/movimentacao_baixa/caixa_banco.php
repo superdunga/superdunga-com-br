@@ -875,7 +875,7 @@ require_once __DIR__ . '/../../layout/header.php';
                         <option value="">Selecione</option>
                         <?php foreach ($contas as $conta): ?>
                             <option value="<?= (int)$conta['CBCONTADOR'] ?>" <?= (string)$form['cbcontador'] === (string)$conta['CBCONTADOR'] ? 'selected' : '' ?>>
-                                <?= mbH(mbDescricaoConta($conta)) ?>
+                                <?= mbH(mbDescricaoConta($conta) . ' (' . $conta['CBCONTADOR'] . ')') ?>
                             </option>
                         <?php endforeach; ?>
                     </select>
@@ -897,7 +897,7 @@ require_once __DIR__ . '/../../layout/header.php';
                                 data-contrap-conta="<?= mbH($contrapConta) ?>"
                                 <?= (string)$form['tipoes'] === (string)$tipo['ESCONTADOR'] ? 'selected' : '' ?>
                             >
-                                <?= mbH($tipo['ESCONTADOR'] . ' - ' . ($tipo['DESCES'] ?? '')) ?>
+                                <?= mbH(($tipo['DESCES'] ?? '') . ' (' . $tipo['ESCONTADOR'] . ')') ?>
                             </option>
                         <?php endforeach; ?>
                     </select>
@@ -936,7 +936,7 @@ require_once __DIR__ . '/../../layout/header.php';
                                 <option value="">Selecione</option>
                                 <?php foreach ($contas as $conta): ?>
                                     <option value="<?= (int)$conta['CBCONTADOR'] ?>" <?= (string)$form['contrap_cbcontador'] === (string)$conta['CBCONTADOR'] ? 'selected' : '' ?>>
-                                        <?= mbH(mbDescricaoConta($conta)) ?>
+                                        <?= mbH(mbDescricaoConta($conta) . ' (' . $conta['CBCONTADOR'] . ')') ?>
                                     </option>
                                 <?php endforeach; ?>
                             </select>
@@ -983,7 +983,7 @@ require_once __DIR__ . '/../../layout/header.php';
                     <option value="">Todas</option>
                     <?php foreach ($contas as $conta): ?>
                         <option value="<?= (int)$conta['CBCONTADOR'] ?>" <?= (string)$fConta === (string)$conta['CBCONTADOR'] ? 'selected' : '' ?>>
-                            <?= mbH(mbDescricaoConta($conta)) ?>
+                            <?= mbH(mbDescricaoConta($conta) . ' (' . $conta['CBCONTADOR'] . ')') ?>
                         </option>
                     <?php endforeach; ?>
                 </select>
@@ -994,7 +994,7 @@ require_once __DIR__ . '/../../layout/header.php';
                     <option value="">Todos</option>
                     <?php foreach ($tipos as $tipo): ?>
                         <option value="<?= (int)$tipo['ESCONTADOR'] ?>" <?= (string)$fTipoes === (string)$tipo['ESCONTADOR'] ? 'selected' : '' ?>>
-                            <?= mbH($tipo['ESCONTADOR'] . ' - ' . ($tipo['DESCES'] ?? '')) ?>
+                            <?= mbH(($tipo['DESCES'] ?? '') . ' (' . $tipo['ESCONTADOR'] . ')') ?>
                         </option>
                     <?php endforeach; ?>
                 </select>
