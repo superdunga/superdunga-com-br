@@ -824,6 +824,22 @@ function buscarResumoEmissorAVencerDC(PDO $pdo, int $empresaId, string $cnpjCpf,
         }
     }
 
+    if ($nomeEmissor === '') {
+        $paramsNome = array_merge([$empresaId], $digitosConsulta);
+        $stmtNome = $pdo->prepare("
+            SELECT d.nome_emissor
+            FROM desconto_cheques_documentos d
+            INNER JOIN desconto_cheques_operacoes o ON o.id = d.operacao_id
+            WHERE o.empresa_id = ?
+              AND d.cnpj_cpf_emissor IN ({$placeholdersDigitos})
+              AND COALESCE(d.nome_emissor, '') <> ''
+            ORDER BY d.id DESC
+            LIMIT 1
+        ");
+        $stmtNome->execute($paramsNome);
+        $nomeEmissor = (string)($stmtNome->fetchColumn() ?: '');
+    }
+
     return [
         'cnpj_cpf' => $digitos,
         'cnpj_cpf_consulta' => $digitosConsulta,
