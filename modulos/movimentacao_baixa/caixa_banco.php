@@ -45,6 +45,35 @@ function mbData($valor)
     return date('d/m/Y', strtotime($valor));
 }
 
+function mbNormalizarDataMovimento($valor)
+{
+    $valor = trim((string)$valor);
+    if ($valor === '') {
+        return null;
+    }
+
+    if (preg_match('/^(\d{4})-(\d{2})-(\d{2})$/', $valor, $m)) {
+        $ano = (int)$m[1];
+        if ($ano < 2000 || $ano > 2099 || !checkdate((int)$m[2], (int)$m[3], $ano)) {
+            return null;
+        }
+        return sprintf('%04d-%02d-%02d', $ano, (int)$m[2], (int)$m[3]);
+    }
+
+    if (preg_match('/^(\d{1,2})\/(\d{1,2})\/(\d{2}|\d{4})$/', $valor, $m)) {
+        $ano = (int)$m[3];
+        if ($ano < 100) {
+            $ano += 2000;
+        }
+        if ($ano < 2000 || $ano > 2099 || !checkdate((int)$m[2], (int)$m[1], $ano)) {
+            return null;
+        }
+        return sprintf('%04d-%02d-%02d', $ano, (int)$m[2], (int)$m[1]);
+    }
+
+    return null;
+}
+
 function mbH($valor)
 {
     return htmlspecialchars((string)$valor, ENT_QUOTES, 'UTF-8');
@@ -140,8 +169,8 @@ function mbValidarLancamento(PDO $pdo, $empresaId, $dados)
 {
     $erros = [];
 
-    if (empty($dados['dtmov'])) {
-        $erros[] = 'Informe a data do movimento.';
+    if (empty($dados['dtmov']) || !mbNormalizarDataMovimento($dados['dtmov'])) {
+        $erros[] = 'Informe uma data do movimento valida.';
     }
 
     if (empty($dados['cbcontador']) || !mbBuscarConta($pdo, $empresaId, $dados['cbcontador'])) {
@@ -185,6 +214,7 @@ function mbValidarLancamento(PDO $pdo, $empresaId, $dados)
 
 function mbSalvarLancamento(PDO $pdo, $empresaId, $usuarioId, $dados, $movcontadorEdicao = null)
 {
+    $dados['dtmov'] = mbNormalizarDataMovimento($dados['dtmov'] ?? '');
     list($erros, $tipo) = mbValidarLancamento($pdo, $empresaId, $dados);
     if ($erros) {
         throw new RuntimeException(implode(' ', $erros));
