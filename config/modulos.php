@@ -62,6 +62,7 @@ function sistemaModulosPadrao(): array
         ['codigo' => 'movimentacao_baixa_contas_receber', 'grupo' => 'Movimentacao/Baixa', 'nome' => 'Contas a Receber', 'url' => 'modulos/movimentacao_baixa/contas_receber.php', 'ordem' => 325, 'somente_master' => true],
         ['codigo' => 'movimentacao_baixa_clientes', 'grupo' => 'Movimentacao/Baixa', 'nome' => 'Clientes', 'url' => 'modulos/movimentacao_baixa/clientes.php', 'ordem' => 326, 'somente_master' => true],
         ['codigo' => 'movimentacao_baixa_fornecedores', 'grupo' => 'Movimentacao/Baixa', 'nome' => 'Fornecedores', 'url' => 'modulos/movimentacao_baixa/fornecedores.php', 'ordem' => 327, 'somente_master' => true],
+        ['codigo' => 'movimentacao_baixa_recorrencias', 'grupo' => 'Movimentacao/Baixa', 'nome' => 'Recorrencias', 'url' => 'modulos/movimentacao_baixa/recorrencias.php', 'ordem' => 328, 'somente_master' => true],
 
         ['codigo' => 'whatsapp', 'grupo' => 'Administracao', 'nome' => 'Mensagens WhatsApp', 'url' => 'modulos/whatsapp/index.php', 'ordem' => 310],
         ['codigo' => 'usuarios', 'grupo' => 'Administracao', 'nome' => 'Gerenciar Usuarios', 'url' => 'modulos/usuarios/listar.php', 'ordem' => 320],

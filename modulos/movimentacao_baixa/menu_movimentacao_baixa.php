@@ -47,6 +47,14 @@ $opcoes = [
         'icone' => 'FN',
         'botao' => 'btn-secondary',
     ],
+    [
+        'titulo' => 'Recorrencias',
+        'descricao' => 'Cadastre despesas e receitas recorrentes para gerar titulos mensais em lote.',
+        'href' => 'recorrencias.php',
+        'modulo' => 'movimentacao_baixa_recorrencias',
+        'icone' => 'RC',
+        'botao' => 'btn-dark',
+    ],
 ];
 
 $opcoes = filtrarOpcoesPorModulo($pdo_master, $empresaId, $opcoes);
