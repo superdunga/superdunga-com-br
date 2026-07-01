@@ -31,6 +31,14 @@ $opcoes = [
         'icone' => 'HF',
         'botao' => 'btn-outline-primary',
     ],
+    [
+        'titulo' => 'Vales Diarios',
+        'descricao' => 'Controle vale transporte e vale alimentacao antecipados pela escala mensal.',
+        'href' => 'vales_diarios.php',
+        'modulo' => 'colaboradores_vales_diarios',
+        'icone' => 'VD',
+        'botao' => 'btn-warning',
+    ],
 ];
 
 $opcoes = filtrarOpcoesPorModulo($pdo_master, $empresaId, $opcoes);
