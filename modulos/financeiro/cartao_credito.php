@@ -18,7 +18,28 @@ $mensagemOk = '';
 $mensagemErro = '';
 $faturaId = (int)($_GET['fatura_id'] ?? $_POST['fatura_id'] ?? 0);
 $competenciaFiltro = trim((string)($_GET['competencia'] ?? date('Y-m')));
+$lancDataIni = trim((string)($_GET['l_data_ini'] ?? ''));
+$lancDataFim = trim((string)($_GET['l_data_fim'] ?? ''));
+$lancBusca = trim((string)($_GET['l_busca'] ?? ''));
+$lancFornecedor = trim((string)($_GET['l_fornecedor'] ?? ''));
+$lancNatureza = strtoupper(trim((string)($_GET['l_natureza'] ?? '')));
+$lancStatus = trim((string)($_GET['l_status'] ?? ''));
+$lancTipoesParam = trim((string)($_GET['l_tipoes'] ?? ''));
+$lancTipoes = ctype_digit($lancTipoesParam) ? (int)$lancTipoesParam : 0;
 $empresaSelecionada = $empresaSessao;
+
+if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $lancDataIni)) {
+    $lancDataIni = '';
+}
+if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $lancDataFim)) {
+    $lancDataFim = '';
+}
+if (!in_array($lancNatureza, ['D', 'C'], true)) {
+    $lancNatureza = '';
+}
+if (!in_array($lancStatus, ['pendente', 'pronto', 'gerado', 'ignorado'], true)) {
+    $lancStatus = '';
+}
 
 function voltarCartaoCredito(array $extra = []): string
 {
@@ -232,6 +253,35 @@ try {
             header('Location: ' . voltarCartaoCredito(['ok' => 'lote', 'gerados' => $gerados]));
             exit;
         }
+
+        if ($acao === 'atualizar_tipoes_fornecedores') {
+            $faturaPost = (int)($_POST['fatura_id'] ?? 0);
+            $stmtAtualizaTipoes = $pdo_master->prepare("
+                UPDATE armazem_cp001 cp
+                INNER JOIN financeiro_cartao_lancamentos l
+                   ON l.empresa_id = cp.EMPRESA
+                  AND l.cpcontador = cp.CPCONTADOR
+                INNER JOIN financeiro_cartao_faturas fat
+                   ON fat.id = l.fatura_id
+                  AND fat.empresa_id = cp.EMPRESA
+                INNER JOIN armazem_cp003 f
+                   ON f.EMPRESA = cp.EMPRESA
+                  AND f.FCONTADOR = cp.FCONTADOR
+                SET cp.TIPOES = f.TIPOES,
+                    cp.DTALT = NOW(),
+                    cp.REGSTAMP = NOW()
+                WHERE fat.id = ?
+                  AND fat.empresa_id = ?
+                  AND cp.TIPODOCORIGEM = 'CARTAO'
+                  AND cp.CONTROLE = 'SUPERDUNGA_CARTAO'
+                  AND f.TIPOES IS NOT NULL
+                  AND f.TIPOES > 0
+                  AND (cp.TIPOES IS NULL OR cp.TIPOES <> f.TIPOES)
+            ");
+            $stmtAtualizaTipoes->execute([$faturaPost, $empresaSessao]);
+            header('Location: ' . voltarCartaoCredito(['ok' => 'tipoes_fornecedor', 'atualizados' => $stmtAtualizaTipoes->rowCount()]));
+            exit;
+        }
     }
 } catch (Throwable $e) {
     if ($pdo_master->inTransaction()) {
@@ -250,9 +300,22 @@ if (($_GET['ok'] ?? '') === 'importado') {
     $mensagemOk = 'Lancamentos gerados em contas a pagar: ' . (int)($_GET['gerados'] ?? 0);
 } elseif (($_GET['ok'] ?? '') === 'fornecedor_lote') {
     $mensagemOk = 'Fornecedores amarrados: ' . (int)($_GET['amarrados'] ?? 0) . ' | Criados: ' . (int)($_GET['criados'] ?? 0);
+} elseif (($_GET['ok'] ?? '') === 'tipoes_fornecedor') {
+    $mensagemOk = 'TIPOES atualizados pelo cadastro do fornecedor: ' . (int)($_GET['atualizados'] ?? 0);
 }
 
 $fornecedores = buscarFornecedoresCartaoCredito($pdo_master, $empresaSelecionada);
+
+$stmtTiposCartao = $pdo_master->prepare("
+    SELECT ESCONTADOR, DESCES, TIPOMOV
+    FROM armazem_bnc005
+    WHERE EMPRESA = ?
+      AND COALESCE(REGDISAB, 'N') <> 'S'
+      AND COALESCE(excluido_firebird, 'N') <> 'S'
+    ORDER BY DESCES, ESCONTADOR
+");
+$stmtTiposCartao->execute([$empresaSelecionada]);
+$tiposCartao = $stmtTiposCartao->fetchAll(PDO::FETCH_ASSOC);
 
 $stmtFaturas = $pdo_master->prepare("
     SELECT f.*,
@@ -285,16 +348,68 @@ if ($faturaId > 0) {
 
     if ($faturaAtual) {
         aplicarMapeamentosCartaoCredito($pdo_master, $faturaId);
+        $whereLancamentos = ['l.fatura_id = ?'];
+        $paramsLancamentos = [$faturaId];
+
+        if ($lancDataIni !== '') {
+            $whereLancamentos[] = 'l.data_compra >= ?';
+            $paramsLancamentos[] = $lancDataIni;
+        }
+        if ($lancDataFim !== '') {
+            $whereLancamentos[] = 'l.data_compra <= ?';
+            $paramsLancamentos[] = $lancDataFim;
+        }
+        if ($lancBusca !== '') {
+            $whereLancamentos[] = '(l.descricao LIKE ? OR l.categoria LIKE ? OR l.tipo_lancamento LIKE ?)';
+            $likeLanc = '%' . $lancBusca . '%';
+            array_push($paramsLancamentos, $likeLanc, $likeLanc, $likeLanc);
+        }
+        if ($lancFornecedor !== '') {
+            $whereLancamentos[] = "(f.NOME LIKE ? OR f.APELIDO LIKE ? OR l.fornecedor_fcontador LIKE ?)";
+            $likeFornecedor = '%' . $lancFornecedor . '%';
+            array_push($paramsLancamentos, $likeFornecedor, $likeFornecedor, $likeFornecedor);
+        }
+        if ($lancNatureza !== '') {
+            $whereLancamentos[] = 'l.natureza = ?';
+            $paramsLancamentos[] = $lancNatureza;
+        }
+        if ($lancTipoesParam === 'sem_padrao') {
+            $whereLancamentos[] = 'COALESCE(cp.TIPOES, f.TIPOES, 0) = 0';
+        } elseif ($lancTipoes > 0) {
+            $whereLancamentos[] = 'COALESCE(cp.TIPOES, f.TIPOES, 301) = ?';
+            $paramsLancamentos[] = $lancTipoes;
+        }
+        if ($lancStatus === 'gerado') {
+            $whereLancamentos[] = 'l.cpcontador IS NOT NULL';
+        } elseif ($lancStatus === 'ignorado') {
+            $whereLancamentos[] = "l.natureza = 'C'";
+        } elseif ($lancStatus === 'pronto') {
+            $whereLancamentos[] = "l.natureza = 'D' AND l.cpcontador IS NULL AND l.fornecedor_fcontador IS NOT NULL";
+        } elseif ($lancStatus === 'pendente') {
+            $whereLancamentos[] = "l.natureza = 'D' AND l.cpcontador IS NULL AND l.fornecedor_fcontador IS NULL";
+        }
+
         $stmtLancamentos = $pdo_master->prepare("
-            SELECT l.*, f.NOME AS fornecedor_nome, f.APELIDO AS fornecedor_apelido
+            SELECT l.*,
+                   f.NOME AS fornecedor_nome,
+                   f.APELIDO AS fornecedor_apelido,
+                   f.TIPOES AS fornecedor_tipoes,
+                   cp.TIPOES AS cp_tipoes,
+                   tipo.DESCES AS tipoes_desc
             FROM financeiro_cartao_lancamentos l
             LEFT JOIN armazem_cp003 f
                 ON f.EMPRESA = l.empresa_id
                AND f.FCONTADOR = l.fornecedor_fcontador
-            WHERE l.fatura_id = ?
+            LEFT JOIN armazem_cp001 cp
+                ON cp.EMPRESA = l.empresa_id
+               AND cp.CPCONTADOR = l.cpcontador
+            LEFT JOIN armazem_bnc005 tipo
+                ON tipo.EMPRESA = l.empresa_id
+               AND tipo.ESCONTADOR = COALESCE(cp.TIPOES, f.TIPOES, 301)
+            WHERE " . implode(' AND ', $whereLancamentos) . "
             ORDER BY l.natureza DESC, l.data_compra, l.id
         ");
-        $stmtLancamentos->execute([$faturaId]);
+        $stmtLancamentos->execute($paramsLancamentos);
         $lancamentos = $stmtLancamentos->fetchAll(PDO::FETCH_ASSOC);
 
         foreach ($lancamentos as $linhaResumo) {
@@ -510,6 +625,12 @@ require '../../layout/header.php';
                     <input type="hidden" name="competencia" value="<?= htmlspecialchars($competenciaFiltro) ?>">
                     <button class="btn btn-success btn-sm">Gerar CP001 em lote</button>
                 </form>
+                <form method="post" onsubmit="return confirm('Atualizar o TIPOES dos lancamentos ja gerados usando o cadastro atual dos fornecedores?');">
+                    <input type="hidden" name="acao" value="atualizar_tipoes_fornecedores">
+                    <input type="hidden" name="fatura_id" value="<?= (int)$faturaAtual['id'] ?>">
+                    <input type="hidden" name="competencia" value="<?= htmlspecialchars($competenciaFiltro) ?>">
+                    <button class="btn btn-outline-secondary btn-sm">Atualizar TIPOES</button>
+                </form>
             </div>
         </div>
         <div class="card-body">
@@ -547,6 +668,63 @@ require '../../layout/header.php';
                     </div>
                 </div>
             </div>
+            <div class="cartao-section-title">Filtros dos lancamentos</div>
+            <form method="get" class="row g-2 align-items-end mb-3">
+                <input type="hidden" name="competencia" value="<?= htmlspecialchars($competenciaFiltro) ?>">
+                <input type="hidden" name="fatura_id" value="<?= (int)$faturaAtual['id'] ?>">
+                <div class="col-6 col-lg-2">
+                    <label class="form-label small fw-semibold">Data inicial</label>
+                    <input type="date" name="l_data_ini" class="form-control form-control-sm" value="<?= htmlspecialchars($lancDataIni) ?>">
+                </div>
+                <div class="col-6 col-lg-2">
+                    <label class="form-label small fw-semibold">Data final</label>
+                    <input type="date" name="l_data_fim" class="form-control form-control-sm" value="<?= htmlspecialchars($lancDataFim) ?>">
+                </div>
+                <div class="col-12 col-lg-3">
+                    <label class="form-label small fw-semibold">Lancamento</label>
+                    <input type="text" name="l_busca" class="form-control form-control-sm" value="<?= htmlspecialchars($lancBusca) ?>" placeholder="Descricao, categoria ou tipo">
+                </div>
+                <div class="col-12 col-lg-3">
+                    <label class="form-label small fw-semibold">Fornecedor</label>
+                    <input type="text" name="l_fornecedor" class="form-control form-control-sm" value="<?= htmlspecialchars($lancFornecedor) ?>" placeholder="Nome ou codigo">
+                </div>
+                <div class="col-6 col-lg-2">
+                    <label class="form-label small fw-semibold">Natureza</label>
+                    <select name="l_natureza" class="form-select form-select-sm">
+                        <option value="">Todas</option>
+                        <option value="D" <?= $lancNatureza === 'D' ? 'selected' : '' ?>>Compra</option>
+                        <option value="C" <?= $lancNatureza === 'C' ? 'selected' : '' ?>>Credito/Pagamento</option>
+                    </select>
+                </div>
+                <div class="col-6 col-lg-3">
+                    <label class="form-label small fw-semibold">TIPOES</label>
+                    <select name="l_tipoes" class="form-select form-select-sm">
+                        <option value="">Todos</option>
+                        <option value="sem_padrao" <?= $lancTipoesParam === 'sem_padrao' ? 'selected' : '' ?>>Sem padrao</option>
+                        <?php foreach ($tiposCartao as $tipoCartao): ?>
+                            <option value="<?= (int)$tipoCartao['ESCONTADOR'] ?>" <?= $lancTipoes === (int)$tipoCartao['ESCONTADOR'] ? 'selected' : '' ?>>
+                                <?= htmlspecialchars(($tipoCartao['DESCES'] ?? '') . ' (' . $tipoCartao['ESCONTADOR'] . ' - ' . $tipoCartao['TIPOMOV'] . ')') ?>
+                            </option>
+                        <?php endforeach; ?>
+                    </select>
+                </div>
+                <div class="col-6 col-lg-2">
+                    <label class="form-label small fw-semibold">Status</label>
+                    <select name="l_status" class="form-select form-select-sm">
+                        <option value="">Todos</option>
+                        <option value="pendente" <?= $lancStatus === 'pendente' ? 'selected' : '' ?>>Pendente</option>
+                        <option value="pronto" <?= $lancStatus === 'pronto' ? 'selected' : '' ?>>Pronto</option>
+                        <option value="gerado" <?= $lancStatus === 'gerado' ? 'selected' : '' ?>>Gerado</option>
+                        <option value="ignorado" <?= $lancStatus === 'ignorado' ? 'selected' : '' ?>>Ignorado</option>
+                    </select>
+                </div>
+                <div class="col-12 col-lg-4 d-flex flex-wrap gap-2">
+                    <button class="btn btn-outline-primary btn-sm">Filtrar</button>
+                    <a class="btn btn-outline-secondary btn-sm" href="cartao_credito.php?competencia=<?= urlencode($competenciaFiltro) ?>&fatura_id=<?= (int)$faturaAtual['id'] ?>">Limpar filtros</a>
+                    <span class="text-muted small align-self-center"><?= count($lancamentos) ?> lancamento(s)</span>
+                </div>
+            </form>
+
             <div class="cartao-section-title">Lancamentos da fatura</div>
             <div class="table-responsive">
                 <table class="table table-sm table-hover align-middle mb-0 cartao-table">
@@ -558,6 +736,7 @@ require '../../layout/header.php';
                             <th>Tipo</th>
                             <th class="text-end">Valor</th>
                             <th>Fornecedor</th>
+                            <th>TIPOES</th>
                             <th>Status</th>
                             <th></th>
                         </tr>
@@ -598,6 +777,20 @@ require '../../layout/header.php';
                                         <span class="text-muted">-</span>
                                     <?php endif; ?>
                                 </td>
+                                <td data-label="TIPOES">
+                                    <?php if ($ehCompra): ?>
+                                        <?php
+                                            $tipoesExibicao = (int)($linha['cp_tipoes'] ?: $linha['fornecedor_tipoes'] ?: 301);
+                                            $origemTipoes = !empty($linha['cp_tipoes'])
+                                                ? 'CP001'
+                                                : (!empty($linha['fornecedor_tipoes']) ? 'Fornecedor' : 'Padrao cartao');
+                                        ?>
+                                        <div class="fw-semibold"><?= htmlspecialchars($linha['tipoes_desc'] ?: ('Tipo ' . $tipoesExibicao)) ?></div>
+                                        <div class="small text-muted"><?= $tipoesExibicao ?> | <?= htmlspecialchars($origemTipoes) ?></div>
+                                    <?php else: ?>
+                                        <span class="text-muted">-</span>
+                                    <?php endif; ?>
+                                </td>
                                 <td data-label="Status" class="cartao-status">
                                     <?php if (!empty($linha['cpcontador'])): ?>
                                         <span class="badge text-bg-success">CP <?= (int)$linha['cpcontador'] ?></span>
@@ -623,7 +816,7 @@ require '../../layout/header.php';
                             </tr>
                         <?php endforeach; ?>
                         <?php if (empty($lancamentos)): ?>
-                            <tr><td colspan="8" class="text-center text-muted py-4">Nenhum lancamento nesta fatura.</td></tr>
+                            <tr><td colspan="9" class="text-center text-muted py-4">Nenhum lancamento nesta fatura.</td></tr>
                         <?php endif; ?>
                     </tbody>
                 </table>

@@ -398,17 +398,27 @@ function gerarCp001CartaoCredito(PDO $pdo, int $lancamentoId, int $usuarioId): i
         . ' competencia ' . $linha['competencia']
         . '. Categoria: ' . ($linha['categoria'] ?: '-')
         . '. Tipo: ' . ($linha['tipo_lancamento'] ?: '-');
+    $stmtFornecedorTipoes = $pdo->prepare("
+        SELECT TIPOES
+        FROM armazem_cp003
+        WHERE EMPRESA = ?
+          AND FCONTADOR = ?
+        LIMIT 1
+    ");
+    $stmtFornecedorTipoes->execute([$empresaId, (int)$linha['fornecedor_fcontador']]);
+    $tipoesFornecedor = (int)$stmtFornecedorTipoes->fetchColumn();
+    $tipoesCartao = $tipoesFornecedor > 0 ? $tipoesFornecedor : 301;
 
     $stmtInsert = $pdo->prepare("
         INSERT INTO armazem_cp001 (
             EMPRESA, CPCONTADOR, DTCOMPRA, NUMPARCELA, TITULO, VALORCOMPRA,
             FCONTADOR, OBSERVACAO, DTEMISSAO, VLRPARCELA, PARCELA, DTVENC,
             VLRRESTANTE, VLRPAGO, STATUS, TIPODOCORIGEM, NUMDOCORIGEM, CONTROLE,
-            TIPOCP, REGSTAMP, REGIMPORT, USERLANC, DTLANC, USERALT, DTALT,
+            TIPOCP, TIPOES, REGSTAMP, REGIMPORT, USERLANC, DTLANC, USERALT, DTALT,
             CHAVEINTEGRACAO, financeiro_verificado
         ) VALUES (
             ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 'AB', 'CARTAO', ?, 'SUPERDUNGA_CARTAO',
-            'CARTAO', NOW(), 'S', ?, NOW(), ?, NOW(), ?, 'N'
+            'CARTAO', ?, NOW(), 'S', ?, NOW(), ?, NOW(), ?, 'N'
         )
     ");
     $stmtInsert->execute([
@@ -425,6 +435,7 @@ function gerarCp001CartaoCredito(PDO $pdo, int $lancamentoId, int $usuarioId): i
         $linha['data_vencimento'],
         $linha['valor'],
         'CARTAO-' . (int)$linha['fatura_id'] . '-' . (int)$linha['id'],
+        $tipoesCartao,
         $usuarioId ?: null,
         $usuarioId ?: null,
         $chave,

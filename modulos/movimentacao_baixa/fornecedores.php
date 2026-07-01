@@ -129,6 +129,8 @@ $editar = ($permitido && $empresaId === 2 && $editarId > 0) ? mbfFornecedor($pdo
 $fNome = trim((string)($_GET['nome'] ?? ''));
 $fDoc = trim((string)($_GET['documento'] ?? ''));
 $fSituacao = $_GET['situacao'] ?? 'ativos';
+$fTipoesParam = trim((string)($_GET['tipoes'] ?? ''));
+$fTipoes = ctype_digit($fTipoesParam) ? (int)$fTipoesParam : 0;
 $fornecedores = [];
 $tipos = [];
 
@@ -162,6 +164,12 @@ if ($permitido && $empresaId === 2) {
         $where[] = "COALESCE(f.REGDISAB, 'N') <> 'S'";
     } elseif ($fSituacao === 'inativos') {
         $where[] = "(COALESCE(f.INATIVO, 'N') = 'S' OR COALESCE(f.REGDISAB, 'N') = 'S')";
+    }
+    if ($fTipoesParam === 'sem_padrao') {
+        $where[] = "(f.TIPOES IS NULL OR f.TIPOES = 0)";
+    } elseif ($fTipoes > 0) {
+        $where[] = "f.TIPOES = ?";
+        $params[] = $fTipoes;
     }
 
     $stmt = $pdo->prepare("
@@ -197,7 +205,7 @@ require '../../layout/header.php';
 .mbf-hero { background: #123c69; color: #fff; border-radius: 8px; padding: 24px; display:flex; justify-content:space-between; gap:16px; align-items:center; }
 .mbf-card { background:#fff; border:1px solid #dee2e6; border-radius:8px; padding:18px; margin-top:16px; }
 .mbf-grid { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:12px; }
-.mbf-grid-3 { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:12px; }
+.mbf-grid-3 { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:12px; }
 .mbf-field label { font-size:12px; font-weight:700; color:#495057; margin-bottom:4px; display:block; }
 .mbf-field input, .mbf-field select, .mbf-field textarea { width:100%; border:1px solid #ced4da; border-radius:6px; padding:9px 10px; }
 .mbf-actions { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
@@ -294,6 +302,18 @@ require '../../layout/header.php';
                         <option value="ativos" <?= $fSituacao === 'ativos' ? 'selected' : '' ?>>Ativos</option>
                         <option value="inativos" <?= $fSituacao === 'inativos' ? 'selected' : '' ?>>Inativos</option>
                         <option value="todos" <?= $fSituacao === 'todos' ? 'selected' : '' ?>>Todos</option>
+                    </select>
+                </div>
+                <div class="mbf-field">
+                    <label>TIPOES</label>
+                    <select name="tipoes">
+                        <option value="">Todos</option>
+                        <option value="sem_padrao" <?= $fTipoesParam === 'sem_padrao' ? 'selected' : '' ?>>Sem padrao</option>
+                        <?php foreach ($tipos as $tipo): ?>
+                            <option value="<?= (int)$tipo['ESCONTADOR'] ?>" <?= $fTipoes === (int)$tipo['ESCONTADOR'] ? 'selected' : '' ?>>
+                                <?= mbfH($tipo['DESCES'] . ' (' . $tipo['ESCONTADOR'] . ' - ' . $tipo['TIPOMOV'] . ')') ?>
+                            </option>
+                        <?php endforeach; ?>
                     </select>
                 </div>
                 <div class="mbf-actions">

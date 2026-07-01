@@ -475,6 +475,46 @@ $form = [
 ];
 
 $competenciaFiltro = $_GET['competencia'] ?? date('Y-m');
+$filtroTipo = strtoupper(trim((string)($_GET['f_tipo'] ?? '')));
+$filtroAtiva = strtoupper(trim((string)($_GET['f_ativa'] ?? '')));
+$filtroTipoes = (int)($_GET['f_tipoes'] ?? 0);
+$filtroTexto = trim((string)($_GET['f_texto'] ?? ''));
+
+if (!in_array($filtroTipo, ['P', 'R'], true)) {
+    $filtroTipo = '';
+}
+if (!in_array($filtroAtiva, ['S', 'N'], true)) {
+    $filtroAtiva = '';
+}
+
+$whereRecorrencias = ['r.empresa_id = ?'];
+$paramsRecorrencias = [$empresaId];
+
+if ($filtroTipo !== '') {
+    $whereRecorrencias[] = 'r.tipo = ?';
+    $paramsRecorrencias[] = $filtroTipo;
+}
+if ($filtroAtiva !== '') {
+    $whereRecorrencias[] = 'r.ativa = ?';
+    $paramsRecorrencias[] = $filtroAtiva;
+}
+if ($filtroTipoes > 0) {
+    $whereRecorrencias[] = 'r.tipoes = ?';
+    $paramsRecorrencias[] = $filtroTipoes;
+}
+if ($filtroTexto !== '') {
+    $whereRecorrencias[] = "(
+        r.titulo LIKE ?
+        OR r.observacao LIKE ?
+        OR COALESCE(NULLIF(f.APELIDO, ''), f.NOME, '') LIKE ?
+        OR COALESCE(NULLIF(c.APELIDO, ''), c.NOME, '') LIKE ?
+        OR t.DESCES LIKE ?
+    )";
+    $textoLike = '%' . $filtroTexto . '%';
+    array_push($paramsRecorrencias, $textoLike, $textoLike, $textoLike, $textoLike, $textoLike);
+}
+
+$whereSqlRecorrencias = implode("\n      AND ", $whereRecorrencias);
 
 $stmt = $pdo->prepare("
     SELECT r.*,
@@ -492,11 +532,32 @@ $stmt = $pdo->prepare("
       ON g.empresa_id = r.empresa_id
      AND g.recorrencia_id = r.id
      AND g.competencia = ?
-    WHERE r.empresa_id = ?
+    WHERE {$whereSqlRecorrencias}
     ORDER BY r.ativa DESC, r.tipo, r.titulo, r.id
 ");
-$stmt->execute([$competenciaFiltro, $empresaId]);
+$stmt->execute(array_merge([$competenciaFiltro], $paramsRecorrencias));
 $recorrencias = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+$totalDespesas = 0.0;
+$totalReceitas = 0.0;
+foreach ($recorrencias as $rec) {
+    if ($rec['tipo'] === 'P') {
+        $totalDespesas += (float)$rec['valor'];
+    } elseif ($rec['tipo'] === 'R') {
+        $totalReceitas += (float)$rec['valor'];
+    }
+}
+
+$queryFiltros = [
+    'competencia' => $competenciaFiltro,
+    'f_tipo' => $filtroTipo,
+    'f_ativa' => $filtroAtiva,
+    'f_tipoes' => $filtroTipoes ?: '',
+    'f_texto' => $filtroTexto,
+];
+$queryFiltrosLimpos = array_filter($queryFiltros, static function ($valor) {
+    return $valor !== '' && $valor !== null;
+});
 
 require '../../layout/header.php';
 ?>
@@ -530,12 +591,19 @@ require '../../layout/header.php';
     .rec-badge { display:inline-block; border-radius:999px; padding:3px 8px; font-size:.78rem; font-weight:700; background:#e2e8f0; color:#0f172a; }
     .rec-badge.ok { background:#dcfce7; color:#166534; }
     .rec-badge.warn { background:#fff7ed; color:#9a3412; }
+    .rec-summary { display:grid; grid-template-columns:repeat(3,1fr); gap:12px; margin-bottom:14px; }
+    .rec-summary-card { border:1px solid #d8dee8; border-radius:6px; padding:12px; background:#f8fafc; }
+    .rec-summary-card .label { color:#64748b; font-size:.82rem; font-weight:700; text-transform:uppercase; }
+    .rec-summary-card .value { color:#0f172a; font-size:1.25rem; font-weight:800; margin-top:4px; }
+    .rec-summary-card.despesa { border-left:4px solid #dc2626; }
+    .rec-summary-card.receita { border-left:4px solid #16a34a; }
     @media (max-width:820px) {
         .rec-wrap { padding:12px; }
         .rec-hero { display:block; padding:18px; }
         .rec-grid { grid-template-columns:1fr; }
         .rec-field, .rec-field.w2, .rec-field.w4, .rec-field.w6, .rec-field.w12 { grid-column:span 1; }
         .rec-actions .rec-btn { width:100%; }
+        .rec-summary { grid-template-columns:1fr; }
     }
 </style>
 
@@ -670,6 +738,63 @@ require '../../layout/header.php';
 
     <div class="rec-card">
         <h2 class="rec-title">Recorrencias cadastradas</h2>
+        <form method="get" class="rec-grid" autocomplete="off" style="margin-bottom:14px;">
+            <div class="rec-field w2">
+                <label for="f_competencia">Competencia</label>
+                <input type="month" id="f_competencia" name="competencia" value="<?= recH($competenciaFiltro) ?>">
+            </div>
+            <div class="rec-field w2">
+                <label for="f_tipo">Tipo</label>
+                <select id="f_tipo" name="f_tipo">
+                    <option value="">Todos</option>
+                    <option value="P" <?= $filtroTipo === 'P' ? 'selected' : '' ?>>Despesa</option>
+                    <option value="R" <?= $filtroTipo === 'R' ? 'selected' : '' ?>>Receita</option>
+                </select>
+            </div>
+            <div class="rec-field w2">
+                <label for="f_ativa">Status</label>
+                <select id="f_ativa" name="f_ativa">
+                    <option value="">Todos</option>
+                    <option value="S" <?= $filtroAtiva === 'S' ? 'selected' : '' ?>>Ativa</option>
+                    <option value="N" <?= $filtroAtiva === 'N' ? 'selected' : '' ?>>Inativa</option>
+                </select>
+            </div>
+            <div class="rec-field w3">
+                <label for="f_tipoes">TIPOES</label>
+                <select id="f_tipoes" name="f_tipoes">
+                    <option value="">Todos</option>
+                    <?php foreach ($tipos as $tipo): ?>
+                        <option value="<?= (int)$tipo['ESCONTADOR'] ?>" <?= $filtroTipoes === (int)$tipo['ESCONTADOR'] ? 'selected' : '' ?>>
+                            <?= recH(($tipo['DESCES'] ?? '') . ' (' . $tipo['ESCONTADOR'] . ' - ' . $tipo['TIPOMOV'] . ')') ?>
+                        </option>
+                    <?php endforeach; ?>
+                </select>
+            </div>
+            <div class="rec-field w3">
+                <label for="f_texto">Buscar</label>
+                <input type="text" id="f_texto" name="f_texto" value="<?= recH($filtroTexto) ?>" placeholder="Titulo, nome, TIPOES...">
+            </div>
+            <div class="rec-field w12">
+                <button type="submit" class="rec-btn">Filtrar</button>
+                <a class="rec-btn light" href="recorrencias.php">Limpar filtros</a>
+            </div>
+        </form>
+
+        <div class="rec-summary">
+            <div class="rec-summary-card despesa">
+                <div class="label">Total de despesas</div>
+                <div class="value"><?= recH(recMoeda($totalDespesas)) ?></div>
+            </div>
+            <div class="rec-summary-card receita">
+                <div class="label">Total de receitas</div>
+                <div class="value"><?= recH(recMoeda($totalReceitas)) ?></div>
+            </div>
+            <div class="rec-summary-card">
+                <div class="label">Recorrencias filtradas</div>
+                <div class="value"><?= count($recorrencias) ?></div>
+            </div>
+        </div>
+
         <div class="rec-table-wrap">
             <table class="rec-table">
                 <thead>
@@ -716,7 +841,7 @@ require '../../layout/header.php';
                                     <span class="rec-badge warn">Pendente</span>
                                 <?php endif; ?>
                             </td>
-                            <td><a class="rec-btn light" href="recorrencias.php?editar=<?= (int)$rec['id'] ?>&competencia=<?= recH($competenciaFiltro) ?>">Editar</a></td>
+                            <td><a class="rec-btn light" href="recorrencias.php?<?= recH(http_build_query(array_merge($queryFiltrosLimpos, ['editar' => (int)$rec['id']]))) ?>">Editar</a></td>
                         </tr>
                     <?php endforeach; ?>
                 </tbody>
