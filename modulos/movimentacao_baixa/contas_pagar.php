@@ -361,6 +361,7 @@ function cpbBaixarTitulos(PDO $pdo, $empresaId, $usuarioId, array $dados)
     }
 
     $tipoesBaixa = (int)($dados['tipoes_baixa'] ?? 0);
+    $valoresBaixa = is_array($dados['valor_baixa'] ?? null) ? $dados['valor_baixa'] : [];
     $titulos = cpbCarregarTitulosParaBaixa($pdo, $empresaId, $cpcontadores);
     if (!$titulos) {
         throw new RuntimeException('Nenhum titulo aberto encontrado para baixa.');
@@ -403,8 +404,12 @@ function cpbBaixarTitulos(PDO $pdo, $empresaId, $usuarioId, array $dados)
             if ($valor <= 0) {
                 $valor = (float)($titulo['VLRPARCELA'] ?? 0);
             }
+            $valorInformado = $valoresBaixa[(int)$titulo['CPCONTADOR']] ?? null;
+            if ($valorInformado !== null && trim((string)$valorInformado) !== '') {
+                $valor = cpbFloat($valorInformado);
+            }
             if ($valor <= 0) {
-                continue;
+                throw new RuntimeException('Informe um valor valido para o CP #' . (int)$titulo['CPCONTADOR'] . '.');
             }
 
             $movcontador = cpbProximoMovcontador($pdo);
@@ -1178,6 +1183,16 @@ require '../../layout/header.php';
     <?php endif; ?>
 
     <?php if ($titulosBaixa): ?>
+        <?php
+            $dataBaixaPadrao = $_POST['data_baixa'] ?? '';
+            if ($dataBaixaPadrao === '') {
+                $vencimentosBaixa = array_filter(array_map(static function ($titulo) {
+                    return !empty($titulo['DTVENC']) ? date('Y-m-d', strtotime($titulo['DTVENC'])) : null;
+                }, $titulosBaixa));
+                sort($vencimentosBaixa);
+                $dataBaixaPadrao = $vencimentosBaixa[0] ?? date('Y-m-d');
+            }
+        ?>
         <div class="cpb-card" id="baixa">
             <h2 class="cpb-title">Confirmar baixa dos titulos selecionados</h2>
             <form method="post" autocomplete="off" onsubmit="return confirm('Confirmar baixa dos titulos selecionados?');">
@@ -1189,7 +1204,7 @@ require '../../layout/header.php';
                 <div class="cpb-grid">
                     <div class="cpb-field w3">
                         <label for="data_baixa">Data da baixa</label>
-                        <input type="date" id="data_baixa" name="data_baixa" value="<?= cpbH($_POST['data_baixa'] ?? date('Y-m-d')) ?>" required>
+                        <input type="date" id="data_baixa" name="data_baixa" value="<?= cpbH($dataBaixaPadrao) ?>" required>
                     </div>
                     <div class="cpb-field w5">
                         <label for="cbcontador_baixa">Conta de baixa</label>
@@ -1229,7 +1244,7 @@ require '../../layout/header.php';
                                 <th>Fornecedor</th>
                                 <th>Documento</th>
                                 <th>TIPOES atual</th>
-                                <th>Valor restante</th>
+                                <th>Valor da baixa</th>
                             </tr>
                         </thead>
                         <tbody>
@@ -1240,6 +1255,7 @@ require '../../layout/header.php';
                                     if ($valorBaixa <= 0) {
                                         $valorBaixa = (float)($tituloBaixa['VLRPARCELA'] ?? 0);
                                     }
+                                    $valorCampo = $_POST['valor_baixa'][$tituloBaixa['CPCONTADOR']] ?? number_format($valorBaixa, 2, ',', '.');
                                     $totalBaixa += $valorBaixa;
                                 ?>
                                 <tr>
@@ -1248,7 +1264,10 @@ require '../../layout/header.php';
                                     <td><?= cpbH(($tituloBaixa['FCONTADOR'] ?? '') . ' - ' . ($tituloBaixa['fornecedor_nome'] ?? '')) ?></td>
                                     <td><?= cpbH($tituloBaixa['TITULO'] ?? '') ?></td>
                                     <td><?= cpbH($tituloBaixa['TIPOES'] ?? '') ?></td>
-                                    <td><?= cpbH(cpbMoeda($valorBaixa)) ?></td>
+                                    <td>
+                                        <input type="text" name="valor_baixa[<?= (int)$tituloBaixa['CPCONTADOR'] ?>]" value="<?= cpbH($valorCampo) ?>" inputmode="decimal" style="width:120px;text-align:right;">
+                                        <div class="text-muted small">Restante: <?= cpbH(cpbMoeda($valorBaixa)) ?></div>
+                                    </td>
                                 </tr>
                             <?php endforeach; ?>
                             <tr>
