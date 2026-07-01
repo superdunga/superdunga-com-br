@@ -49,6 +49,11 @@ function cpbProximoMovcontador(PDO $pdo)
     return (int)$stmt->fetchColumn();
 }
 
+function cpbInvertirTipomov($tipomov)
+{
+    return strtoupper((string)$tipomov) === 'D' ? 'C' : 'D';
+}
+
 function cpbSomarMesComDia(DateTime $dataBase, $meses, $diaFixo)
 {
     $ano = (int)$dataBase->format('Y');
@@ -377,6 +382,23 @@ function cpbBaixarTitulos(PDO $pdo, $empresaId, $usuarioId, array $dados)
                 throw new RuntimeException('O TIPOES ' . $tipoes . ' nao possui TIPOMOV configurado.');
             }
 
+            $tipomovPrincipal = strtoupper((string)$tipo['TIPOMOV']);
+            $contrapTipoes = !empty($tipo['CONTRAP_TIPOES']) ? (int)$tipo['CONTRAP_TIPOES'] : 0;
+            $exigeContrap = $contrapTipoes > 0;
+            $contrapCbcontador = $exigeContrap ? (int)($tipo['CONTRAP_CBCONTADOR'] ?? 0) : 0;
+            $contrapTipomov = null;
+
+            if ($exigeContrap) {
+                if ($contrapCbcontador <= 0 || !cpbBuscarContaBaixa($pdo, $empresaId, $contrapCbcontador)) {
+                    throw new RuntimeException('O TIPOES ' . $tipoes . ' exige contrapartida, mas nao possui conta de investimento/contrapartida valida.');
+                }
+                $tipoContrap = cpbBuscarTipoes($pdo, $empresaId, $contrapTipoes);
+                if (!$tipoContrap) {
+                    throw new RuntimeException('O TIPOES de contrapartida ' . $contrapTipoes . ' nao foi encontrado.');
+                }
+                $contrapTipomov = strtoupper((string)($tipo['CONTRAP_TIPOMOV'] ?: cpbInvertirTipomov($tipomovPrincipal)));
+            }
+
             $valor = (float)($titulo['VLRRESTANTE'] ?? 0);
             if ($valor <= 0) {
                 $valor = (float)($titulo['VLRPARCELA'] ?? 0);
@@ -396,7 +418,7 @@ function cpbBaixarTitulos(PDO $pdo, $empresaId, $usuarioId, array $dados)
                     USERBNCLANC, CONTRAPARTIDA, ORIGEMCPART, DTLANC, DTPROCESSADO, deletado
                 ) VALUES (
                     ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'CP001', ?, NOW(),
-                    ?, 'N', 0, NOW(), NOW(), 'N'
+                    ?, ?, 0, NOW(), NOW(), 'N'
                 )
             ");
             $stmtBnc->execute([
@@ -404,7 +426,7 @@ function cpbBaixarTitulos(PDO $pdo, $empresaId, $usuarioId, array $dados)
                 $movcontador,
                 $dataBaixa,
                 $documento,
-                strtoupper((string)$tipo['TIPOMOV']),
+                $tipomovPrincipal,
                 $cbcontador,
                 $tipoes,
                 (int)$titulo['FCONTADOR'],
@@ -412,7 +434,34 @@ function cpbBaixarTitulos(PDO $pdo, $empresaId, $usuarioId, array $dados)
                 $valor,
                 (int)$titulo['CPCONTADOR'],
                 $usuarioId ?: null,
+                $exigeContrap ? 'S' : 'N',
             ]);
+
+            if ($exigeContrap) {
+                $movcontadorContrap = cpbProximoMovcontador($pdo);
+                $stmtBnc->execute([
+                    $empresaId,
+                    $movcontadorContrap,
+                    $dataBaixa,
+                    $documento,
+                    $contrapTipomov,
+                    $contrapCbcontador,
+                    $contrapTipoes,
+                    (int)$titulo['FCONTADOR'],
+                    'CONTRAPARTIDA - ' . $historico,
+                    $valor,
+                    (int)$titulo['CPCONTADOR'],
+                    $usuarioId ?: null,
+                    'N',
+                ]);
+
+                $pdo->prepare("
+                    UPDATE armazem_bnc001
+                    SET ORIGEMCPART = ?
+                    WHERE EMPRESA = ?
+                      AND MOVCONTADOR = ?
+                ")->execute([$movcontador, $empresaId, $movcontadorContrap]);
+            }
 
             $stmtCp = $pdo->prepare("
                 UPDATE armazem_cp001
@@ -607,6 +656,7 @@ function cpbMovimentosBaixaPorTitulo(PDO $pdo, $empresaId, array $cpcontadores)
             b.TIPOES,
             t.DESCES AS tipoes_desc,
             b.TIPOMOV,
+            b.ORIGEMCPART,
             b.HISTMOV,
             b.VALORMOV,
             a.id AS acerto_id
@@ -703,6 +753,10 @@ function cpbExcluirBaixaTitulo(PDO $pdo, $empresaId, $usuarioId, $movcontador)
         throw new RuntimeException('Baixa nao encontrada para exclusao.');
     }
 
+    if ((int)($baixa['ORIGEMCPART'] ?? 0) > 0) {
+        throw new RuntimeException('Exclua a baixa principal para desfazer tambem a contrapartida.');
+    }
+
     $stmtAcerto = $pdo->prepare("
         SELECT COUNT(*)
         FROM financeiro_acertos_extrato_itens ai
@@ -715,6 +769,24 @@ function cpbExcluirBaixaTitulo(PDO $pdo, $empresaId, $usuarioId, $movcontador)
     $stmtAcerto->execute([$empresaId, $movcontador]);
     if ((int)$stmtAcerto->fetchColumn() > 0) {
         throw new RuntimeException('Baixa vinculada a acerto ativo nao pode ser excluida.');
+    }
+
+    $stmtContrapAcerto = $pdo->prepare("
+        SELECT COUNT(*)
+        FROM armazem_bnc001 b
+        INNER JOIN financeiro_acertos_extrato_itens ai
+            ON ai.empresa_id = b.EMPRESA
+           AND ai.movcontador = b.MOVCONTADOR
+        INNER JOIN financeiro_acertos_extrato a
+            ON a.id = ai.acerto_id
+           AND a.status = 'ATIVO'
+        WHERE b.EMPRESA = ?
+          AND b.ORIGEMCPART = ?
+          AND COALESCE(b.deletado, 'N') <> 'S'
+    ");
+    $stmtContrapAcerto->execute([$empresaId, $movcontador]);
+    if ((int)$stmtContrapAcerto->fetchColumn() > 0) {
+        throw new RuntimeException('Contrapartida vinculada a acerto ativo nao pode ser excluida.');
     }
 
     $cpcontador = (int)$baixa['CPCONTADOR'];
@@ -734,6 +806,18 @@ function cpbExcluirBaixaTitulo(PDO $pdo, $empresaId, $usuarioId, $movcontador)
               AND MOVCONTADOR = ?
         ");
         $stmtDelete->execute([$usuarioId ?: null, $empresaId, $movcontador]);
+        $pdo->prepare("
+            UPDATE armazem_bnc001
+            SET deletado = 'S',
+                data_delecao_firebird = NOW(),
+                motivo_sync = 'BAIXA_CP_CONTRAPARTIDA_EXCLUIDA_MOVIMENTACAO_BAIXA',
+                USERBNCALT = ?,
+                DTALT = NOW(),
+                REGSTAMP = NOW()
+            WHERE EMPRESA = ?
+              AND ORIGEMCPART = ?
+              AND COALESCE(deletado, 'N') <> 'S'
+        ")->execute([$usuarioId ?: null, $empresaId, $movcontador]);
 
         $stmtCp = $pdo->prepare("
             UPDATE armazem_cp001
@@ -1651,7 +1735,9 @@ require '../../layout/header.php';
                                                                 <?php endif; ?>
                                                             </td>
                                                             <td>
-                                                                <?php if (empty($baixa['acerto_id'])): ?>
+                                                                <?php if (!empty($baixa['ORIGEMCPART'])): ?>
+                                                                    <span class="text-muted small">Contrapartida</span>
+                                                                <?php elseif (empty($baixa['acerto_id'])): ?>
                                                                     <form method="post" style="display:inline;" onsubmit="return confirm('Excluir esta baixa e reabrir o titulo?');">
                                                                         <input type="hidden" name="acao" value="excluir_baixa">
                                                                         <input type="hidden" name="movcontador" value="<?= (int)$baixa['MOVCONTADOR'] ?>">

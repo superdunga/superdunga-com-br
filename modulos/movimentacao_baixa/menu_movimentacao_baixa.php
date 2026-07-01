@@ -48,6 +48,24 @@ $opcoes = [
         'botao' => 'btn-secondary',
     ],
     [
+        'titulo' => 'Contas BNC002',
+        'descricao' => 'Cadastro das contas caixa/banco/investimento da empresa 2.',
+        'href' => 'contas_bnc.php',
+        'modulo' => 'movimentacao_baixa_contas_bnc',
+        'icone' => 'CC',
+        'botao' => 'btn-info',
+        'somente_empresa' => 2,
+    ],
+    [
+        'titulo' => 'TipoES',
+        'descricao' => 'Cadastro dos tipos de movimentacao e regra de contrapartida/investimento da empresa 2.',
+        'href' => 'tipoes.php',
+        'modulo' => 'movimentacao_baixa_tipoes',
+        'icone' => 'TE',
+        'botao' => 'btn-primary',
+        'somente_empresa' => 2,
+    ],
+    [
         'titulo' => 'Recorrencias',
         'descricao' => 'Cadastre despesas e receitas recorrentes para gerar titulos mensais em lote.',
         'href' => 'recorrencias.php',
@@ -56,6 +74,10 @@ $opcoes = [
         'botao' => 'btn-dark',
     ],
 ];
+
+$opcoes = array_values(array_filter($opcoes, static function ($opcao) use ($empresaId) {
+    return empty($opcao['somente_empresa']) || (int)$opcao['somente_empresa'] === $empresaId;
+}));
 
 $opcoes = filtrarOpcoesPorModulo($pdo_master, $empresaId, $opcoes);
 ?>
