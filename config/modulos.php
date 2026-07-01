@@ -66,6 +66,7 @@ function sistemaModulosPadrao(): array
         ['codigo' => 'movimentacao_baixa_contas_bnc', 'grupo' => 'Movimentacao/Baixa', 'nome' => 'Contas BNC002', 'url' => 'modulos/movimentacao_baixa/contas_bnc.php', 'ordem' => 329, 'somente_master' => true],
         ['codigo' => 'movimentacao_baixa_tipoes', 'grupo' => 'Movimentacao/Baixa', 'nome' => 'TipoES', 'url' => 'modulos/movimentacao_baixa/tipoes.php', 'ordem' => 330, 'somente_master' => true],
         ['codigo' => 'movimentacao_baixa_recorrencias', 'grupo' => 'Movimentacao/Baixa', 'nome' => 'Recorrencias', 'url' => 'modulos/movimentacao_baixa/recorrencias.php', 'ordem' => 331, 'somente_master' => true],
+        ['codigo' => 'movimentacao_baixa_investimentos', 'grupo' => 'Movimentacao/Baixa', 'nome' => 'Investimentos', 'url' => 'modulos/movimentacao_baixa/investimentos.php', 'ordem' => 332, 'somente_master' => true],
 
         ['codigo' => 'whatsapp', 'grupo' => 'Administracao', 'nome' => 'Mensagens WhatsApp', 'url' => 'modulos/whatsapp/index.php', 'ordem' => 310],
         ['codigo' => 'usuarios', 'grupo' => 'Administracao', 'nome' => 'Gerenciar Usuarios', 'url' => 'modulos/usuarios/listar.php', 'ordem' => 320],

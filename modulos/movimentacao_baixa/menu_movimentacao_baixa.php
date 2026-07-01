@@ -73,6 +73,15 @@ $opcoes = [
         'icone' => 'RC',
         'botao' => 'btn-dark',
     ],
+    [
+        'titulo' => 'Investimentos',
+        'descricao' => 'Controle a carteira inicial, custo medio e valor atual dos ativos da empresa 2.',
+        'href' => 'investimentos.php',
+        'modulo' => 'movimentacao_baixa_investimentos',
+        'icone' => 'IV',
+        'botao' => 'btn-success',
+        'somente_empresa' => 2,
+    ],
 ];
 
 $opcoes = array_values(array_filter($opcoes, static function ($opcao) use ($empresaId) {
