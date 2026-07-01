@@ -91,6 +91,10 @@ function garantirTabelasDescontoCheques(PDO $pdo): void
     garantirColunaDC($pdo, 'desconto_cheques_operacoes', 'historico_taxas_tarifas', "VARCHAR(255) NULL AFTER valor_taxas_tarifas");
     garantirColunaDC($pdo, 'desconto_cheques_operacoes', 'valor_descontar', "DECIMAL(15,2) NOT NULL DEFAULT 0 AFTER historico_taxas_tarifas");
     garantirColunaDC($pdo, 'desconto_cheques_operacoes', 'historico_descontar', "VARCHAR(255) NULL AFTER valor_descontar");
+    garantirColunaDC($pdo, 'desconto_cheques_operacoes', 'mov_bruto', "INT NULL AFTER historico_descontar");
+    garantirColunaDC($pdo, 'desconto_cheques_operacoes', 'mov_desconto', "INT NULL AFTER mov_bruto");
+    garantirColunaDC($pdo, 'desconto_cheques_operacoes', 'mov_taxas', "INT NULL AFTER mov_desconto");
+    garantirColunaDC($pdo, 'desconto_cheques_operacoes', 'mov_outros', "INT NULL AFTER mov_taxas");
 
     $pdo->exec("
         CREATE TABLE IF NOT EXISTS desconto_cheques_documentos (
@@ -123,11 +127,13 @@ function garantirTabelasDescontoCheques(PDO $pdo): void
 
     garantirColunaDC($pdo, 'desconto_cheques_documentos', 'cnpj_cpf_emissor', "VARCHAR(20) NULL AFTER numero_documento");
     garantirColunaDC($pdo, 'desconto_cheques_documentos', 'nome_emissor', "VARCHAR(180) NULL AFTER cnpj_cpf_emissor");
+    garantirColunaDC($pdo, 'desconto_cheques_documentos', 'crcontador', "INT NULL AFTER nome_emissor");
     garantirColunaDC($pdo, 'desconto_cheques_documentos', 'arquivo_frente_nome', "VARCHAR(255) NULL AFTER arquivo_caminho");
     garantirColunaDC($pdo, 'desconto_cheques_documentos', 'arquivo_frente_caminho', "VARCHAR(255) NULL AFTER arquivo_frente_nome");
     garantirColunaDC($pdo, 'desconto_cheques_documentos', 'arquivo_verso_nome', "VARCHAR(255) NULL AFTER arquivo_frente_caminho");
     garantirColunaDC($pdo, 'desconto_cheques_documentos', 'arquivo_verso_caminho', "VARCHAR(255) NULL AFTER arquivo_verso_nome");
     garantirIndiceDC($pdo, 'desconto_cheques_documentos', 'idx_dc_documentos_emissor_vencimento', ['cnpj_cpf_emissor', 'data_vencimento']);
+    garantirIndiceDC($pdo, 'desconto_cheques_documentos', 'idx_dc_documentos_crcontador', ['crcontador']);
 }
 
 function normalizarTextoDC(string $texto): string

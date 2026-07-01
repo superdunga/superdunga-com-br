@@ -29,6 +29,156 @@ function arquivoUploadLinhaDC(?array $arquivos, int $idx): array
     ];
 }
 
+function proximoCrcontadorDescontoCheques(PDO $pdo, int $empresaId): int
+{
+    $stmt = $pdo->prepare("SELECT COALESCE(MAX(CRCONTADOR), 0) + 1 FROM armazem_cr001 WHERE EMPRESA = ?");
+    $stmt->execute([$empresaId]);
+    return (int)$stmt->fetchColumn();
+}
+
+function proximoMovcontadorDescontoCheques(PDO $pdo): int
+{
+    $stmt = $pdo->query("SELECT COALESCE(MAX(MOVCONTADOR), 0) + 1 FROM armazem_bnc001");
+    return (int)$stmt->fetchColumn();
+}
+
+function gerarMovimentoDescontoCheques(PDO $pdo, int $empresaId, int $usuarioId, int $operacaoId, string $data, string $tipomov, int $tipoes, float $valor, string $historico): ?int
+{
+    if ($valor <= 0) {
+        return null;
+    }
+
+    $movcontador = proximoMovcontadorDescontoCheques($pdo);
+    $stmt = $pdo->prepare("
+        INSERT INTO armazem_bnc001 (
+            EMPRESA, MOVCONTADOR, DTMOV, NUMDOC, TIPOMOV, CBCONTADOR, TIPOES,
+            HISTMOV, VALORMOV, TIPODOCORIGEM, NUMDOCORIGEM, REGSTAMP,
+            USERBNCLANC, CONTRAPARTIDA, ORIGEMCPART, DTLANC, DTPROCESSADO, deletado
+        ) VALUES (
+            ?, ?, ?, ?, ?, 38, ?, ?, ?, 'DESCONTO_CHEQUES', ?, NOW(),
+            ?, 'N', 0, NOW(), NOW(), 'N'
+        )
+    ");
+    $stmt->execute([
+        $empresaId,
+        $movcontador,
+        $data,
+        'DESCCH-' . $operacaoId,
+        $tipomov,
+        $tipoes,
+        $historico,
+        $valor,
+        $operacaoId,
+        $usuarioId ?: null,
+    ]);
+
+    return $movcontador;
+}
+
+function gerarLancamentosFinanceirosDescontoCheques(PDO $pdo, int $empresaId, int $usuarioId, int $operacaoId): array
+{
+    $stmtOperacao = $pdo->prepare("
+        SELECT o.*, c.nome AS cliente_nome
+        FROM desconto_cheques_operacoes o
+        INNER JOIN desconto_cheques_clientes c ON c.id = o.cliente_id
+        WHERE o.id = ?
+          AND o.empresa_id = ?
+        LIMIT 1
+    ");
+    $stmtOperacao->execute([$operacaoId, $empresaId]);
+    $operacao = $stmtOperacao->fetch(PDO::FETCH_ASSOC);
+    if (!$operacao) {
+        throw new RuntimeException('Operacao nao encontrada.');
+    }
+    if (($operacao['status'] ?? '') === 'LANCADA') {
+        throw new RuntimeException('Esta operacao ja foi lancada no financeiro.');
+    }
+
+    $stmtDocs = $pdo->prepare("
+        SELECT *
+        FROM desconto_cheques_documentos
+        WHERE operacao_id = ?
+        ORDER BY data_vencimento, id
+    ");
+    $stmtDocs->execute([$operacaoId]);
+    $documentos = $stmtDocs->fetchAll(PDO::FETCH_ASSOC);
+    if (!$documentos) {
+        throw new RuntimeException('Operacao sem documentos para lancar.');
+    }
+
+    $pdo->beginTransaction();
+    try {
+        $crGerados = 0;
+        foreach ($documentos as $doc) {
+            if (!empty($doc['crcontador'])) {
+                continue;
+            }
+            $crcontador = proximoCrcontadorDescontoCheques($pdo, $empresaId);
+            $titulo = trim(($doc['tipo_documento'] ?? 'CHEQUE') . ' DESC. CHEQUES OP #' . $operacaoId . ' DOC ' . ($doc['numero_documento'] ?: $doc['id']));
+            $obs = trim('Operacao de desconto #' . $operacaoId . ' | Emissor: ' . ($doc['nome_emissor'] ?: '-') . ' | CPF/CNPJ: ' . ($doc['cnpj_cpf_emissor'] ?: '-'));
+            $chave = 'DESCONTO-CHEQUES-DOC-' . $empresaId . '-' . (int)$doc['id'];
+
+            $stmtCr = $pdo->prepare("
+                INSERT INTO armazem_cr001 (
+                    EMPRESA, CRCONTADOR, DTVENDA, NUMPARCELA, TITULO, VALORVENDA,
+                    CLICONTADOR, OBSERVACAO, DTEMISSAO, VLRPARCELA, PARCELA, DTVENC,
+                    VLRRESTANTE, VLRPAGO, STATUS, TIPODOCORIGEM, NUMDOCORIGEM, CONTROLE,
+                    TIPOCR, TIPOES, NOTAFISCAL, REGSTAMP, USERLANC, DTLANC,
+                    USERALT, DTALT, CHAVEINTEGRACAO, financeiro_verificado, excluido_firebird
+                ) VALUES (
+                    ?, ?, ?, 1, ?, ?, NULL, ?, ?, ?, '1/1', ?, ?, 0, 'AB', 'DESCONTO_CHEQUES', ?, 'DESCONTO_CHEQUES',
+                    'CR', 302, NULL, NOW(), ?, NOW(), ?, NOW(), ?, 'N', 'N'
+                )
+            ");
+            $stmtCr->execute([
+                $empresaId,
+                $crcontador,
+                $operacao['data_referencia'],
+                $titulo,
+                (float)$doc['valor'],
+                $obs,
+                $operacao['data_referencia'],
+                (float)$doc['valor'],
+                $doc['data_vencimento'],
+                (float)$doc['valor'],
+                (int)$doc['id'],
+                $usuarioId ?: null,
+                $usuarioId ?: null,
+                $chave,
+            ]);
+
+            $pdo->prepare("UPDATE desconto_cheques_documentos SET crcontador = ? WHERE id = ? AND operacao_id = ?")
+                ->execute([$crcontador, (int)$doc['id'], $operacaoId]);
+            $crGerados++;
+        }
+
+        $movBruto = $operacao['mov_bruto'] ?: gerarMovimentoDescontoCheques($pdo, $empresaId, $usuarioId, $operacaoId, $operacao['data_referencia'], 'D', 302, (float)$operacao['valor_bruto'], 'DESC. CHEQUES OP #' . $operacaoId . ' - VALOR BRUTO - ' . $operacao['cliente_nome']);
+        $movDesconto = $operacao['mov_desconto'] ?: gerarMovimentoDescontoCheques($pdo, $empresaId, $usuarioId, $operacaoId, $operacao['data_referencia'], 'C', 51, (float)$operacao['valor_desconto'], 'DESC. CHEQUES OP #' . $operacaoId . ' - DESCONTO');
+        $movTaxas = $operacao['mov_taxas'] ?: gerarMovimentoDescontoCheques($pdo, $empresaId, $usuarioId, $operacaoId, $operacao['data_referencia'], 'C', 51, (float)$operacao['valor_taxas_tarifas'], 'DESC. CHEQUES OP #' . $operacaoId . ' - TAXAS/TARIFAS');
+        $movOutros = $operacao['mov_outros'] ?: gerarMovimentoDescontoCheques($pdo, $empresaId, $usuarioId, $operacaoId, $operacao['data_referencia'], 'C', 51, (float)$operacao['valor_descontar'], 'DESC. CHEQUES OP #' . $operacaoId . ' - OUTROS DESCONTOS');
+
+        $stmtUpdate = $pdo->prepare("
+            UPDATE desconto_cheques_operacoes
+            SET status = 'LANCADA',
+                mov_bruto = COALESCE(mov_bruto, ?),
+                mov_desconto = COALESCE(mov_desconto, ?),
+                mov_taxas = COALESCE(mov_taxas, ?),
+                mov_outros = COALESCE(mov_outros, ?)
+            WHERE id = ?
+              AND empresa_id = ?
+        ");
+        $stmtUpdate->execute([$movBruto, $movDesconto, $movTaxas, $movOutros, $operacaoId, $empresaId]);
+
+        $pdo->commit();
+        return ['cr' => $crGerados];
+    } catch (Throwable $e) {
+        if ($pdo->inTransaction()) {
+            $pdo->rollBack();
+        }
+        throw $e;
+    }
+}
+
 $stmtClientes = $pdo_master->prepare("
     SELECT *
     FROM desconto_cheques_clientes
@@ -76,7 +226,18 @@ if ($operacaoEditarId > 0) {
     }
 }
 
-if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['acao'] ?? '') === 'gerar_financeiro') {
+    $operacaoGerarId = (int)($_POST['operacao_id'] ?? 0);
+    try {
+        $resultadoGeracao = gerarLancamentosFinanceirosDescontoCheques($pdo_master, $empresaId, $usuarioId, $operacaoGerarId);
+        header('Location: operacoes.php?ok=financeiro&id=' . $operacaoGerarId . '&cr=' . (int)$resultadoGeracao['cr']);
+        exit;
+    } catch (Throwable $e) {
+        $mensagemErro = 'Erro ao gerar lancamentos: ' . $e->getMessage();
+    }
+}
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['acao'] ?? '') !== 'gerar_financeiro') {
     $dataReferencia = $_POST['data_referencia'] ?: date('Y-m-d');
     $clienteId = (int)($_POST['cliente_id'] ?? 0);
     $observacao = trim((string)($_POST['observacao'] ?? ''));
@@ -108,7 +269,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
     }
 
-    if (!isset($clientesPorId[$clienteId])) {
+    if ($operacaoEditar && ($operacaoEditar['status'] ?? '') === 'LANCADA') {
+        $mensagemErro = 'Operacao ja lancada no financeiro e nao pode ser editada.';
+    } elseif (!isset($clientesPorId[$clienteId])) {
         $mensagemErro = 'Informe um cliente ativo.';
     } elseif ($valorTaxasTarifas < 0 || $valorDescontar < 0) {
         $mensagemErro = 'Taxas/tarifas e valores a descontar nao podem ser negativos.';
@@ -380,12 +543,55 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 $filtroCliente = (int)($_GET['cliente_id'] ?? 0);
 $dataIni = $_GET['data_ini'] ?? date('Y-m-01');
 $dataFim = $_GET['data_fim'] ?? date('Y-m-d');
+$filtroStatus = strtoupper(trim((string)($_GET['status'] ?? '')));
+$filtroBusca = trim((string)($_GET['busca'] ?? ''));
+$valorMin = trim((string)($_GET['valor_min'] ?? ''));
+$valorMax = trim((string)($_GET['valor_max'] ?? ''));
+
+if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $dataIni)) {
+    $dataIni = date('Y-m-01');
+}
+if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $dataFim)) {
+    $dataFim = date('Y-m-d');
+}
 $where = ['o.empresa_id = ?', 'o.data_referencia BETWEEN ? AND ?'];
 $params = [$empresaId, $dataIni, $dataFim];
 
 if ($filtroCliente > 0) {
     $where[] = 'o.cliente_id = ?';
     $params[] = $filtroCliente;
+}
+if ($filtroStatus !== '') {
+    $where[] = 'o.status = ?';
+    $params[] = $filtroStatus;
+}
+if ($valorMin !== '') {
+    $where[] = 'o.valor_liquido >= ?';
+    $params[] = decimalDC($valorMin);
+}
+if ($valorMax !== '') {
+    $where[] = 'o.valor_liquido <= ?';
+    $params[] = decimalDC($valorMax);
+}
+if ($filtroBusca !== '') {
+    $where[] = "(
+        o.id = ?
+        OR o.observacao LIKE ?
+        OR c.nome LIKE ?
+        OR EXISTS (
+            SELECT 1
+            FROM desconto_cheques_documentos d
+            WHERE d.operacao_id = o.id
+              AND (
+                d.numero_documento LIKE ?
+                OR d.cnpj_cpf_emissor LIKE ?
+                OR d.nome_emissor LIKE ?
+              )
+        )
+    )";
+    $likeBusca = '%' . $filtroBusca . '%';
+    $params[] = ctype_digit($filtroBusca) ? (int)$filtroBusca : 0;
+    array_push($params, $likeBusca, $likeBusca, $likeBusca, $likeBusca, $likeBusca);
 }
 
 $stmtOperacoes = $pdo_master->prepare("
@@ -401,6 +607,19 @@ $stmtOperacoes = $pdo_master->prepare("
 ");
 $stmtOperacoes->execute($params);
 $operacoes = $stmtOperacoes->fetchAll(PDO::FETCH_ASSOC);
+
+$totaisOperacoes = [
+    'bruto' => 0.0,
+    'desconto' => 0.0,
+    'outros' => 0.0,
+    'liquido' => 0.0,
+];
+foreach ($operacoes as $operacaoTotal) {
+    $totaisOperacoes['bruto'] += (float)($operacaoTotal['valor_bruto'] ?? 0);
+    $totaisOperacoes['desconto'] += (float)($operacaoTotal['valor_desconto'] ?? 0);
+    $totaisOperacoes['outros'] += (float)($operacaoTotal['valor_taxas_tarifas'] ?? 0) + (float)($operacaoTotal['valor_descontar'] ?? 0);
+    $totaisOperacoes['liquido'] += (float)($operacaoTotal['valor_liquido'] ?? 0);
+}
 
 $formOperacao = $operacaoEditar ?: [
     'id' => 0,
@@ -427,6 +646,7 @@ $formDocumentos = $documentosEditar ?: [[
     'arquivo_verso_nome' => '',
     'arquivo_verso_caminho' => '',
 ]];
+$operacaoLancada = $operacaoEditar && ($operacaoEditar['status'] ?? '') === 'LANCADA';
 
 require '../../layout/header.php';
 ?>
@@ -666,7 +886,11 @@ require '../../layout/header.php';
 </section>
 
 <?php if (!empty($_GET['ok'])): ?>
-    <div class="alert alert-success">Operacao #<?= (int)($_GET['id'] ?? 0) ?> <?= $_GET['ok'] === 'edit' ? 'atualizada' : 'salva' ?> com sucesso.</div>
+    <?php if ($_GET['ok'] === 'financeiro'): ?>
+        <div class="alert alert-success">Lancamentos financeiros da operacao #<?= (int)($_GET['id'] ?? 0) ?> gerados com sucesso. Titulos CR001 criados: <?= (int)($_GET['cr'] ?? 0) ?>.</div>
+    <?php else: ?>
+        <div class="alert alert-success">Operacao #<?= (int)($_GET['id'] ?? 0) ?> <?= $_GET['ok'] === 'edit' ? 'atualizada' : 'salva' ?> com sucesso.</div>
+    <?php endif; ?>
 <?php endif; ?>
 <?php if ($mensagemErro !== ''): ?>
     <div class="alert alert-danger"><?= htmlspecialchars($mensagemErro) ?></div>
@@ -698,9 +922,13 @@ require '../../layout/header.php';
             <?php if (empty($clientes)): ?>
                 <div class="alert alert-warning mb-0">Cadastre um cliente ativo antes de lancar uma operacao.</div>
             <?php else: ?>
+                <?php if ($operacaoLancada): ?>
+                    <div class="alert alert-info">Operacao lancada no financeiro. Os dados ficam disponiveis somente para consulta.</div>
+                <?php endif; ?>
                 <form method="post" enctype="multipart/form-data" id="formOperacao" class="row g-3">
                     <input type="hidden" name="operacao_id" value="<?= (int)$formOperacao['id'] ?>">
                     <input type="hidden" name="continuar_editando" id="continuarEditando" value="0">
+                    <fieldset class="row g-3 m-0 p-0 border-0" <?= $operacaoLancada ? 'disabled' : '' ?>>
                     <div class="col-12 col-md-4 col-lg-3">
                         <label class="form-label">Data de referencia</label>
                         <input type="date" name="data_referencia" class="form-control" value="<?= htmlspecialchars((string)$formOperacao['data_referencia']) ?>" required>
@@ -918,9 +1146,12 @@ require '../../layout/header.php';
                     </div>
 
                     <div class="col-12 dc-main-actions">
-                        <button type="submit" class="btn btn-primary"><?= $operacaoEditar ? 'Atualizar operacao' : 'Salvar operacao' ?></button>
+                        <?php if (!$operacaoLancada): ?>
+                            <button type="submit" class="btn btn-primary"><?= $operacaoEditar ? 'Atualizar operacao' : 'Salvar operacao' ?></button>
+                        <?php endif; ?>
                         <a href="operacoes.php" class="btn btn-outline-secondary">Voltar para operacoes</a>
                     </div>
+                    </fieldset>
                 </form>
             <?php endif; ?>
         </div>
@@ -934,6 +1165,84 @@ require '../../layout/header.php';
         <div class="card-header bg-white d-flex justify-content-between align-items-center gap-2">
             <h2 class="h6 fw-bold mb-0">Operacoes ja salvas</h2>
             <a href="operacoes.php?nova=1" class="btn btn-primary btn-sm">Nova Operacao</a>
+        </div>
+        <div class="card-body border-bottom">
+            <form method="get" class="row g-2 align-items-end">
+                <div class="col-6 col-lg-2">
+                    <label class="form-label small fw-semibold">Data inicial</label>
+                    <input type="date" name="data_ini" class="form-control form-control-sm" value="<?= htmlspecialchars($dataIni) ?>">
+                </div>
+                <div class="col-6 col-lg-2">
+                    <label class="form-label small fw-semibold">Data final</label>
+                    <input type="date" name="data_fim" class="form-control form-control-sm" value="<?= htmlspecialchars($dataFim) ?>">
+                </div>
+                <div class="col-12 col-lg-3">
+                    <label class="form-label small fw-semibold">Cliente</label>
+                    <select name="cliente_id" class="form-select form-select-sm">
+                        <option value="">Todos</option>
+                        <?php foreach ($clientes as $clienteFiltro): ?>
+                            <option value="<?= (int)$clienteFiltro['id'] ?>" <?= $filtroCliente === (int)$clienteFiltro['id'] ? 'selected' : '' ?>>
+                                <?= htmlspecialchars($clienteFiltro['nome']) ?>
+                            </option>
+                        <?php endforeach; ?>
+                    </select>
+                </div>
+                <div class="col-6 col-lg-2">
+                    <label class="form-label small fw-semibold">Status</label>
+                    <select name="status" class="form-select form-select-sm">
+                        <option value="">Todos</option>
+                        <option value="ABERTA" <?= $filtroStatus === 'ABERTA' ? 'selected' : '' ?>>Aberta</option>
+                        <option value="LANCADA" <?= $filtroStatus === 'LANCADA' ? 'selected' : '' ?>>Lancada</option>
+                        <option value="FECHADA" <?= $filtroStatus === 'FECHADA' ? 'selected' : '' ?>>Fechada</option>
+                        <option value="CANCELADA" <?= $filtroStatus === 'CANCELADA' ? 'selected' : '' ?>>Cancelada</option>
+                    </select>
+                </div>
+                <div class="col-6 col-lg-3">
+                    <label class="form-label small fw-semibold">Buscar</label>
+                    <input type="text" name="busca" class="form-control form-control-sm" value="<?= htmlspecialchars($filtroBusca) ?>" placeholder="Operacao, emissor, CPF/CNPJ, documento">
+                </div>
+                <div class="col-6 col-lg-2">
+                    <label class="form-label small fw-semibold">Liquido minimo</label>
+                    <input type="text" name="valor_min" inputmode="decimal" class="form-control form-control-sm" value="<?= htmlspecialchars($valorMin) ?>">
+                </div>
+                <div class="col-6 col-lg-2">
+                    <label class="form-label small fw-semibold">Liquido maximo</label>
+                    <input type="text" name="valor_max" inputmode="decimal" class="form-control form-control-sm" value="<?= htmlspecialchars($valorMax) ?>">
+                </div>
+                <div class="col-12 col-lg-8 d-flex flex-wrap gap-2">
+                    <button class="btn btn-outline-primary btn-sm">Filtrar</button>
+                    <a href="operacoes.php" class="btn btn-outline-secondary btn-sm">Limpar filtros</a>
+                    <span class="text-muted small align-self-center"><?= count($operacoes) ?> operacao(oes)</span>
+                </div>
+            </form>
+        </div>
+        <div class="card-body border-bottom bg-light">
+            <div class="row g-2">
+                <div class="col-6 col-lg-3">
+                    <div class="dc-total-card">
+                        <div class="dc-total-label">Bruto</div>
+                        <div class="dc-total-value"><?= moedaDC($totaisOperacoes['bruto']) ?></div>
+                    </div>
+                </div>
+                <div class="col-6 col-lg-3">
+                    <div class="dc-total-card">
+                        <div class="dc-total-label">Desconto</div>
+                        <div class="dc-total-value negative"><?= moedaDC($totaisOperacoes['desconto']) ?></div>
+                    </div>
+                </div>
+                <div class="col-6 col-lg-3">
+                    <div class="dc-total-card">
+                        <div class="dc-total-label">Outros descontos</div>
+                        <div class="dc-total-value negative"><?= moedaDC($totaisOperacoes['outros']) ?></div>
+                    </div>
+                </div>
+                <div class="col-6 col-lg-3">
+                    <div class="dc-total-card">
+                        <div class="dc-total-label">Liquido</div>
+                        <div class="dc-total-value positive"><?= moedaDC($totaisOperacoes['liquido']) ?></div>
+                    </div>
+                </div>
+            </div>
         </div>
         <div class="table-responsive">
             <table class="table table-sm align-middle mb-0 dc-operation-table">
@@ -965,6 +1274,13 @@ require '../../layout/header.php';
                             <td><span class="badge text-bg-info"><?= htmlspecialchars($operacao['status']) ?></span></td>
                             <td class="text-end">
                                 <a href="operacoes.php?editar=<?= (int)$operacao['id'] ?>" class="btn btn-sm btn-outline-primary">Detalhes</a>
+                                <?php if (($operacao['status'] ?? '') !== 'LANCADA'): ?>
+                                    <form method="post" class="d-inline" onsubmit="return confirm('Gerar titulos no contas a receber e lancamentos na conta 38? A operacao nao podera mais ser editada.');">
+                                        <input type="hidden" name="acao" value="gerar_financeiro">
+                                        <input type="hidden" name="operacao_id" value="<?= (int)$operacao['id'] ?>">
+                                        <button type="submit" class="btn btn-sm btn-success">Gerar lancamentos</button>
+                                    </form>
+                                <?php endif; ?>
                                 <a href="operacao_pdf.php?id=<?= (int)$operacao['id'] ?>" target="_blank" class="btn btn-sm btn-outline-danger">PDF</a>
                             </td>
                         </tr>
