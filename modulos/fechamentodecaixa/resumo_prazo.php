@@ -16,9 +16,20 @@ $mes = $_GET['mes'] ?? date('Y-m');
 $stmtDatas = $pdo_master->prepare("
     SELECT DISTINCT data_base
     FROM (
-        SELECT DATE(data_venda) AS data_base
+        SELECT
+            CASE
+                WHEN TIME(data_venda) < '03:00:00'
+                    THEN DATE(DATE_SUB(data_venda, INTERVAL 1 DAY))
+                ELSE DATE(data_venda)
+            END AS data_base
         FROM armazem_conciliacao_recebimentos
-        WHERE DATE(data_venda) LIKE ?
+        WHERE (
+            CASE
+                WHEN TIME(data_venda) < '03:00:00'
+                    THEN DATE(DATE_SUB(data_venda, INTERVAL 1 DAY))
+                ELSE DATE(data_venda)
+            END
+        ) LIKE ?
           AND empresa_id = ?
 
         UNION
