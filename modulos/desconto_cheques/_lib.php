@@ -779,13 +779,28 @@ function buscarResumoEmissorAVencerDC(PDO $pdo, int $empresaId, string $cnpjCpf,
             d.nome_emissor,
             d.valor,
             d.data_vencimento,
-            o.status
+            o.status,
+            cr.CRCONTADOR,
+            cr.VLRRESTANTE,
+            cr.STATUS AS status_cr
         FROM desconto_cheques_documentos d
         INNER JOIN desconto_cheques_operacoes o ON o.id = d.operacao_id
+        LEFT JOIN armazem_cr001 cr
+               ON cr.EMPRESA = o.empresa_id
+              AND cr.CRCONTADOR = d.crcontador
+              AND COALESCE(cr.excluido_firebird, 'N') = 'N'
         WHERE o.empresa_id = ?
           AND d.cnpj_cpf_emissor IN ({$placeholdersDigitos})
           AND d.data_vencimento >= ?
-          AND o.status IN ('ABERTA', 'CONFIRMADA')
+          AND (
+              o.status IN ('ABERTA', 'CONFIRMADA')
+              OR (
+                  o.status = 'LANCADA'
+                  AND cr.CRCONTADOR IS NOT NULL
+                  AND COALESCE(cr.STATUS, '') <> 'QT'
+                  AND COALESCE(cr.VLRRESTANTE, cr.VLRPARCELA, 0) > 0
+              )
+          )
           {$filtroIgnorar}
         ORDER BY d.data_vencimento, d.id
     ");
