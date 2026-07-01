@@ -940,6 +940,8 @@ $form = [
 $fCliente = trim((string)($_GET['cliente'] ?? ''));
 $fDocumento = trim((string)($_GET['documento'] ?? ''));
 $fTipoes = trim((string)($_GET['tipoes'] ?? ''));
+$fValorMin = trim((string)($_GET['valor_min'] ?? ''));
+$fValorMax = trim((string)($_GET['valor_max'] ?? ''));
 $fUsarData = ($_GET['usar_data'] ?? '') === 'S';
 $fVendaIni = $_GET['venda_ini'] ?? '';
 $fVendaFim = $_GET['venda_fim'] ?? '';
@@ -980,6 +982,14 @@ if ($fDocumento !== '') {
 if ($fTipoes !== '') {
     $where[] = "cp.TIPOES = ?";
     $params[] = (int)$fTipoes;
+}
+if ($fValorMin !== '') {
+    $where[] = "cp.VLRPARCELA >= ?";
+    $params[] = crbFloat($fValorMin);
+}
+if ($fValorMax !== '') {
+    $where[] = "cp.VLRPARCELA <= ?";
+    $params[] = crbFloat($fValorMax);
 }
 if ($fUsarData && $fVendaIni !== '') {
     $where[] = "DATE(cp.DTVENDA) >= ?";
@@ -1431,6 +1441,14 @@ require '../../layout/header.php';
             <div class="crb-field w3">
                 <label for="documento">Documento</label>
                 <input type="text" id="documento" name="documento" value="<?= crbH($fDocumento) ?>">
+            </div>
+            <div class="crb-field w2">
+                <label for="valor_min">Valor inicial</label>
+                <input type="text" id="valor_min" name="valor_min" inputmode="decimal" value="<?= crbH($fValorMin) ?>" placeholder="0,00">
+            </div>
+            <div class="crb-field w2">
+                <label for="valor_max">Valor final</label>
+                <input type="text" id="valor_max" name="valor_max" inputmode="decimal" value="<?= crbH($fValorMax) ?>" placeholder="0,00">
             </div>
             <div class="crb-field w2">
                 <label for="usar_data">Filtro de data</label>

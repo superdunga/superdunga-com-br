@@ -558,6 +558,8 @@ $fTipoes = $_GET['f_tipoes'] ?? '';
 $fTipomov = $_GET['f_tipomov'] ?? '';
 $fHistorico = trim((string)($_GET['f_historico'] ?? ''));
 $fDocumento = trim((string)($_GET['f_documento'] ?? ''));
+$fValorMin = trim((string)($_GET['f_valor_min'] ?? ''));
+$fValorMax = trim((string)($_GET['f_valor_max'] ?? ''));
 
 $where = [
     "b.EMPRESA = ?",
@@ -592,6 +594,14 @@ if ($fHistorico !== '') {
 if ($fDocumento !== '') {
     $where[] = "b.NUMDOC LIKE ?";
     $params[] = '%' . $fDocumento . '%';
+}
+if ($fValorMin !== '') {
+    $where[] = "b.VALORMOV >= ?";
+    $params[] = mbFloat($fValorMin);
+}
+if ($fValorMax !== '') {
+    $where[] = "b.VALORMOV <= ?";
+    $params[] = mbFloat($fValorMax);
 }
 
 $sqlLista = "
@@ -1004,6 +1014,14 @@ require_once __DIR__ . '/../../layout/header.php';
             <div class="mb-field w3">
                 <label for="f_documento">Documento</label>
                 <input type="text" id="f_documento" name="f_documento" value="<?= mbH($fDocumento) ?>">
+            </div>
+            <div class="mb-field w2">
+                <label for="f_valor_min">Valor inicial</label>
+                <input type="text" id="f_valor_min" name="f_valor_min" inputmode="decimal" value="<?= mbH($fValorMin) ?>" placeholder="0,00">
+            </div>
+            <div class="mb-field w2">
+                <label for="f_valor_max">Valor final</label>
+                <input type="text" id="f_valor_max" name="f_valor_max" inputmode="decimal" value="<?= mbH($fValorMax) ?>" placeholder="0,00">
             </div>
             <div class="mb-field w12">
                 <div class="mb-actions">

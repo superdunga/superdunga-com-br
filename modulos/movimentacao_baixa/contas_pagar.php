@@ -903,6 +903,8 @@ $form = [
 $fFornecedor = trim((string)($_GET['fornecedor'] ?? ''));
 $fDocumento = trim((string)($_GET['documento'] ?? ''));
 $fTipoes = trim((string)($_GET['tipoes'] ?? ''));
+$fValorMin = trim((string)($_GET['valor_min'] ?? ''));
+$fValorMax = trim((string)($_GET['valor_max'] ?? ''));
 $fUsarData = ($_GET['usar_data'] ?? '') === 'S';
 $fCompraIni = $_GET['compra_ini'] ?? '';
 $fCompraFim = $_GET['compra_fim'] ?? '';
@@ -945,6 +947,14 @@ if ($fDocumento !== '') {
 if ($fTipoes !== '') {
     $where[] = "cp.TIPOES = ?";
     $params[] = (int)$fTipoes;
+}
+if ($fValorMin !== '') {
+    $where[] = "cp.VLRPARCELA >= ?";
+    $params[] = cpbFloat($fValorMin);
+}
+if ($fValorMax !== '') {
+    $where[] = "cp.VLRPARCELA <= ?";
+    $params[] = cpbFloat($fValorMax);
 }
 if ($fUsarData && $fCompraIni !== '') {
     $where[] = "DATE(cp.DTCOMPRA) >= ?";
@@ -1383,6 +1393,14 @@ require '../../layout/header.php';
             <div class="cpb-field w3">
                 <label for="documento">Documento</label>
                 <input type="text" id="documento" name="documento" value="<?= cpbH($fDocumento) ?>">
+            </div>
+            <div class="cpb-field w2">
+                <label for="valor_min">Valor inicial</label>
+                <input type="text" id="valor_min" name="valor_min" inputmode="decimal" value="<?= cpbH($fValorMin) ?>" placeholder="0,00">
+            </div>
+            <div class="cpb-field w2">
+                <label for="valor_max">Valor final</label>
+                <input type="text" id="valor_max" name="valor_max" inputmode="decimal" value="<?= cpbH($fValorMax) ?>" placeholder="0,00">
             </div>
             <div class="cpb-field w2">
                 <label for="usar_data">Filtro de data</label>
