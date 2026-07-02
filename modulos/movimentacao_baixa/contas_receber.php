@@ -1613,6 +1613,8 @@ require '../../layout/header.php';
                 </div>
             </div>
             <div class="crb-actions" style="margin-top:0;margin-bottom:12px;">
+                <button type="button" id="marcar-filtrados" class="crb-btn light">Marcar filtrados</button>
+                <button type="button" id="desmarcar-filtrados" class="crb-btn light">Desmarcar</button>
                 <button type="submit" name="acao" value="preparar_baixa" form="form-titulos-selecionados" class="crb-btn">Baixar titulos selecionados</button>
                 <button type="submit" name="acao" value="preparar_agrupamento" form="form-titulos-selecionados" class="crb-btn secondary">Agrupar selecionados</button>
             </div>
@@ -1862,6 +1864,27 @@ require '../../layout/header.php';
     }
 
     checks.forEach(check => check.addEventListener('change', atualizarTotalSelecionado));
+    const marcarFiltrados = document.getElementById('marcar-filtrados');
+    const desmarcarFiltrados = document.getElementById('desmarcar-filtrados');
+
+    if (marcarFiltrados) {
+        marcarFiltrados.addEventListener('click', function () {
+            checks.forEach(check => {
+                check.checked = true;
+            });
+            atualizarTotalSelecionado();
+        });
+    }
+
+    if (desmarcarFiltrados) {
+        desmarcarFiltrados.addEventListener('click', function () {
+            checks.forEach(check => {
+                check.checked = false;
+            });
+            atualizarTotalSelecionado();
+        });
+    }
+
     atualizarTotalSelecionado();
 })();
 
