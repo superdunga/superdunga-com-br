@@ -74,12 +74,24 @@ function mbc2ClassificacaoNome($classificacao): string
 {
     $classificacao = (string)$classificacao;
     $nomes = [
-        '1' => 'Caixa',
-        '2' => 'Banco',
-        '3' => 'Investimento',
+        '1' => 'Caixa operacional',
+        '2' => 'Banco / conta corrente',
+        '3' => 'Investimento / custodia',
         '4' => 'Controle interno',
     ];
     return $nomes[$classificacao] ?? ($classificacao !== '' ? 'Classificacao ' . $classificacao : 'Nao informada');
+}
+
+function mbc2ClassificacaoAjuda($classificacao): string
+{
+    $classificacao = (string)$classificacao;
+    $ajudas = [
+        '1' => 'Usada para caixa fisico e movimentacoes de dinheiro.',
+        '2' => 'Usada para contas bancarias, extratos e conciliacao bancaria.',
+        '3' => 'Usada para carteira, corretora, previdencia ou conta de investimento.',
+        '4' => 'Usada para controle interno e contrapartidas que nao devem receber extrato.',
+    ];
+    return $ajudas[$classificacao] ?? 'Defina o tipo para orientar onde esta conta deve aparecer no sistema.';
 }
 
 function mbc2UsoContas(PDO $pdo, array $contasIds): array
@@ -376,13 +388,13 @@ require '../../layout/header.php';
             <div class="mbc2-metric"><small>Total</small><strong><?= (int)$totais['qtd'] ?></strong></div>
             <div class="mbc2-metric"><small>Ativas</small><strong><?= (int)$totais['ativas'] ?></strong></div>
             <div class="mbc2-metric"><small>Bloqueadas</small><strong><?= (int)$totais['bloqueadas'] ?></strong></div>
-            <div class="mbc2-metric"><small>Investimento</small><strong><?= (int)$totais['investimento'] ?></strong></div>
+            <div class="mbc2-metric"><small>Investimento/custodia</small><strong><?= (int)$totais['investimento'] ?></strong></div>
         </section>
 
         <section class="mbc2-card">
             <h2 class="h6 fw-bold mb-3"><?= $editar ? 'Editar conta #' . (int)$editar['CBCONTADOR'] : 'Nova conta' ?></h2>
             <div class="mbc2-help mb-3">
-                Para investimentos, cadastre uma conta propria em BNC002 e marque a classificacao como investimento. Depois, no cadastro de TipoES, use essa conta como a conta de contrapartida.
+                O tipo da conta define onde ela aparece no sistema: caixa e banco entram nas movimentacoes e conciliacoes, investimento/custodia fica para carteira e aplicacoes, e controle interno serve para contrapartidas que nao devem receber extrato.
             </div>
             <form method="post">
                 <input type="hidden" name="acao" value="salvar">
@@ -392,12 +404,12 @@ require '../../layout/header.php';
                         <input type="number" name="cbcontador" value="<?= mbc2H($form['cbcontador']) ?>" placeholder="Automatico se vazio">
                     </div>
                     <div class="mbc2-field">
-                        <label>Classificacao</label>
+                        <label>Tipo da conta no sistema</label>
                         <select name="classificacao">
                             <option value="">Nao informada</option>
-                            <option value="1" <?= (string)$form['classificacao'] === '1' ? 'selected' : '' ?>>1 - Caixa</option>
-                            <option value="2" <?= (string)$form['classificacao'] === '2' ? 'selected' : '' ?>>2 - Banco</option>
-                            <option value="3" <?= (string)$form['classificacao'] === '3' ? 'selected' : '' ?>>3 - Investimento</option>
+                            <option value="1" <?= (string)$form['classificacao'] === '1' ? 'selected' : '' ?>>1 - Caixa operacional</option>
+                            <option value="2" <?= (string)$form['classificacao'] === '2' ? 'selected' : '' ?>>2 - Banco / conta corrente</option>
+                            <option value="3" <?= (string)$form['classificacao'] === '3' ? 'selected' : '' ?>>3 - Investimento / custodia</option>
                             <option value="4" <?= (string)$form['classificacao'] === '4' ? 'selected' : '' ?>>4 - Controle interno</option>
                         </select>
                     </div>
@@ -421,6 +433,10 @@ require '../../layout/header.php';
                         </select>
                     </div>
                 </div>
+                <div class="mbc2-help mt-3">
+                    <strong>Resumo dos tipos:</strong>
+                    1 = caixa fisico; 2 = banco/conta corrente; 3 = investimento, corretora, cripto ou previdencia; 4 = controle interno/contrapartida.
+                </div>
                 <div class="mbc2-actions mt-3">
                     <button class="btn btn-primary">Salvar conta</button>
                     <a href="contas_bnc.php" class="btn btn-outline-secondary">Nova/Limpar</a>
@@ -440,12 +456,12 @@ require '../../layout/header.php';
                     <input type="text" name="busca" value="<?= mbc2H($fBusca) ?>" placeholder="Titular, descricao ou numero">
                 </div>
                 <div class="mbc2-field">
-                    <label>Classificacao</label>
+                    <label>Tipo da conta</label>
                     <select name="classificacao">
                         <option value="">Todas</option>
-                        <option value="1" <?= $fClassificacao === '1' ? 'selected' : '' ?>>Caixa</option>
-                        <option value="2" <?= $fClassificacao === '2' ? 'selected' : '' ?>>Banco</option>
-                        <option value="3" <?= $fClassificacao === '3' ? 'selected' : '' ?>>Investimento</option>
+                        <option value="1" <?= $fClassificacao === '1' ? 'selected' : '' ?>>Caixa operacional</option>
+                        <option value="2" <?= $fClassificacao === '2' ? 'selected' : '' ?>>Banco / conta corrente</option>
+                        <option value="3" <?= $fClassificacao === '3' ? 'selected' : '' ?>>Investimento / custodia</option>
                         <option value="4" <?= $fClassificacao === '4' ? 'selected' : '' ?>>Controle interno</option>
                     </select>
                 </div>
@@ -475,7 +491,7 @@ require '../../layout/header.php';
                         <tr>
                             <th>Codigo</th>
                             <th>Conta</th>
-                            <th>Classificacao</th>
+                            <th>Tipo da conta</th>
                             <th>Uso</th>
                             <th>Saldo sistema</th>
                             <th>Situacao</th>
@@ -503,6 +519,7 @@ require '../../layout/header.php';
                                     <span class="mbc2-pill <?= (string)($conta['CLASSIFICACAO'] ?? '') === '3' ? 'inv' : '' ?>">
                                         <?= mbc2H(mbc2ClassificacaoNome($conta['CLASSIFICACAO'] ?? '')) ?>
                                     </span>
+                                    <div class="text-muted small mt-1"><?= mbc2H(mbc2ClassificacaoAjuda($conta['CLASSIFICACAO'] ?? '')) ?></div>
                                 </td>
                                 <td class="small">
                                     BNC001: <?= (int)$uso['bnc'] ?><br>
