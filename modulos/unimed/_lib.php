@@ -562,9 +562,13 @@ function parseValorTotalUnimed(array $linhas): float
 function parseMensalidadeFallbackUnimed(string $texto): array
 {
     $linhas = array_values(array_filter(array_map(
-        static fn($linha) => trim($linha),
+        static function ($linha) {
+            return trim($linha);
+        },
         preg_split('/\R/', $texto)
-    ), static fn($linha) => $linha !== ''));
+    ), static function ($linha) {
+        return $linha !== '';
+    }));
 
     $itens = [];
     $total = count($linhas);
@@ -620,9 +624,13 @@ function parseMensalidadeFallbackUnimed(string $texto): array
 function parseUtilizacaoFallbackUnimed(string $texto): array
 {
     $linhas = array_values(array_filter(array_map(
-        static fn($linha) => trim($linha),
+        static function ($linha) {
+            return trim($linha);
+        },
         preg_split('/\R/', $texto)
-    ), static fn($linha) => $linha !== ''));
+    ), static function ($linha) {
+        return $linha !== '';
+    }));
 
     $familiaAtual = null;
     $unidadeAtual = null;
