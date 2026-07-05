@@ -260,6 +260,192 @@ function salvarUploadUnimed(array $arquivo, string $tipo): array
     ];
 }
 
+function normalizarTextoPdfUnimed(string $texto): string
+{
+    $texto = str_replace(["\r\n", "\r"], "\n", $texto);
+    $texto = preg_replace('/[ \t]+/', ' ', $texto) ?? $texto;
+    $texto = preg_replace('/\n{3,}/', "\n\n", $texto) ?? $texto;
+    return trim($texto);
+}
+
+function decodificarStringPdfUnimed(string $valor): string
+{
+    $saida = '';
+    $len = strlen($valor);
+
+    for ($i = 0; $i < $len; $i++) {
+        $char = $valor[$i];
+        if ($char !== '\\') {
+            $saida .= $char;
+            continue;
+        }
+
+        $i++;
+        if ($i >= $len) {
+            break;
+        }
+
+        $esc = $valor[$i];
+        if ($esc === 'n') {
+            $saida .= "\n";
+        } elseif ($esc === 'r') {
+            $saida .= "\r";
+        } elseif ($esc === 't') {
+            $saida .= "\t";
+        } elseif ($esc === 'b') {
+            $saida .= "\b";
+        } elseif ($esc === 'f') {
+            $saida .= "\f";
+        } elseif ($esc === '(' || $esc === ')' || $esc === '\\') {
+            $saida .= $esc;
+        } elseif ($esc === "\n" || $esc === "\r") {
+            if ($esc === "\r" && ($valor[$i + 1] ?? '') === "\n") {
+                $i++;
+            }
+        } elseif ($esc >= '0' && $esc <= '7') {
+            $octal = $esc;
+            for ($j = 0; $j < 2 && $i + 1 < $len; $j++) {
+                $prox = $valor[$i + 1];
+                if ($prox < '0' || $prox > '7') {
+                    break;
+                }
+                $octal .= $prox;
+                $i++;
+            }
+            $saida .= chr(octdec($octal));
+        } else {
+            $saida .= $esc;
+        }
+    }
+
+    return $saida;
+}
+
+function decodificarHexPdfUnimed(string $hex): string
+{
+    $hex = preg_replace('/[^0-9A-Fa-f]/', '', $hex) ?? '';
+    if ($hex === '') {
+        return '';
+    }
+    if (strlen($hex) % 2 !== 0) {
+        $hex .= '0';
+    }
+
+    $binario = (string)@hex2bin($hex);
+    if ($binario === '') {
+        return '';
+    }
+
+    if (strncmp($binario, "\xFE\xFF", 2) === 0 && function_exists('mb_convert_encoding')) {
+        return (string)@mb_convert_encoding(substr($binario, 2), 'UTF-8', 'UTF-16BE');
+    }
+
+    if (function_exists('mb_convert_encoding')) {
+        $convertido = @mb_convert_encoding($binario, 'UTF-8', 'Windows-1252');
+        if (is_string($convertido) && $convertido !== '') {
+            return $convertido;
+        }
+    }
+
+    return $binario;
+}
+
+function extrairStringsPdfUnimed(string $conteudo): string
+{
+    $linhas = [];
+
+    if (preg_match_all('/\[((?:.|\n)*?)\]\s*TJ/s', $conteudo, $arrays)) {
+        foreach ($arrays[1] as $arrayTexto) {
+            $linha = '';
+            if (preg_match_all('/\((?:\\\\.|[^\\\\()])*\)|<([0-9A-Fa-f\s]+)>/s', $arrayTexto, $partes)) {
+                foreach ($partes[0] as $parte) {
+                    if ($parte[0] === '(') {
+                        $linha .= decodificarStringPdfUnimed(substr($parte, 1, -1));
+                    } elseif ($parte[0] === '<' && substr($parte, 0, 2) !== '<<') {
+                        $linha .= decodificarHexPdfUnimed(substr($parte, 1, -1));
+                    }
+                }
+            }
+            if (trim($linha) !== '') {
+                $linhas[] = $linha;
+            }
+        }
+    }
+
+    if (preg_match_all('/(\((?:\\\\.|[^\\\\()])*\)|<([0-9A-Fa-f\s]+)>)\s*Tj/s', $conteudo, $textos)) {
+        foreach ($textos[1] as $texto) {
+            if ($texto[0] === '(') {
+                $linhas[] = decodificarStringPdfUnimed(substr($texto, 1, -1));
+            } elseif ($texto[0] === '<' && substr($texto, 0, 2) !== '<<') {
+                $linhas[] = decodificarHexPdfUnimed(substr($texto, 1, -1));
+            }
+        }
+    }
+
+    if (!$linhas && preg_match_all('/\((?:\\\\.|[^\\\\()]){4,}\)/s', $conteudo, $soltas)) {
+        foreach ($soltas[0] as $texto) {
+            $linhas[] = decodificarStringPdfUnimed(substr($texto, 1, -1));
+        }
+    }
+
+    return implode("\n", array_filter(array_map('trim', $linhas), static function ($linha) {
+        return $linha !== '';
+    }));
+}
+
+function descomprimirStreamPdfUnimed(string $stream, string $dict): string
+{
+    if (stripos($dict, 'FlateDecode') === false) {
+        return $stream;
+    }
+
+    $tentativas = [
+        @gzuncompress($stream),
+        @gzinflate($stream),
+        @gzdecode($stream),
+        @gzinflate(substr($stream, 2)),
+    ];
+
+    foreach ($tentativas as $texto) {
+        if (is_string($texto) && $texto !== '') {
+            return $texto;
+        }
+    }
+
+    return '';
+}
+
+function extrairTextoPdfBasicoUnimed(string $arquivoPdf): string
+{
+    $pdf = (string)@file_get_contents($arquivoPdf);
+    if ($pdf === '') {
+        return '';
+    }
+
+    $partesTexto = [];
+    if (preg_match_all('/(<<[^>]*>>)\s*stream\r?\n(.*?)\r?\nendstream/s', $pdf, $streams, PREG_SET_ORDER)) {
+        foreach ($streams as $streamInfo) {
+            $conteudo = descomprimirStreamPdfUnimed($streamInfo[2], $streamInfo[1]);
+            if ($conteudo === '') {
+                continue;
+            }
+            $texto = extrairStringsPdfUnimed($conteudo);
+            if (trim($texto) !== '') {
+                $partesTexto[] = $texto;
+            }
+        }
+    }
+
+    if (!$partesTexto) {
+        $texto = extrairStringsPdfUnimed($pdf);
+        if (trim($texto) !== '') {
+            $partesTexto[] = $texto;
+        }
+    }
+
+    return normalizarTextoPdfUnimed(implode("\n", $partesTexto));
+}
+
 function extrairTextoPdfUnimed(string $arquivoPdf): string
 {
     if (!is_file($arquivoPdf)) {
@@ -290,7 +476,8 @@ function extrairTextoPdfUnimed(string $arquivoPdf): string
     foreach ($tentativas as $partes) {
         @shell_exec(implode(' ', $partes) . ' 2>&1');
         $texto = is_file($tmpTxt) ? (string)file_get_contents($tmpTxt) : '';
-        if (trim($texto) !== '') {
+        $texto = normalizarTextoPdfUnimed($texto);
+        if ($texto !== '') {
             @unlink($tmpTxt);
             return $texto;
         }
@@ -313,17 +500,20 @@ function extrairTextoPdfUnimed(string $arquivoPdf): string
         getenv('UNIMED_PYTHON') ?: '',
         getenv('PYTHON_BIN') ?: '',
         getenv('PYTHON') ?: '',
+        'C:\\Users\\user\\.cache\\codex-runtimes\\codex-primary-runtime\\dependencies\\python\\python.exe',
+        '/usr/local/bin/python3',
+        '/usr/bin/python3',
         'python3',
         'python',
         'py',
-        'C:\\Users\\user\\.cache\\codex-runtimes\\codex-primary-runtime\\dependencies\\python\\python.exe',
     ]);
 
     foreach ($pythonCandidates as $python) {
         $cmd = escapeshellarg($python) . ' ' . escapeshellarg($pythonScript) . ' ' . escapeshellarg($arquivoPdf) . ' 2>&1';
         $saida = (string)@shell_exec($cmd);
+        $saida = normalizarTextoPdfUnimed($saida);
         if (
-            trim($saida) !== ''
+            $saida !== ''
             && (
                 stripos($saida, 'ANAL') !== false
                 || stripos($saida, 'FATURA') !== false
@@ -340,9 +530,23 @@ function extrairTextoPdfUnimed(string $arquivoPdf): string
         }
     }
 
+    $textoBasico = extrairTextoPdfBasicoUnimed($arquivoPdf);
+    if (
+        $textoBasico !== ''
+        && (
+            stripos($textoBasico, 'ANAL') !== false
+            || stripos($textoBasico, 'FATURA') !== false
+            || stripos($textoBasico, 'BENEFICI') !== false
+        )
+    ) {
+        @unlink($tmpTxt);
+        @unlink($pythonScript);
+        return $textoBasico;
+    }
+
     @unlink($tmpTxt);
     @unlink($pythonScript);
-    throw new RuntimeException('Nao foi possivel extrair texto do PDF. Instale pdftotext no servidor ou configure Python com pypdf em UNIMED_PYTHON.');
+    throw new RuntimeException('Nao foi possivel extrair texto do PDF. O arquivo pode estar digitalizado como imagem ou o servidor nao possui pdftotext/Python habilitado.');
 }
 
 function parseValorTotalUnimed(array $linhas): float
@@ -353,6 +557,137 @@ function parseValorTotalUnimed(array $linhas): float
     }
 
     return round($total, 2);
+}
+
+function parseMensalidadeFallbackUnimed(string $texto): array
+{
+    $linhas = array_values(array_filter(array_map(
+        static fn($linha) => trim($linha),
+        preg_split('/\R/', $texto)
+    ), static fn($linha) => $linha !== ''));
+
+    $itens = [];
+    $total = count($linhas);
+    for ($i = 0; $i < $total; $i++) {
+        if (!preg_match('/^\d{4}\.\d{4}\.\d{6}-\d{2}$/', $linhas[$i])) {
+            continue;
+        }
+
+        if (($linhas[$i + 2] ?? '') !== 'MENSALIDADE') {
+            continue;
+        }
+
+        $mensalidade = $linhas[$i + 3] ?? null;
+        $bonificacao = $linhas[$i + 4] ?? null;
+        $valorTotal = $linhas[$i + 5] ?? null;
+        $filial = $linhas[$i + 6] ?? null;
+        $centro = $linhas[$i + 7] ?? null;
+        $quantidade = $linhas[$i + 8] ?? null;
+
+        if (
+            !preg_match('/^[0-9.]+,\d{2}$/', (string)$mensalidade)
+            || !preg_match('/^[0-9.]+,\d{2}$/', (string)$bonificacao)
+            || !preg_match('/^[0-9.]+,\d{2}$/', (string)$valorTotal)
+            || !preg_match('/^[0-9.]+,\d{5}$/', (string)$quantidade)
+        ) {
+            continue;
+        }
+
+        [$unidade, $contrato, $familia, $dependente] = partesCodigoUnimed($linhas[$i]);
+        $itens[] = [
+            'codigo_completo' => $linhas[$i],
+            'unidade_unimed' => $unidade,
+            'contrato_unimed' => $contrato,
+            'familia' => $familia,
+            'dependente' => $dependente,
+            'tipo' => $dependente === '00' ? 'TITULAR' : 'DEPENDENTE',
+            'nome' => textoLimpoUnimed($linhas[$i + 1] ?? ''),
+            'lancamento' => 'MENSALIDADE',
+            'quantidade' => valorDecimalUnimed($quantidade),
+            'valor_mensalidade' => valorDecimalUnimed($mensalidade),
+            'valor_utilizacao' => 0.0,
+            'valor_total' => valorDecimalUnimed($valorTotal),
+            'bonificacao' => valorDecimalUnimed($bonificacao),
+            'centro_custo' => preg_match('/^\d+$/', (string)$centro) ? $centro : null,
+            'filial' => preg_match('/^\d+$/', (string)$filial) ? $filial : null,
+            'status_operacao' => 'A',
+        ];
+    }
+
+    return $itens;
+}
+
+function parseUtilizacaoFallbackUnimed(string $texto): array
+{
+    $linhas = array_values(array_filter(array_map(
+        static fn($linha) => trim($linha),
+        preg_split('/\R/', $texto)
+    ), static fn($linha) => $linha !== ''));
+
+    $familiaAtual = null;
+    $unidadeAtual = null;
+    $contratoAtual = null;
+    $dependenteAtual = null;
+    $nomeDependenteAtual = null;
+    $itens = [];
+    $total = count($linhas);
+
+    for ($i = 0; $i < $total; $i++) {
+        $linha = preg_replace('/(\d{4}\.\d{4}\.\d{5})\s+(\d)/', '$1$2', $linhas[$i]);
+        if (preg_match('/(?P<unidade>\d{4})\.(?P<contrato>\d{4})\.(?P<familia>\d{6})\s+TIT\s*:/', $linha, $mFamilia)) {
+            $unidadeAtual = $mFamilia['unidade'];
+            $contratoAtual = $mFamilia['contrato'];
+            $familiaAtual = $mFamilia['familia'];
+            $dependenteAtual = null;
+            $nomeDependenteAtual = null;
+            continue;
+        }
+
+        if ($familiaAtual && preg_match('/^(?P<dependente>\d{2})-(?P<nome>.+)$/', $linhas[$i], $mDep)) {
+            $dependenteAtual = $mDep['dependente'];
+            $nomeDependenteAtual = textoLimpoUnimed($mDep['nome']);
+            continue;
+        }
+
+        if (!$familiaAtual || !$dependenteAtual || !preg_match('/^[0-9.]+,\d{2}$/', $linhas[$i])) {
+            continue;
+        }
+
+        if (
+            !preg_match('/^[0-9.]+,\d{2}$/', $linhas[$i + 1] ?? '')
+            || !preg_match('/^[0-9.]+,\d{2}$/', $linhas[$i + 2] ?? '')
+            || !preg_match('/^\d+,\d{5}$/', $linhas[$i + 3] ?? '')
+            || !preg_match('/^\d+$/', $linhas[$i + 4] ?? '')
+            || !preg_match('/^\d+$/', $linhas[$i + 6] ?? '')
+            || !preg_match('/^\d{1,2}\/\d{2}\/\d{4}$/', $linhas[$i + 9] ?? '')
+        ) {
+            continue;
+        }
+
+        $dataAtendimento = DateTime::createFromFormat('d/m/Y', $linhas[$i + 9]);
+        if (!$dataAtendimento) {
+            continue;
+        }
+
+        $codigo = codigoUnimed($unidadeAtual, $contratoAtual, $familiaAtual, $dependenteAtual);
+        $itens[] = [
+            'codigo_completo' => $codigo,
+            'unidade_unimed' => $unidadeAtual,
+            'contrato_unimed' => $contratoAtual,
+            'familia' => $familiaAtual,
+            'dependente' => $dependenteAtual,
+            'tipo' => $dependenteAtual === '00' ? 'TITULAR' : 'DEPENDENTE',
+            'nome' => $nomeDependenteAtual ?: $codigo,
+            'data_atendimento' => $dataAtendimento->format('Y-m-d'),
+            'prestador' => textoLimpoUnimed($linhas[$i + 10] ?? ''),
+            'tipo_documento' => $linhas[$i + 4],
+            'documento' => $linhas[$i + 6],
+            'quantidade' => valorDecimalUnimed($linhas[$i + 3]),
+            'valor_total' => valorDecimalUnimed($linhas[$i]),
+        ];
+    }
+
+    return $itens;
 }
 
 function parseFaturaMensalidadeUnimed(string $texto): array
@@ -426,6 +761,10 @@ function parseFaturaMensalidadeUnimed(string $texto): array
             'filial' => $m['filial'],
             'status_operacao' => $m['status'],
         ];
+    }
+
+    if (empty($itens)) {
+        $itens = parseMensalidadeFallbackUnimed($texto);
     }
 
     if (empty($itens)) {
@@ -536,6 +875,10 @@ function parseFaturaUtilizacaoUnimed(string $texto): array
             'quantidade' => valorDecimalUnimed($mItem['quantidade']),
             'valor_total' => valorDecimalUnimed($mItem['valor']),
         ];
+    }
+
+    if (empty($itens)) {
+        $itens = parseUtilizacaoFallbackUnimed($texto);
     }
 
     if (empty($itens)) {
