@@ -255,6 +255,15 @@ function mbSalvarLancamento(PDO $pdo, $empresaId, $usuarioId, $dados, $movcontad
                 throw new RuntimeException('Lancamento nao encontrado para edicao.');
             }
 
+            if (mbMovimentoVinculadoAcerto($pdo, $empresaId, $movcontadorEdicao)) {
+                throw new RuntimeException('Lancamento vinculado a acerto ativo nao pode ser editado. Desfaca o acerto antes de alterar.');
+            }
+
+            $contrapAtual = mbCarregarContrapartida($pdo, $empresaId, $movcontadorEdicao);
+            if ($contrapAtual && mbMovimentoVinculadoAcerto($pdo, $empresaId, (int)$contrapAtual['MOVCONTADOR'])) {
+                throw new RuntimeException('Contrapartida vinculada a acerto ativo nao pode ser editada. Desfaca o acerto antes de alterar.');
+            }
+
             $stmt = $pdo->prepare("
                 UPDATE armazem_bnc001
                 SET DTMOV = ?,
@@ -286,7 +295,6 @@ function mbSalvarLancamento(PDO $pdo, $empresaId, $usuarioId, $dados, $movcontad
             ]);
 
             $movcontadorPrincipal = (int)$movcontadorEdicao;
-            $contrapAtual = mbCarregarContrapartida($pdo, $empresaId, $movcontadorPrincipal);
 
             if ($exigeContrap) {
                 if ($contrapAtual) {
