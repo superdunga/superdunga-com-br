@@ -152,10 +152,11 @@ function gerarLancamentosFinanceirosDescontoCheques(PDO $pdo, int $empresaId, in
             $crGerados++;
         }
 
-        $movBruto = $operacao['mov_bruto'] ?: gerarMovimentoDescontoCheques($pdo, $empresaId, $usuarioId, $operacaoId, $operacao['data_referencia'], 'D', 302, (float)$operacao['valor_bruto'], 'DESC. CHEQUES OP #' . $operacaoId . ' - VALOR BRUTO - ' . $operacao['cliente_nome']);
-        $movDesconto = $operacao['mov_desconto'] ?: gerarMovimentoDescontoCheques($pdo, $empresaId, $usuarioId, $operacaoId, $operacao['data_referencia'], 'C', 51, (float)$operacao['valor_desconto'], 'DESC. CHEQUES OP #' . $operacaoId . ' - DESCONTO');
-        $movTaxas = $operacao['mov_taxas'] ?: gerarMovimentoDescontoCheques($pdo, $empresaId, $usuarioId, $operacaoId, $operacao['data_referencia'], 'C', 51, (float)$operacao['valor_taxas_tarifas'], 'DESC. CHEQUES OP #' . $operacaoId . ' - TAXAS/TARIFAS');
-        $movOutros = $operacao['mov_outros'] ?: gerarMovimentoDescontoCheques($pdo, $empresaId, $usuarioId, $operacaoId, $operacao['data_referencia'], 'C', 51, (float)$operacao['valor_descontar'], 'DESC. CHEQUES OP #' . $operacaoId . ' - OUTROS DESCONTOS');
+        $clienteHistorico = trim((string)$operacao['cliente_nome']);
+        $movBruto = $operacao['mov_bruto'] ?: gerarMovimentoDescontoCheques($pdo, $empresaId, $usuarioId, $operacaoId, $operacao['data_referencia'], 'D', 302, (float)$operacao['valor_bruto'], 'DESC. CHEQUES OP #' . $operacaoId . ' - VALOR BRUTO - ' . $clienteHistorico);
+        $movDesconto = $operacao['mov_desconto'] ?: gerarMovimentoDescontoCheques($pdo, $empresaId, $usuarioId, $operacaoId, $operacao['data_referencia'], 'C', 51, (float)$operacao['valor_desconto'], 'DESC. CHEQUES OP #' . $operacaoId . ' - DESCONTO - ' . $clienteHistorico);
+        $movTaxas = $operacao['mov_taxas'] ?: gerarMovimentoDescontoCheques($pdo, $empresaId, $usuarioId, $operacaoId, $operacao['data_referencia'], 'C', 51, (float)$operacao['valor_taxas_tarifas'], 'DESC. CHEQUES OP #' . $operacaoId . ' - TAXAS/TARIFAS - ' . $clienteHistorico);
+        $movOutros = $operacao['mov_outros'] ?: gerarMovimentoDescontoCheques($pdo, $empresaId, $usuarioId, $operacaoId, $operacao['data_referencia'], 'C', 51, (float)$operacao['valor_descontar'], 'DESC. CHEQUES OP #' . $operacaoId . ' - OUTROS DESCONTOS - ' . $clienteHistorico);
 
         $stmtUpdate = $pdo->prepare("
             UPDATE desconto_cheques_operacoes
