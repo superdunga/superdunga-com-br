@@ -649,7 +649,11 @@ $sqlLista = "
            t.DESCES AS TIPO_DESC,
            t.CONTRAP_TIPOES,
            cp.MOVCONTADOR AS CONTRAP_MOVCONTADOR,
-           cp.CBCONTADOR AS CONTRAP_CONTA
+           cp.CBCONTADOR AS CONTRAP_CONTA,
+           ext.extrato_id AS EXTRATO_ID,
+           ext.extrato_data AS EXTRATO_DATA,
+           ext.extrato_valor AS EXTRATO_VALOR,
+           ext.extrato_conta AS EXTRATO_CONTA
     FROM armazem_bnc001 b
     LEFT JOIN armazem_bnc002 c
       ON c.EMPRESA = b.EMPRESA AND c.CBCONTADOR = b.CBCONTADOR
@@ -660,6 +664,22 @@ $sqlLista = "
      AND cp.ORIGEMCPART = b.MOVCONTADOR
      AND cp.TIPODOCORIGEM = 'SUPERDUNGA'
      AND COALESCE(cp.deletado, 'N') <> 'S'
+    LEFT JOIN (
+        SELECT
+            bnc001_empresa,
+            bnc001_movcontador,
+            MIN(id) AS extrato_id,
+            MIN(data_movimento) AS extrato_data,
+            MAX(valor) AS extrato_valor,
+            MIN(cbcontador) AS extrato_conta
+        FROM financeiro_extrato_bancario
+        WHERE conciliado = 'S'
+          AND bnc001_empresa IS NOT NULL
+          AND bnc001_movcontador IS NOT NULL
+        GROUP BY bnc001_empresa, bnc001_movcontador
+    ) ext
+      ON ext.bnc001_empresa = b.EMPRESA
+     AND ext.bnc001_movcontador = b.MOVCONTADOR
     WHERE " . implode(' AND ', $where) . "
     ORDER BY b.DTMOV DESC, b.MOVCONTADOR DESC
     LIMIT 200
@@ -1085,6 +1105,7 @@ require_once __DIR__ . '/../../layout/header.php';
                         <th>Documento</th>
                         <th>Historico</th>
                         <th>Valor</th>
+                        <th>Extrato</th>
                         <th>Contrap.</th>
                         <th>Acoes</th>
                     </tr>
@@ -1092,7 +1113,7 @@ require_once __DIR__ . '/../../layout/header.php';
                 <tbody>
                     <?php if (!$lancamentos): ?>
                         <tr>
-                            <td colspan="11" style="text-align:center;color:#64748b;">Nenhum lancamento encontrado.</td>
+                            <td colspan="12" style="text-align:center;color:#64748b;">Nenhum lancamento encontrado.</td>
                         </tr>
                     <?php endif; ?>
                     <?php foreach ($lancamentos as $linha): ?>
@@ -1111,6 +1132,19 @@ require_once __DIR__ . '/../../layout/header.php';
                             <td><?= mbH($linha['NUMDOC'] ?? '') ?></td>
                             <td><?= mbH($linha['HISTMOV'] ?? '') ?></td>
                             <td><?= mbH(mbMoeda($linha['VALORMOV'])) ?></td>
+                            <td>
+                                <?php if (!empty($linha['EXTRATO_ID'])): ?>
+                                    <span class="mb-badge c">Conciliado</span>
+                                    <div style="margin-top:4px;color:#475569;font-size:0.82rem;">
+                                        Extrato #<?= (int)$linha['EXTRATO_ID'] ?><br>
+                                        <?= mbH(mbData($linha['EXTRATO_DATA'])) ?> |
+                                        Conta <?= (int)$linha['EXTRATO_CONTA'] ?> |
+                                        <?= mbH(mbMoeda($linha['EXTRATO_VALOR'])) ?>
+                                    </div>
+                                <?php else: ?>
+                                    <span class="mb-badge">Pendente</span>
+                                <?php endif; ?>
+                            </td>
                             <td>
                                 <?php if (!empty($linha['CONTRAP_MOVCONTADOR'])): ?>
                                     #<?= (int)$linha['CONTRAP_MOVCONTADOR'] ?> / conta <?= mbH($linha['CONTRAP_CONTA']) ?>
