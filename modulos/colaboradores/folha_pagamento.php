@@ -472,20 +472,50 @@ if ($gerarRecibos && empty($errosFolha)) {
         $salarioLiquido = valorBrFolha($salariosInformados[$funcId] ?? 0);
         $premiacao = valorBrFolha($premiacoesInformadas[$funcId] ?? 0);
         $outrosValores = valorBrFolha($outrosValoresInformados[$funcId] ?? 0);
-        if (abs($salarioLiquido) < 0.005 && abs($premiacao) < 0.005 && abs($outrosValores) < 0.005) {
-            continue;
-        }
 
         $stmtVales->execute([$empresaId, $funcId, $referenciaBr]);
         $vales = $stmtVales->fetchAll(PDO::FETCH_ASSOC);
 
+        $comprasAberto = [];
+        $comprasPagas = [];
+        $comprasPagasVenda = [];
+        if ((int)($funcionario['DEPARTAMENTO'] ?? 0) > 0) {
+            $stmtComprasAberto->execute([$empresaId, (int)$funcionario['DEPARTAMENTO'], $fimMes]);
+            $comprasAberto = $stmtComprasAberto->fetchAll(PDO::FETCH_ASSOC);
+
+            $stmtComprasPagas->execute([$empresaId, (int)$funcionario['DEPARTAMENTO'], $dataPagamento]);
+            $comprasPagas = $stmtComprasPagas->fetchAll(PDO::FETCH_ASSOC);
+
+            $stmtComprasPagasVenda->execute([$empresaId, (int)$funcionario['DEPARTAMENTO'], $dataPagamento]);
+            $comprasPagasVenda = $stmtComprasPagasVenda->fetchAll(PDO::FETCH_ASSOC);
+        }
+
+        $totalVales = array_sum(array_map(static function ($v) {
+            $valor = (float)($v['VALOR'] ?? 0);
+            return strtoupper((string)($v['DEBCRED'] ?? 'D')) === 'C' ? -$valor : $valor;
+        }, $vales));
+        $totalComprasAberto = array_sum(array_map(static function ($c) {
+            return (float)($c['VLRRESTANTE'] ?? $c['VLRPARCELA'] ?? 0);
+        }, $comprasAberto));
+        $totalComprasPagas = array_sum(array_map(static function ($c) {
+            return (float)($c['VLRPAGO'] ?? $c['VLRPARCELA'] ?? 0);
+        }, $comprasPagas));
+
+        $temVencimentoInformado = abs($salarioLiquido) >= 0.005 || abs($premiacao) >= 0.005 || abs($outrosValores) >= 0.005;
+        $temDescontoFirebird = abs($totalVales) >= 0.005 || abs($totalComprasAberto) >= 0.005 || abs($totalComprasPagas) >= 0.005;
+        if (!$temVencimentoInformado && !$temDescontoFirebird) {
+            continue;
+        }
+
         $vencimentos = [];
-        $vencimentos[] = [
-            'codigo' => 'FOLHA',
-            'descricao' => 'Salario liquido da folha',
-            'referencia' => mesPorExtensoFolha($referencia),
-            'valor' => $salarioLiquido,
-        ];
+        if (abs($salarioLiquido) >= 0.005) {
+            $vencimentos[] = [
+                'codigo' => 'FOLHA',
+                'descricao' => 'Salario liquido da folha',
+                'referencia' => mesPorExtensoFolha($referencia),
+                'valor' => $salarioLiquido,
+            ];
+        }
 
         if (abs($premiacao) >= 0.005) {
             $vencimentos[] = [
@@ -505,10 +535,6 @@ if ($gerarRecibos && empty($errosFolha)) {
             ];
         }
 
-        $totalVales = array_sum(array_map(static function ($v) {
-            $valor = (float)($v['VALOR'] ?? 0);
-            return strtoupper((string)($v['DEBCRED'] ?? 'D')) === 'C' ? -$valor : $valor;
-        }, $vales));
         $descontosVales = [];
         if (abs($totalVales) >= 0.005) {
             $descontosVales[] = [
@@ -518,27 +544,6 @@ if ($gerarRecibos && empty($errosFolha)) {
                 'valor' => $totalVales,
             ];
         }
-
-        $comprasAberto = [];
-        $comprasPagas = [];
-        $comprasPagasVenda = [];
-        if ((int)($funcionario['DEPARTAMENTO'] ?? 0) > 0) {
-            $stmtComprasAberto->execute([$empresaId, (int)$funcionario['DEPARTAMENTO'], $fimMes]);
-            $comprasAberto = $stmtComprasAberto->fetchAll(PDO::FETCH_ASSOC);
-
-            $stmtComprasPagas->execute([$empresaId, (int)$funcionario['DEPARTAMENTO'], $dataPagamento]);
-            $comprasPagas = $stmtComprasPagas->fetchAll(PDO::FETCH_ASSOC);
-
-            $stmtComprasPagasVenda->execute([$empresaId, (int)$funcionario['DEPARTAMENTO'], $dataPagamento]);
-            $comprasPagasVenda = $stmtComprasPagasVenda->fetchAll(PDO::FETCH_ASSOC);
-        }
-
-        $totalComprasAberto = array_sum(array_map(static function ($c) {
-            return (float)($c['VLRRESTANTE'] ?? $c['VLRPARCELA'] ?? 0);
-        }, $comprasAberto));
-        $totalComprasPagas = array_sum(array_map(static function ($c) {
-            return (float)($c['VLRPAGO'] ?? $c['VLRPARCELA'] ?? 0);
-        }, $comprasPagas));
 
         $descontos = array_merge($descontosVales, [
             [
@@ -609,7 +614,7 @@ if ($gerarRecibos && empty($errosFolha)) {
                 ->execute($versoesAtuaisAntes);
         }
         $folhaVersaoAtual = null;
-        $errosFolha[] = 'Nenhum recibo foi gerado porque todos os valores informados estavam zerados.';
+        $errosFolha[] = 'Nenhum recibo foi gerado porque nao ha valores informados nem descontos do Firebird para os funcionarios listados.';
     } else {
         if ($salvarRecibos) {
             $pdo_master->prepare("
