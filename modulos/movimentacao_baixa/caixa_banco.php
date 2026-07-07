@@ -436,6 +436,19 @@ function mbMovimentoVinculadoAcerto(PDO $pdo, $empresaId, $movcontador)
     return (int)$stmt->fetchColumn() > 0;
 }
 
+function mbMovimentoConciliadoExtrato(PDO $pdo, $empresaId, $movcontador)
+{
+    $stmt = $pdo->prepare("
+        SELECT COUNT(*)
+        FROM financeiro_extrato_bancario
+        WHERE bnc001_empresa = ?
+          AND bnc001_movcontador = ?
+          AND conciliado = 'S'
+    ");
+    $stmt->execute([$empresaId, $movcontador]);
+    return (int)$stmt->fetchColumn() > 0;
+}
+
 function mbExcluirLancamento(PDO $pdo, $empresaId, $usuarioId, $movcontador)
 {
     $stmt = $pdo->prepare("
@@ -461,9 +474,17 @@ function mbExcluirLancamento(PDO $pdo, $empresaId, $usuarioId, $movcontador)
         throw new RuntimeException('Lancamento vinculado a acerto ativo nao pode ser excluido.');
     }
 
+    if (mbMovimentoConciliadoExtrato($pdo, $empresaId, $movcontador)) {
+        throw new RuntimeException('Lancamento conciliado com extrato bancario nao pode ser excluido. Desfaca a conciliacao bancaria antes de excluir.');
+    }
+
     $contrap = mbCarregarContrapartida($pdo, $empresaId, $movcontador);
     if ($contrap && mbMovimentoVinculadoAcerto($pdo, $empresaId, (int)$contrap['MOVCONTADOR'])) {
         throw new RuntimeException('Contrapartida vinculada a acerto ativo nao pode ser excluida.');
+    }
+
+    if ($contrap && mbMovimentoConciliadoExtrato($pdo, $empresaId, (int)$contrap['MOVCONTADOR'])) {
+        throw new RuntimeException('Contrapartida conciliada com extrato bancario nao pode ser excluida. Desfaca a conciliacao bancaria antes de excluir.');
     }
 
     $pdo->beginTransaction();
