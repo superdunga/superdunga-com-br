@@ -69,9 +69,13 @@ function linhaCompraRodape(array $linhas): string
         return 'Sem lancamentos.';
     }
     $partes = [];
+    $total = 0.0;
     foreach ($linhas as $linha) {
-        $partes[] = dataFolha($linha['DTEMISSAO'] ?? '') . ' ' . moedaFolha($linha['VLRPARCELA'] ?? 0);
+        $valor = (float)($linha['VLRPAGO'] ?? $linha['VLRRESTANTE'] ?? $linha['VLRPARCELA'] ?? 0);
+        $total += $valor;
+        $partes[] = dataFolha($linha['DTEMISSAO'] ?? '') . ' ' . moedaFolha($valor);
     }
+    $partes[] = 'Total = ' . moedaFolha($total);
     return implode(' | ', $partes);
 }
 
@@ -1225,11 +1229,15 @@ if ($gerarRecibos && empty($errosFolha)) {
                 <?php else: ?>
                     <?php
                         $valesRodape = [];
+                        $totalValesRodape = 0.0;
                         foreach ($recibo['vales'] as $vale) {
                             $dcVale = strtoupper((string)($vale['DEBCRED'] ?? 'D'));
                             $sinalVale = $dcVale === 'C' ? '-' : '';
-                            $valesRodape[] = '#' . (int)$vale['VALECONTADOR'] . ' ' . dataFolha($vale['DATA'] ?? $vale['DTLANC'] ?? '') . ' ' . $sinalVale . moedaFolha($vale['VALOR'] ?? 0);
+                            $valorVale = (float)($vale['VALOR'] ?? 0);
+                            $totalValesRodape += $dcVale === 'C' ? -$valorVale : $valorVale;
+                            $valesRodape[] = '#' . (int)$vale['VALECONTADOR'] . ' ' . dataFolha($vale['DATA'] ?? $vale['DTLANC'] ?? '') . ' ' . $sinalVale . moedaFolha($valorVale);
                         }
+                        $valesRodape[] = 'Total = ' . moedaFolha($totalValesRodape);
                         echo htmlspecialchars(implode(' | ', $valesRodape));
                     ?>
                 <?php endif; ?>
