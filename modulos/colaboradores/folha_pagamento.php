@@ -701,10 +701,10 @@ if ($gerarRecibos && empty($errosFolha)) {
 
     .recibo-topo {
         display: grid;
-        grid-template-columns: minmax(0, 1fr) 240px;
-        gap: .5rem;
+        grid-template-columns: minmax(0, 1fr) minmax(210px, .45fr);
+        gap: .8rem;
         align-items: center;
-        padding: .45rem .65rem;
+        padding: .5rem .75rem;
         border-bottom: 2px solid #1e3a8a;
         background: #143873;
         color: #fff;
@@ -724,21 +724,36 @@ if ($gerarRecibos && empty($errosFolha)) {
     }
 
     .recibo-titulo {
-        font-size: .72rem;
+        font-size: .74rem;
         line-height: 1.25;
+        text-align: right;
     }
 
     .recibo-meta {
-        display: grid;
-        grid-template-columns: 70px minmax(180px, 2fr) 95px 95px;
-        gap: .25rem .45rem;
-        padding: .35rem .65rem;
+        display: block;
+        padding: .35rem .75rem;
         border-bottom: 1px solid #dbe3ef;
         font-size: .68rem;
         background: #f8fafc;
     }
 
-    .recibo-meta .meta-largo {
+    .recibo-meta-linha {
+        display: grid;
+        grid-template-columns: 85px minmax(0, 1fr) 110px 100px;
+        gap: .45rem;
+        align-items: start;
+        margin-bottom: .18rem;
+    }
+
+    .recibo-meta-linha:last-child {
+        margin-bottom: 0;
+    }
+
+    .recibo-meta-linha.tres-colunas {
+        grid-template-columns: minmax(120px, .9fr) minmax(90px, .55fr) minmax(110px, .65fr);
+    }
+
+    .recibo-meta-linha .span-2 {
         grid-column: span 2;
     }
 
@@ -1126,14 +1141,21 @@ if ($gerarRecibos && empty($errosFolha)) {
             </div>
 
             <div class="recibo-meta">
-                <div><span class="recibo-label">Codigo</span><?= (int)$funcionario['FUNCCONTADOR'] ?></div>
-                <div class="meta-largo"><span class="recibo-label">Funcionario</span><?= htmlspecialchars((string)$funcionario['NOMEFUNC']) ?></div>
-                <div><span class="recibo-label">Admissao</span><?= dataFolha($funcionario['DTADMISSAO'] ?? '') ?></div>
-                <div><span class="recibo-label">Pagamento</span><?= dataFolha($dataPagamento) ?></div>
-                <div class="meta-largo"><span class="recibo-label">Cargo</span><?= htmlspecialchars((string)($funcionario['CARGO'] ?? '')) ?></div>
-                <div><span class="recibo-label">Fornecedor CP</span><?= htmlspecialchars((string)($funcionario['CODFORNECEDOR'] ?? '')) ?></div>
-                <div><span class="recibo-label">Cliente CR</span><?= htmlspecialchars((string)($funcionario['DEPARTAMENTO'] ?? '')) ?></div>
-                <div><span class="recibo-label">Salario informado</span><?= moedaFolha($recibo['salario_liquido']) ?></div>
+                <div class="recibo-meta-linha">
+                    <div><span class="recibo-label">Codigo</span><?= (int)$funcionario['FUNCCONTADOR'] ?></div>
+                    <div class="span-2"><span class="recibo-label">Funcionario</span><?= htmlspecialchars((string)$funcionario['NOMEFUNC']) ?></div>
+                    <div><span class="recibo-label">Pagamento</span><?= dataFolha($dataPagamento) ?></div>
+                </div>
+                <div class="recibo-meta-linha">
+                    <div><span class="recibo-label">Admissao</span><?= dataFolha($funcionario['DTADMISSAO'] ?? '') ?></div>
+                    <div class="span-2"><span class="recibo-label">Cargo</span><?= htmlspecialchars((string)($funcionario['CARGO'] ?? '')) ?></div>
+                    <div><span class="recibo-label">Salario informado</span><?= moedaFolha($recibo['salario_liquido']) ?></div>
+                </div>
+                <div class="recibo-meta-linha tres-colunas">
+                    <div><span class="recibo-label">Fornecedor CP</span><?= htmlspecialchars((string)($funcionario['CODFORNECEDOR'] ?? '')) ?></div>
+                    <div><span class="recibo-label">Cliente CR</span><?= htmlspecialchars((string)($funcionario['DEPARTAMENTO'] ?? '')) ?></div>
+                    <div><span class="recibo-label">Referencia</span><?= htmlspecialchars(mesPorExtensoFolha($referencia)) ?></div>
+                </div>
             </div>
 
             <div class="recibo-grid">
