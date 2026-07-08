@@ -374,7 +374,7 @@ if ($gerarRecibos && empty($errosFolha)) {
           AND CLICONTADOR = ?
           AND DATE(DTEMISSAO) <= ?
           AND STATUS <> 'QT'
-          AND COALESCE(excluido_firebird, 0) = 0
+          AND COALESCE(excluido_firebird, 'N') <> 'S'
         ORDER BY DTEMISSAO, CRCONTADOR
     ");
 
@@ -385,7 +385,7 @@ if ($gerarRecibos && empty($errosFolha)) {
           AND CLICONTADOR = ?
           AND TIPODOCORIGEM = 'CRAP'
           AND DATE(DTPAGTO) = ?
-          AND COALESCE(excluido_firebird, 0) = 0
+          AND COALESCE(excluido_firebird, 'N') <> 'S'
         ORDER BY DTEMISSAO, CRCONTADOR
     ");
 
@@ -396,7 +396,7 @@ if ($gerarRecibos && empty($errosFolha)) {
           AND CLICONTADOR = ?
           AND TIPODOCORIGEM = 'VENDA'
           AND DATE(DTPAGTO) = ?
-          AND COALESCE(excluido_firebird, 0) = 0
+          AND COALESCE(excluido_firebird, 'N') <> 'S'
         ORDER BY DTEMISSAO, CRCONTADOR
     ");
 
