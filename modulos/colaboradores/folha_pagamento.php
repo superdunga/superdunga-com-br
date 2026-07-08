@@ -701,41 +701,54 @@ if ($gerarRecibos && empty($errosFolha)) {
 
     .recibo-topo {
         display: grid;
-        grid-template-columns: 1.3fr .7fr;
-        gap: .75rem;
-        padding: .75rem .9rem;
+        grid-template-columns: minmax(0, 1fr) 240px;
+        gap: .5rem;
+        align-items: center;
+        padding: .45rem .65rem;
         border-bottom: 2px solid #1e3a8a;
         background: #143873;
         color: #fff;
     }
 
     .recibo-topo h2 {
-        font-size: 1.05rem;
+        font-size: .92rem;
         font-weight: 800;
-        margin: 0 0 .2rem;
+        margin: 0;
+        line-height: 1.15;
     }
 
     .recibo-topo .recibo-empresa-sub {
-        font-size: .78rem;
+        font-size: .66rem;
         opacity: .92;
+        line-height: 1.2;
+    }
+
+    .recibo-titulo {
+        font-size: .72rem;
+        line-height: 1.25;
     }
 
     .recibo-meta {
         display: grid;
-        grid-template-columns: repeat(4, minmax(0, 1fr));
-        gap: .45rem .65rem;
-        padding: .6rem .9rem;
+        grid-template-columns: 70px minmax(180px, 2fr) 95px 95px;
+        gap: .25rem .45rem;
+        padding: .35rem .65rem;
         border-bottom: 1px solid #dbe3ef;
-        font-size: .8rem;
+        font-size: .68rem;
         background: #f8fafc;
+    }
+
+    .recibo-meta .meta-largo {
+        grid-column: span 2;
     }
 
     .recibo-label {
         color: #526174;
         display: block;
-        font-size: .68rem;
+        font-size: .58rem;
         text-transform: uppercase;
         font-weight: 700;
+        line-height: 1.1;
     }
 
     .recibo-grid {
@@ -744,7 +757,7 @@ if ($gerarRecibos && empty($errosFolha)) {
     }
 
     .recibo-col {
-        padding: .65rem .9rem;
+        padding: .35rem .65rem;
     }
 
     .recibo-col + .recibo-col {
@@ -752,23 +765,24 @@ if ($gerarRecibos && empty($errosFolha)) {
     }
 
     .recibo-col h3 {
-        font-size: .78rem;
+        font-size: .66rem;
         text-transform: uppercase;
         font-weight: 800;
         background: #e9f0fb;
         color: #143873;
-        padding: .3rem .4rem;
-        margin: 0 0 .4rem;
+        padding: .2rem .3rem;
+        margin: 0 0 .25rem;
         border-radius: 4px;
     }
 
     .recibo-linha {
         display: grid;
-        grid-template-columns: 58px 1fr 68px 96px;
-        gap: .35rem;
-        padding: .22rem 0;
+        grid-template-columns: 48px 1fr 52px 82px;
+        gap: .25rem;
+        padding: .12rem 0;
         border-bottom: 1px dotted #d6dee9;
-        font-size: .76rem;
+        font-size: .64rem;
+        line-height: 1.18;
     }
 
     .recibo-linha.cab {
@@ -779,28 +793,40 @@ if ($gerarRecibos && empty($errosFolha)) {
 
     .recibo-total {
         display: grid;
-        grid-template-columns: 1fr 150px;
-        gap: .75rem;
-        padding: .5rem .9rem;
+        grid-template-columns: repeat(3, 1fr);
+        gap: .35rem;
+        padding: .3rem .65rem;
         border-top: 2px solid #1e3a8a;
         font-weight: 800;
-        font-size: .85rem;
+        font-size: .72rem;
         background: #f8fafc;
     }
 
+    .recibo-total-item {
+        display: flex;
+        justify-content: space-between;
+        gap: .5rem;
+        border: 1px solid #dbe3ef;
+        border-radius: 4px;
+        padding: .2rem .35rem;
+        background: #fff;
+    }
+
     .recibo-rodape {
-        padding: .55rem .9rem .75rem;
-        font-size: .7rem;
+        padding: .35rem .65rem .45rem;
+        font-size: .58rem;
         border-top: 1px solid #dbe3ef;
-        line-height: 1.35;
+        line-height: 1.22;
+        max-height: 45mm;
+        overflow: hidden;
     }
 
     .recibo-assinatura {
         display: grid;
         grid-template-columns: 1fr 1fr;
-        gap: 1.5rem;
-        padding: 1.05rem .9rem .8rem;
-        font-size: .78rem;
+        gap: 1.1rem;
+        padding: .75rem .65rem .45rem;
+        font-size: .66rem;
     }
 
     .linha-assinatura {
@@ -862,7 +888,8 @@ if ($gerarRecibos && empty($errosFolha)) {
 
         .recibo-folha {
             width: 100%;
-            min-height: 276mm;
+            max-height: 279mm;
+            overflow: hidden;
             margin: 0;
             border-radius: 0;
             box-shadow: none;
@@ -877,29 +904,29 @@ if ($gerarRecibos && empty($errosFolha)) {
         }
 
         .recibo-topo {
-            padding: .55rem .7rem;
+            padding: .35rem .55rem;
         }
 
         .recibo-meta {
-            padding: .5rem .7rem;
-            font-size: .74rem;
+            padding: .28rem .55rem;
+            font-size: .62rem;
         }
 
         .recibo-col {
-            padding: .5rem .7rem;
+            padding: .28rem .55rem;
         }
 
         .recibo-linha {
-            font-size: .7rem;
-            padding: .18rem 0;
-            grid-template-columns: 50px 1fr 58px 86px;
+            font-size: .58rem;
+            padding: .1rem 0;
+            grid-template-columns: 42px 1fr 48px 76px;
         }
 
         .recibo-total,
         .recibo-rodape,
         .recibo-assinatura {
-            padding-left: .7rem;
-            padding-right: .7rem;
+            padding-left: .55rem;
+            padding-right: .55rem;
         }
     }
 </style>
@@ -1091,19 +1118,19 @@ if ($gerarRecibos && empty($errosFolha)) {
                         <div class="recibo-empresa-sub">CNPJ: <?= htmlspecialchars($empresaCnpjFolha) ?></div>
                     <?php endif; ?>
                 </div>
-                <div class="text-md-end">
+                <div class="text-md-end recibo-titulo">
                     <strong>Recibo de Pagamento</strong><br>
-                    Folha Mensal<br>
+                    Folha Mensal -
                     <?= htmlspecialchars(mesPorExtensoFolha($referencia)) ?>
                 </div>
             </div>
 
             <div class="recibo-meta">
                 <div><span class="recibo-label">Codigo</span><?= (int)$funcionario['FUNCCONTADOR'] ?></div>
-                <div><span class="recibo-label">Funcionario</span><?= htmlspecialchars((string)$funcionario['NOMEFUNC']) ?></div>
+                <div class="meta-largo"><span class="recibo-label">Funcionario</span><?= htmlspecialchars((string)$funcionario['NOMEFUNC']) ?></div>
                 <div><span class="recibo-label">Admissao</span><?= dataFolha($funcionario['DTADMISSAO'] ?? '') ?></div>
                 <div><span class="recibo-label">Pagamento</span><?= dataFolha($dataPagamento) ?></div>
-                <div><span class="recibo-label">Cargo</span><?= htmlspecialchars((string)($funcionario['CARGO'] ?? '')) ?></div>
+                <div class="meta-largo"><span class="recibo-label">Cargo</span><?= htmlspecialchars((string)($funcionario['CARGO'] ?? '')) ?></div>
                 <div><span class="recibo-label">Fornecedor CP</span><?= htmlspecialchars((string)($funcionario['CODFORNECEDOR'] ?? '')) ?></div>
                 <div><span class="recibo-label">Cliente CR</span><?= htmlspecialchars((string)($funcionario['DEPARTAMENTO'] ?? '')) ?></div>
                 <div><span class="recibo-label">Salario informado</span><?= moedaFolha($recibo['salario_liquido']) ?></div>
@@ -1148,12 +1175,18 @@ if ($gerarRecibos && empty($errosFolha)) {
             </div>
 
             <div class="recibo-total">
-                <div>Total de Vencimentos</div>
-                <div class="text-end"><?= moedaFolha($recibo['total_vencimentos']) ?></div>
-                <div>Total de Descontos</div>
-                <div class="text-end"><?= moedaFolha($recibo['total_descontos']) ?></div>
-                <div>Valor a Receber</div>
-                <div class="text-end"><?= moedaFolha($recibo['valor_receber']) ?></div>
+                <div class="recibo-total-item">
+                    <span>Total de Vencimentos</span>
+                    <span><?= moedaFolha($recibo['total_vencimentos']) ?></span>
+                </div>
+                <div class="recibo-total-item">
+                    <span>Total de Descontos</span>
+                    <span><?= moedaFolha($recibo['total_descontos']) ?></span>
+                </div>
+                <div class="recibo-total-item">
+                    <span>Valor a Receber</span>
+                    <span><?= moedaFolha($recibo['valor_receber']) ?></span>
+                </div>
             </div>
 
             <div class="recibo-rodape">
