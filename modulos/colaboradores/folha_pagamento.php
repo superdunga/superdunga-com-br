@@ -364,12 +364,11 @@ if ($gerarRecibos && empty($errosFolha)) {
     ");
 
     $stmtComprasAberto = $pdo_master->prepare("
-        SELECT CRCONTADOR, DTEMISSAO, DTVENC, DTPAGTO, STATUS, VLRPARCELA, VLRRESTANTE
+        SELECT CRCONTADOR, DTEMISSAO, DTVENC, DTPAGTO, STATUS, TIPODOCORIGEM, CMCONTADOR, VLRPARCELA, VLRRESTANTE
         FROM armazem_cr001
         WHERE EMPRESA = ?
           AND CLICONTADOR = ?
           AND DATE(DTEMISSAO) <= ?
-          AND CMCONTADOR = 9
           AND STATUS <> 'QT'
           AND COALESCE(excluido_firebird, 0) = 0
         ORDER BY DTEMISSAO, CRCONTADOR
@@ -556,20 +555,22 @@ if ($gerarRecibos && empty($errosFolha)) {
             ];
         }
 
-        $descontos = array_merge($descontosVales, [
-            [
-                'codigo' => 'CR ABERTO',
-                'descricao' => 'Total de compras em aberto',
-                'referencia' => count($comprasAberto) . ' titulo(s)',
-                'valor' => $totalComprasAberto,
-            ],
-            [
+        $descontos = $descontosVales;
+        if (abs($totalComprasPagas) >= 0.005) {
+            $descontos[] = [
                 'codigo' => 'CR PAGO',
-                'descricao' => 'Total de compras do mes',
+                'descricao' => 'CRAP pago na data do pagamento',
                 'referencia' => dataFolha($dataPagamento),
                 'valor' => $totalComprasPagas,
-            ],
-        ]);
+            ];
+        } else {
+            $descontos[] = [
+                'codigo' => 'CR ABERTO',
+                'descricao' => 'Total de titulos em aberto',
+                'referencia' => count($comprasAberto) . ' titulo(s)',
+                'valor' => $totalComprasAberto,
+            ];
+        }
 
         $totalVencimentos = array_sum(array_column($vencimentos, 'valor'));
         $totalDescontos = array_sum(array_column($descontos, 'valor'));
