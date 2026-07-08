@@ -701,7 +701,7 @@ if ($gerarRecibos && empty($errosFolha)) {
 
     .recibo-topo {
         display: grid;
-        grid-template-columns: minmax(0, 1fr) minmax(210px, .45fr);
+        grid-template-columns: minmax(0, 1fr) minmax(210px, 300px);
         gap: .8rem;
         align-items: center;
         padding: .5rem .75rem;
@@ -852,11 +852,15 @@ if ($gerarRecibos && empty($errosFolha)) {
 
     @media (max-width: 767.98px) {
         .folha-filter,
-        .recibo-topo,
         .recibo-meta,
         .recibo-grid,
         .recibo-assinatura {
             grid-template-columns: 1fr;
+        }
+
+        .recibo-topo {
+            grid-template-columns: minmax(0, 1fr) minmax(150px, 42%);
+            gap: .45rem;
         }
 
         .recibo-col + .recibo-col {
