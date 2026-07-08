@@ -4,6 +4,17 @@ require '../../config/conexao.php';
 require '../../layout/header.php';
 
 $empresaId = (int)($_SESSION['empresa_id'] ?? 0);
+$stmtEmpresaFolha = $pdo_master->prepare("
+    SELECT nome_fantasia, razao_social, cnpj
+    FROM empresas
+    WHERE id = ?
+    LIMIT 1
+");
+$stmtEmpresaFolha->execute([$empresaId]);
+$empresaFolha = $stmtEmpresaFolha->fetch(PDO::FETCH_ASSOC) ?: [];
+$empresaNomeFolha = trim((string)($empresaFolha['nome_fantasia'] ?? '')) ?: trim((string)($empresaFolha['razao_social'] ?? '')) ?: 'SuperDunga';
+$empresaRazaoFolha = trim((string)($empresaFolha['razao_social'] ?? ''));
+$empresaCnpjFolha = trim((string)($empresaFolha['cnpj'] ?? ''));
 
 function moedaFolha($valor): string
 {
@@ -661,40 +672,68 @@ if ($gerarRecibos && empty($errosFolha)) {
     }
 
     .recibo-folha {
-        border: 1px solid #1f2937;
+        border: 1px solid #c9d2e1;
+        border-radius: 6px;
         background: #fff;
         color: #111827;
-        margin-bottom: 1.25rem;
+        margin-bottom: 1rem;
+        box-shadow: 0 8px 24px rgba(15, 23, 42, .08);
         page-break-inside: avoid;
+        break-inside: avoid;
+        page-break-after: always;
+        break-after: page;
+    }
+
+    .recibo-folha:last-child {
+        page-break-after: auto;
+        break-after: auto;
+    }
+
+    .recibo-acoes {
+        display: flex;
+        justify-content: flex-end;
+        gap: .5rem;
+        padding: .55rem .75rem;
+        border-bottom: 1px solid #e5e7eb;
+        background: #f8fafc;
+        border-radius: 6px 6px 0 0;
     }
 
     .recibo-topo {
         display: grid;
         grid-template-columns: 1.3fr .7fr;
         gap: .75rem;
-        padding: .8rem 1rem;
-        border-bottom: 1px solid #1f2937;
+        padding: .75rem .9rem;
+        border-bottom: 2px solid #1e3a8a;
+        background: #143873;
+        color: #fff;
     }
 
     .recibo-topo h2 {
-        font-size: 1rem;
+        font-size: 1.05rem;
         font-weight: 800;
         margin: 0 0 .2rem;
+    }
+
+    .recibo-topo .recibo-empresa-sub {
+        font-size: .78rem;
+        opacity: .92;
     }
 
     .recibo-meta {
         display: grid;
         grid-template-columns: repeat(4, minmax(0, 1fr));
-        gap: .4rem;
-        padding: .65rem 1rem;
-        border-bottom: 1px solid #d1d5db;
-        font-size: .85rem;
+        gap: .45rem .65rem;
+        padding: .6rem .9rem;
+        border-bottom: 1px solid #dbe3ef;
+        font-size: .8rem;
+        background: #f8fafc;
     }
 
     .recibo-label {
-        color: #4b5563;
+        color: #526174;
         display: block;
-        font-size: .74rem;
+        font-size: .68rem;
         text-transform: uppercase;
         font-weight: 700;
     }
@@ -705,58 +744,63 @@ if ($gerarRecibos && empty($errosFolha)) {
     }
 
     .recibo-col {
-        padding: .75rem 1rem;
+        padding: .65rem .9rem;
     }
 
     .recibo-col + .recibo-col {
-        border-left: 1px solid #d1d5db;
+        border-left: 1px solid #dbe3ef;
     }
 
     .recibo-col h3 {
-        font-size: .88rem;
+        font-size: .78rem;
         text-transform: uppercase;
         font-weight: 800;
-        background: #e8eef8;
-        padding: .35rem .45rem;
-        margin: 0 0 .55rem;
+        background: #e9f0fb;
+        color: #143873;
+        padding: .3rem .4rem;
+        margin: 0 0 .4rem;
+        border-radius: 4px;
     }
 
     .recibo-linha {
         display: grid;
-        grid-template-columns: 64px 1fr 82px 112px;
-        gap: .4rem;
-        padding: .28rem 0;
-        border-bottom: 1px dotted #d1d5db;
-        font-size: .82rem;
+        grid-template-columns: 58px 1fr 68px 96px;
+        gap: .35rem;
+        padding: .22rem 0;
+        border-bottom: 1px dotted #d6dee9;
+        font-size: .76rem;
     }
 
     .recibo-linha.cab {
         font-weight: 800;
         color: #374151;
-        border-bottom: 1px solid #9ca3af;
+        border-bottom: 1px solid #aeb8c7;
     }
 
     .recibo-total {
         display: grid;
         grid-template-columns: 1fr 150px;
         gap: .75rem;
-        padding: .55rem 1rem;
-        border-top: 1px solid #1f2937;
+        padding: .5rem .9rem;
+        border-top: 2px solid #1e3a8a;
         font-weight: 800;
+        font-size: .85rem;
+        background: #f8fafc;
     }
 
     .recibo-rodape {
-        padding: .65rem 1rem 1rem;
-        font-size: .76rem;
-        border-top: 1px solid #d1d5db;
+        padding: .55rem .9rem .75rem;
+        font-size: .7rem;
+        border-top: 1px solid #dbe3ef;
+        line-height: 1.35;
     }
 
     .recibo-assinatura {
         display: grid;
         grid-template-columns: 1fr 1fr;
         gap: 1.5rem;
-        padding: 1.1rem 1rem .9rem;
-        font-size: .82rem;
+        padding: 1.05rem .9rem .8rem;
+        font-size: .78rem;
     }
 
     .linha-assinatura {
@@ -786,21 +830,76 @@ if ($gerarRecibos && empty($errosFolha)) {
     }
 
     @media print {
+        @page {
+            size: A4 portrait;
+            margin: 9mm;
+        }
+
         header, nav, .no-print, .btn, form {
             display: none !important;
         }
 
         body {
             background: #fff !important;
+            -webkit-print-color-adjust: exact;
+            print-color-adjust: exact;
         }
 
         .container, .container-fluid {
             max-width: none !important;
             width: 100% !important;
+            padding: 0 !important;
+            margin: 0 !important;
+        }
+
+        body.print-recibo-unico .recibo-folha {
+            display: none !important;
+        }
+
+        body.print-recibo-unico .recibo-folha.recibo-imprimir {
+            display: block !important;
         }
 
         .recibo-folha {
-            margin: 0 0 .7rem;
+            width: 100%;
+            min-height: 276mm;
+            margin: 0;
+            border-radius: 0;
+            box-shadow: none;
+            page-break-after: always;
+            break-after: page;
+        }
+
+        .recibo-folha:last-child,
+        body.print-recibo-unico .recibo-folha.recibo-imprimir {
+            page-break-after: auto;
+            break-after: auto;
+        }
+
+        .recibo-topo {
+            padding: .55rem .7rem;
+        }
+
+        .recibo-meta {
+            padding: .5rem .7rem;
+            font-size: .74rem;
+        }
+
+        .recibo-col {
+            padding: .5rem .7rem;
+        }
+
+        .recibo-linha {
+            font-size: .7rem;
+            padding: .18rem 0;
+            grid-template-columns: 50px 1fr 58px 86px;
+        }
+
+        .recibo-total,
+        .recibo-rodape,
+        .recibo-assinatura {
+            padding-left: .7rem;
+            padding-right: .7rem;
         }
     }
 </style>
@@ -966,16 +1065,31 @@ if ($gerarRecibos && empty($errosFolha)) {
                 <?= count($recibos) ?> recibo(s) gerado(s) para conferencia. Nada foi salvo ainda.
             <?php endif; ?>
         </div>
-        <button type="button" class="btn btn-outline-primary" onclick="window.print()">Imprimir / Salvar PDF</button>
+        <button type="button" class="btn btn-outline-primary" onclick="imprimirTodosRecibosFolha()">Imprimir todos / Salvar PDF</button>
     </section>
 
-    <?php foreach ($recibos as $recibo): ?>
+    <?php foreach ($recibos as $indiceRecibo => $recibo): ?>
         <?php $funcionario = $recibo['funcionario']; ?>
-        <article class="recibo-folha">
+        <?php $reciboHtmlId = 'recibo-folha-' . (int)$funcionario['FUNCCONTADOR'] . '-' . (int)$indiceRecibo; ?>
+        <article class="recibo-folha" id="<?= htmlspecialchars($reciboHtmlId) ?>">
+            <div class="recibo-acoes no-print">
+                <button
+                    type="button"
+                    class="btn btn-sm btn-outline-primary"
+                    onclick="imprimirReciboFuncionario('<?= htmlspecialchars($reciboHtmlId) ?>')"
+                >
+                    Imprimir este recibo
+                </button>
+            </div>
             <div class="recibo-topo">
                 <div>
-                    <h2>COMERCIAL GOMES SILVEIRA LTDA</h2>
-                    <div>CNPJ: 12.020.040/0001-84</div>
+                    <h2><?= htmlspecialchars($empresaNomeFolha) ?></h2>
+                    <?php if ($empresaRazaoFolha !== '' && $empresaRazaoFolha !== $empresaNomeFolha): ?>
+                        <div class="recibo-empresa-sub"><?= htmlspecialchars($empresaRazaoFolha) ?></div>
+                    <?php endif; ?>
+                    <?php if ($empresaCnpjFolha !== ''): ?>
+                        <div class="recibo-empresa-sub">CNPJ: <?= htmlspecialchars($empresaCnpjFolha) ?></div>
+                    <?php endif; ?>
                 </div>
                 <div class="text-md-end">
                     <strong>Recibo de Pagamento</strong><br>
@@ -1067,6 +1181,34 @@ if ($gerarRecibos && empty($errosFolha)) {
             </div>
         </article>
     <?php endforeach; ?>
+
+    <script>
+        function imprimirTodosRecibosFolha() {
+            document.body.classList.remove('print-recibo-unico');
+            document.querySelectorAll('.recibo-folha.recibo-imprimir').forEach(function (el) {
+                el.classList.remove('recibo-imprimir');
+            });
+            window.print();
+        }
+
+        function imprimirReciboFuncionario(id) {
+            document.querySelectorAll('.recibo-folha.recibo-imprimir').forEach(function (el) {
+                el.classList.remove('recibo-imprimir');
+            });
+            var recibo = document.getElementById(id);
+            if (!recibo) {
+                window.print();
+                return;
+            }
+            recibo.classList.add('recibo-imprimir');
+            document.body.classList.add('print-recibo-unico');
+            window.print();
+            setTimeout(function () {
+                document.body.classList.remove('print-recibo-unico');
+                recibo.classList.remove('recibo-imprimir');
+            }, 500);
+        }
+    </script>
 <?php endif; ?>
 
 <?php require '../../layout/footer.php'; ?>
