@@ -42,6 +42,8 @@ $compraIni = trim($_GET['compra_ini'] ?? '');
 $compraFim = trim($_GET['compra_fim'] ?? '');
 $vencIni = trim($_GET['venc_ini'] ?? '');
 $vencFim = trim($_GET['venc_fim'] ?? '');
+$pagIni = trim($_GET['pag_ini'] ?? '');
+$pagFim = trim($_GET['pag_fim'] ?? '');
 $valorMin = trim($_GET['valor_min'] ?? '');
 $valorMax = trim($_GET['valor_max'] ?? '');
 $exportar = $_GET['exportar'] ?? '';
@@ -91,12 +93,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['acao'] ?? '') === 'verific
 
 $where = [
     'cp.EMPRESA = ?',
-    "(cp.STATUS IS NULL OR cp.STATUS <> 'QT')",
     "COALESCE(cp.excluido_firebird, 'N') <> 'S'",
 ];
 $params = [$empresaId];
 
-if ($status !== '' && $status !== 'QT') {
+if ($status === '') {
+    $where[] = "(cp.STATUS IS NULL OR cp.STATUS <> 'QT')";
+} elseif ($status !== 'todos') {
     $where[] = 'cp.STATUS = ?';
     $params[] = $status;
 }
@@ -158,6 +161,16 @@ if ($vencFim !== '') {
     $params[] = $vencFim;
 }
 
+if ($pagIni !== '') {
+    $where[] = 'DATE(cp.DTPAGTO) >= ?';
+    $params[] = $pagIni;
+}
+
+if ($pagFim !== '') {
+    $where[] = 'DATE(cp.DTPAGTO) <= ?';
+    $params[] = $pagFim;
+}
+
 if ($valorMin !== '' && is_numeric(str_replace(',', '.', $valorMin))) {
     $where[] = 'cp.VLRPARCELA >= ?';
     $params[] = (float)str_replace(',', '.', $valorMin);
@@ -174,7 +187,10 @@ $stmtResumo = $pdo_master->prepare("
     SELECT
         COUNT(*) AS qtd,
         COALESCE(SUM(cp.VLRPARCELA), 0) AS total_parcela,
-        COALESCE(SUM(cp.VLRRESTANTE), 0) AS total_restante
+        COALESCE(SUM(cp.VLRPAGO), 0) AS total_pago,
+        COALESCE(SUM(cp.VLRRESTANTE), 0) AS total_restante,
+        COALESCE(SUM(CASE WHEN cp.STATUS = 'QT' THEN cp.VLRPARCELA ELSE 0 END), 0) AS total_quitado,
+        COALESCE(SUM(CASE WHEN COALESCE(cp.STATUS, '') <> 'QT' THEN cp.VLRRESTANTE ELSE 0 END), 0) AS total_aberto
     FROM armazem_cp001 cp
     LEFT JOIN armazem_cp003 f
         ON f.EMPRESA = cp.EMPRESA
@@ -182,7 +198,11 @@ $stmtResumo = $pdo_master->prepare("
     WHERE {$whereSql}
 ");
 $stmtResumo->execute($params);
-$resumo = $stmtResumo->fetch(PDO::FETCH_ASSOC) ?: ['qtd' => 0, 'total_parcela' => 0, 'total_restante' => 0];
+$resumo = $stmtResumo->fetch(PDO::FETCH_ASSOC) ?: ['qtd' => 0, 'total_parcela' => 0, 'total_pago' => 0, 'total_restante' => 0, 'total_quitado' => 0, 'total_aberto' => 0];
+
+$ordemLista = ($pagIni !== '' || $pagFim !== '' || $status === 'QT')
+    ? 'cp.DTPAGTO DESC, cp.DTVENC DESC, cp.CPCONTADOR DESC'
+    : 'cp.DTVENC ASC, cp.DTCOMPRA ASC, cp.CPCONTADOR ASC';
 
 $stmt = $pdo_master->prepare("
     SELECT
@@ -196,7 +216,9 @@ $stmt = $pdo_master->prepare("
         COALESCE(NULLIF(cp.TITULO, ''), NULLIF(cp.NOTAFISCAL, ''), NULLIF(cp.IDENTIFICACAO, ''), NULLIF(cp.NUMCH, ''), '') AS documento,
         cp.VLRPARCELA,
         cp.VLRRESTANTE,
+        cp.VLRPAGO,
         cp.DTVENC,
+        cp.DTPAGTO,
         cp.STATUS,
         COALESCE(cp.financeiro_verificado, 'N') AS financeiro_verificado
     FROM armazem_cp001 cp
@@ -204,7 +226,7 @@ $stmt = $pdo_master->prepare("
         ON f.EMPRESA = cp.EMPRESA
        AND f.FCONTADOR = cp.FCONTADOR
     WHERE {$whereSql}
-    ORDER BY cp.DTVENC ASC, cp.DTCOMPRA ASC, cp.CPCONTADOR ASC
+    ORDER BY {$ordemLista}
     " . (in_array($exportar, ['excel', 'pdf'], true) ? "" : "LIMIT 1000") . "
 ");
 $stmt->execute($params);
@@ -301,7 +323,6 @@ $stmtStatus = $pdo_master->prepare("
     WHERE EMPRESA = ?
       AND STATUS IS NOT NULL
       AND STATUS <> ''
-      AND STATUS <> 'QT'
     ORDER BY STATUS
 ");
 $stmtStatus->execute([$empresaId]);
@@ -460,6 +481,8 @@ if (in_array($exportar, ['excel', 'pdf'], true)) {
         'Documento: ' . ($documento ?: 'Todos'),
         'Compra: ' . ($compraIni ?: 'inicio') . ' ate ' . ($compraFim ?: 'fim'),
         'Vencimento: ' . ($vencIni ?: 'inicio') . ' ate ' . ($vencFim ?: 'fim'),
+        'Pagamento: ' . ($pagIni ?: 'inicio') . ' ate ' . ($pagFim ?: 'fim'),
+        'Status: ' . ($status === '' ? 'Abertos' : ($status === 'todos' ? 'Todos' : $status)),
         'Verificado: ' . ($verificado ?: 'Todos'),
     ];
 
@@ -473,8 +496,10 @@ if (in_array($exportar, ['excel', 'pdf'], true)) {
             ['titulo' => 'TipoES', 'largura' => 42, 'limite' => 6],
             ['titulo' => 'Documento', 'largura' => 110, 'limite' => 20],
             ['titulo' => 'Parcela', 'largura' => 78, 'limite' => 15],
+            ['titulo' => 'Pago', 'largura' => 78, 'limite' => 15],
             ['titulo' => 'Restante', 'largura' => 78, 'limite' => 15],
             ['titulo' => 'Venc.', 'largura' => 58, 'limite' => 10],
+            ['titulo' => 'Pgto.', 'largura' => 58, 'limite' => 10],
             ['titulo' => 'Verif.', 'largura' => 42, 'limite' => 8],
         ];
         $linhas = array_map(static function ($registro): array {
@@ -487,8 +512,10 @@ if (in_array($exportar, ['excel', 'pdf'], true)) {
                 (string)$registro['TIPOES'],
                 (string)$registro['documento'],
                 moedaContasPagar($registro['VLRPARCELA']),
+                moedaContasPagar($registro['VLRPAGO']),
                 moedaContasPagar($registro['VLRRESTANTE']),
                 dataContasPagar($registro['DTVENC']),
+                dataContasPagar($registro['DTPAGTO']),
                 ($registro['financeiro_verificado'] ?? 'N') === 'S' ? 'Sim' : 'Nao',
             ];
         }, $registros);
@@ -528,8 +555,10 @@ if (in_array($exportar, ['excel', 'pdf'], true)) {
                     <th>TipoES</th>
                     <th>Documento</th>
                     <th class="num">Valor parcela</th>
+                    <th class="num">Valor pago</th>
                     <th class="num">Valor restante</th>
                     <th>Vencimento</th>
+                    <th>Pagamento</th>
                     <th>Status</th>
                     <th>Verificado</th>
                 </tr>
@@ -545,8 +574,10 @@ if (in_array($exportar, ['excel', 'pdf'], true)) {
                         <td><?= escapeExcelContasPagar($registro['TIPOES']) ?></td>
                         <td><?= escapeExcelContasPagar($registro['documento']) ?></td>
                         <td class="num"><?= number_format((float)$registro['VLRPARCELA'], 2, ',', '.') ?></td>
+                        <td class="num"><?= number_format((float)$registro['VLRPAGO'], 2, ',', '.') ?></td>
                         <td class="num"><?= number_format((float)$registro['VLRRESTANTE'], 2, ',', '.') ?></td>
                         <td><?= escapeExcelContasPagar(dataContasPagar($registro['DTVENC'])) ?></td>
+                        <td><?= escapeExcelContasPagar(dataContasPagar($registro['DTPAGTO'])) ?></td>
                         <td><?= escapeExcelContasPagar($registro['STATUS']) ?></td>
                         <td><?= ($registro['financeiro_verificado'] ?? 'N') === 'S' ? 'Sim' : 'Nao' ?></td>
                     </tr>
@@ -738,7 +769,8 @@ require '../../layout/header.php';
             <div class="col-md-2">
                 <label class="form-label">Status</label>
                 <select name="status" class="form-select">
-                    <option value="">Todos em aberto</option>
+                    <option value="">Abertos</option>
+                    <option value="todos" <?= $status === 'todos' ? 'selected' : '' ?>>Todos</option>
                     <?php foreach ($statusOpcoes as $opcaoStatus): ?>
                         <option value="<?= htmlspecialchars($opcaoStatus) ?>" <?= $status === $opcaoStatus ? 'selected' : '' ?>><?= htmlspecialchars($opcaoStatus) ?></option>
                     <?php endforeach; ?>
@@ -769,6 +801,14 @@ require '../../layout/header.php';
                 <input type="date" name="venc_fim" class="form-control" value="<?= htmlspecialchars($vencFim) ?>">
             </div>
             <div class="col-md-2">
+                <label class="form-label">Pagamento inicial</label>
+                <input type="date" name="pag_ini" class="form-control" value="<?= htmlspecialchars($pagIni) ?>">
+            </div>
+            <div class="col-md-2">
+                <label class="form-label">Pagamento final</label>
+                <input type="date" name="pag_fim" class="form-control" value="<?= htmlspecialchars($pagFim) ?>">
+            </div>
+            <div class="col-md-2">
                 <label class="form-label">Valor minimo</label>
                 <input type="text" name="valor_min" class="form-control" value="<?= htmlspecialchars($valorMin) ?>">
             </div>
@@ -788,19 +828,25 @@ require '../../layout/header.php';
 
 <section class="mb-3">
     <div class="row g-3">
-        <div class="col-md-4">
+        <div class="col-md-3">
             <div class="bg-white border rounded-2 shadow-sm p-3 h-100">
                 <div class="small text-muted">Registros filtrados</div>
                 <div class="h5 fw-bold mb-0"><?= (int)$resumo['qtd'] ?></div>
             </div>
         </div>
-        <div class="col-md-4">
+        <div class="col-md-3">
             <div class="bg-white border rounded-2 shadow-sm p-3 h-100">
                 <div class="small text-muted">Total das parcelas</div>
                 <div class="h5 fw-bold mb-0"><?= moedaContasPagar($resumo['total_parcela']) ?></div>
             </div>
         </div>
-        <div class="col-md-4">
+        <div class="col-md-3">
+            <div class="bg-white border rounded-2 shadow-sm p-3 h-100">
+                <div class="small text-muted">Total pago</div>
+                <div class="h5 fw-bold mb-0"><?= moedaContasPagar($resumo['total_pago']) ?></div>
+            </div>
+        </div>
+        <div class="col-md-3">
             <div class="bg-white border rounded-2 shadow-sm p-3 h-100">
                 <div class="small text-muted">Total dos marcados</div>
                 <div class="h5 fw-bold mb-0" id="totalMarcado">R$ 0,00</div>
@@ -829,8 +875,10 @@ require '../../layout/header.php';
                         <th class="col-small">TipoES</th>
                         <th>Documento</th>
                         <th class="text-end col-money">Parcela</th>
+                        <th class="text-end col-money">Pago</th>
                         <th class="text-end col-money">Restante</th>
                         <th class="col-date">Venc.</th>
+                        <th class="col-date">Pgto.</th>
                         <th class="text-center col-action">Itens</th>
                         <th class="col-action">Verif.</th>
                     </tr>
@@ -865,8 +913,10 @@ require '../../layout/header.php';
                                 <div class="small text-muted">CP: <?= (int)$registro['CPCONTADOR'] ?> | Status: <?= htmlspecialchars((string)($registro['STATUS'] ?: 'SEM STATUS')) ?></div>
                             </td>
                             <td data-label="Parcela" class="text-end fw-semibold col-money"><?= moedaContasPagar($registro['VLRPARCELA']) ?></td>
+                            <td data-label="Pago" class="text-end col-money"><?= moedaContasPagar($registro['VLRPAGO']) ?></td>
                             <td data-label="Restante" class="text-end col-money"><?= moedaContasPagar($registro['VLRRESTANTE']) ?></td>
                             <td data-label="Venc." class="col-date"><?= dataContasPagar($registro['DTVENC']) ?></td>
+                            <td data-label="Pgto." class="col-date"><?= dataContasPagar($registro['DTPAGTO']) ?></td>
                             <td data-label="Itens" class="text-center col-action">
                                 <button
                                     type="button"
@@ -889,7 +939,7 @@ require '../../layout/header.php';
                             </td>
                         </tr>
                         <tr class="collapse bg-light" id="<?= $collapseItensId ?>">
-                            <td colspan="13">
+                            <td colspan="15">
                                 <?php if (empty($itensCompra)): ?>
                                     <div class="text-muted small py-2">
                                         Nenhum item encontrado para a compra <?= htmlspecialchars((string)$compraOrigem) ?>.
@@ -902,6 +952,7 @@ require '../../layout/header.php';
                                             | Total EST005: <strong><?= moedaContasPagar($compraResumo['TOTGERAL'] ?? 0) ?></strong>
                                         <?php endif; ?>
                                         | Parcela CP001: <strong><?= moedaContasPagar($registro['VLRPARCELA']) ?></strong>
+                                        | Pago: <strong><?= moedaContasPagar($registro['VLRPAGO']) ?></strong>
                                         | Restante: <strong><?= moedaContasPagar($registro['VLRRESTANTE']) ?></strong>
                                     </div>
                                     <div class="table-responsive">
@@ -943,7 +994,7 @@ require '../../layout/header.php';
                     <?php endforeach; ?>
                     <?php if (empty($registros)): ?>
                         <tr>
-                            <td colspan="13" class="text-center text-muted py-4">Nenhum titulo encontrado com os filtros informados.</td>
+                            <td colspan="15" class="text-center text-muted py-4">Nenhum titulo encontrado com os filtros informados.</td>
                         </tr>
                     <?php endif; ?>
                 </tbody>

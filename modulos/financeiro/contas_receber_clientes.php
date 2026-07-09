@@ -71,6 +71,9 @@ $compraInicio = trim($_GET['compra_ini'] ?? '');
 $compraFim = trim($_GET['compra_fim'] ?? '');
 $vencInicio = trim($_GET['venc_ini'] ?? '');
 $vencFim = trim($_GET['venc_fim'] ?? '');
+$pagInicio = trim($_GET['pag_ini'] ?? '');
+$pagFim = trim($_GET['pag_fim'] ?? '');
+$status = trim($_GET['status'] ?? '');
 $verificado = trim($_GET['verificado'] ?? '');
 $whatsappFiltro = trim($_GET['whatsapp'] ?? '');
 $visaoPadrao = 'analitico';
@@ -161,10 +164,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['acao'] ?? '') === 'salvar_
 
 $where = [
     'c.EMPRESA = ?',
-    "(c.STATUS IS NULL OR c.STATUS <> 'QT')",
     "COALESCE(c.excluido_firebird, 'N') <> 'S'",
 ];
 $params = [$empresaId];
+
+if ($status === '') {
+    $where[] = "(c.STATUS IS NULL OR c.STATUS <> 'QT')";
+} elseif ($status !== 'todos') {
+    $where[] = 'c.STATUS = ?';
+    $params[] = $status;
+}
 
 if ($isRecebiveis) {
     if ($cmFiltro !== '' && ctype_digit($cmFiltro)) {
@@ -207,6 +216,16 @@ if ($vencFim !== '') {
     $params[] = $vencFim;
 }
 
+if ($pagInicio !== '') {
+    $where[] = 'DATE(c.DTPAGTO) >= ?';
+    $params[] = $pagInicio;
+}
+
+if ($pagFim !== '') {
+    $where[] = 'DATE(c.DTPAGTO) <= ?';
+    $params[] = $pagFim;
+}
+
 if (in_array($verificado, ['S', 'N'], true)) {
     $where[] = "COALESCE(c.financeiro_verificado, 'N') = ?";
     $params[] = $verificado;
@@ -229,7 +248,7 @@ $joinWhatsappSql = "
 
 $registros = [];
 $sintetico = [];
-$resumo = ['qtd' => 0, 'total_parcela' => 0, 'total_restante' => 0];
+$resumo = ['qtd' => 0, 'total_parcela' => 0, 'total_pago' => 0, 'total_restante' => 0, 'total_quitado' => 0, 'total_aberto' => 0];
 
 if ($visao === 'sintetico') {
     $stmtSintetico = $pdo_master->prepare("
@@ -241,6 +260,7 @@ if ($visao === 'sintetico') {
             MAX(wc.observacao) AS whatsapp_observacao,
             COUNT(*) AS qtd,
             COALESCE(SUM(c.VLRPARCELA), 0) AS total_parcela,
+            COALESCE(SUM(c.VLRPAGO), 0) AS total_pago,
             COALESCE(SUM(c.VLRRESTANTE), 0) AS total_restante
         FROM armazem_cr001 c
         LEFT JOIN armazem_cr002 cli
@@ -260,6 +280,7 @@ if ($visao === 'sintetico') {
     foreach ($sintetico as $linhaSintetica) {
         $resumo['qtd'] += (int)$linhaSintetica['qtd'];
         $resumo['total_parcela'] += (float)$linhaSintetica['total_parcela'];
+        $resumo['total_pago'] += (float)$linhaSintetica['total_pago'];
         $resumo['total_restante'] += (float)$linhaSintetica['total_restante'];
     }
 }
@@ -269,7 +290,10 @@ if ($visao !== 'sintetico') {
         SELECT
             COUNT(*) AS qtd,
             COALESCE(SUM(c.VLRPARCELA), 0) AS total_parcela,
-            COALESCE(SUM(c.VLRRESTANTE), 0) AS total_restante
+            COALESCE(SUM(c.VLRPAGO), 0) AS total_pago,
+            COALESCE(SUM(c.VLRRESTANTE), 0) AS total_restante,
+            COALESCE(SUM(CASE WHEN c.STATUS = 'QT' THEN c.VLRPARCELA ELSE 0 END), 0) AS total_quitado,
+            COALESCE(SUM(CASE WHEN COALESCE(c.STATUS, '') <> 'QT' THEN c.VLRRESTANTE ELSE 0 END), 0) AS total_aberto
         FROM armazem_cr001 c
         LEFT JOIN armazem_cr002 cli
             ON cli.EMPRESA = c.EMPRESA
@@ -285,6 +309,10 @@ if ($visao !== 'sintetico') {
 }
 
 if ($visao !== 'sintetico' || $exportar === 'pdf') {
+    $ordemReceber = ($pagInicio !== '' || $pagFim !== '' || $status === 'QT')
+        ? 'c.DTPAGTO DESC, c.DTVENC DESC, c.CRCONTADOR DESC'
+        : 'c.DTVENC ASC, c.CRCONTADOR ASC';
+
     $stmt = $pdo_master->prepare("
         SELECT
             c.CRCONTADOR,
@@ -293,6 +321,7 @@ if ($visao !== 'sintetico' || $exportar === 'pdf') {
             c.CMCONTADOR,
             c.DTVENC,
             c.DTEMISSAO,
+            c.DTPAGTO,
             c.VLRPARCELA,
             c.VLRRESTANTE,
             c.VLRPAGO,
@@ -313,7 +342,7 @@ if ($visao !== 'sintetico' || $exportar === 'pdf') {
             ON v.EMPRESA = c.EMPRESA
            AND v.VENDACONTADOR = c.NUMDOCORIGEM
         WHERE {$whereSql}
-        ORDER BY c.DTVENC ASC, c.CRCONTADOR ASC
+        ORDER BY {$ordemReceber}
     ");
     $stmt->execute($params);
     $registros = $stmt->fetchAll(PDO::FETCH_ASSOC);
@@ -741,6 +770,7 @@ if (in_array($exportar, ['excel', 'pdf', 'pdf_itens'], true)) {
     $nomeArquivo = ($isRecebiveis ? 'contas_receber_recebiveis_' : 'contas_receber_clientes_') . date('Ymd_His');
     $clienteCabecalho = clienteCabecalhoFinanceiroClientes($cliente, $registros, $sintetico);
     $periodoVencimento = ($vencInicio ?: 'inicio') . ' ate ' . ($vencFim ?: 'fim');
+    $periodoPagamento = ($pagInicio ?: 'inicio') . ' ate ' . ($pagFim ?: 'fim');
 
     if ($exportar === 'pdf_itens') {
         $tituloExportacao = 'Contas a Receber Analitico';
@@ -748,6 +778,7 @@ if (in_array($exportar, ['excel', 'pdf', 'pdf_itens'], true)) {
             'Empresa: ' . $nomeEmpresaLogada,
             'Cliente: ' . $clienteCabecalho,
             'Vencimento: ' . $periodoVencimento,
+            'Pagamento: ' . $periodoPagamento,
             'Registros: ' . (int)$resumo['qtd'] . ' | Total em aberto: ' . moedaFinanceiroClientes($resumo['total_restante']),
         ];
 
@@ -812,6 +843,7 @@ if (in_array($exportar, ['excel', 'pdf', 'pdf_itens'], true)) {
             'Empresa: ' . $nomeEmpresaLogada,
             'Cliente: ' . $clienteCabecalho,
             'Vencimento: ' . $periodoVencimento,
+            'Pagamento: ' . $periodoPagamento,
         ];
 
         if ($visao === 'sintetico') {
@@ -851,7 +883,9 @@ if (in_array($exportar, ['excel', 'pdf', 'pdf_itens'], true)) {
             ['titulo' => 'Cliente', 'largura' => 245, 'limite' => 44],
             ['titulo' => 'Venc.', 'largura' => 62, 'limite' => 10],
             ['titulo' => 'Emissao', 'largura' => 62, 'limite' => 10],
+            ['titulo' => 'Pgto.', 'largura' => 62, 'limite' => 10],
             ['titulo' => 'Valor', 'largura' => 85, 'limite' => 16],
+            ['titulo' => 'Pago', 'largura' => 85, 'limite' => 16],
             ['titulo' => 'Restante', 'largura' => 85, 'limite' => 16],
             ['titulo' => 'Status', 'largura' => 55, 'limite' => 12],
             ['titulo' => 'Verif.', 'largura' => 50, 'limite' => 8],
@@ -863,7 +897,9 @@ if (in_array($exportar, ['excel', 'pdf', 'pdf_itens'], true)) {
                 (string)($registro['nome_cliente'] ?: 'Cliente ' . $registro['CLICONTADOR']),
                 dataFinanceiroClientes($registro['DTVENC']),
                 dataFinanceiroClientes($registro['DTEMISSAO']),
+                dataFinanceiroClientes($registro['DTPAGTO']),
                 moedaFinanceiroClientes($registro['VLRPARCELA']),
+                moedaFinanceiroClientes($registro['VLRPAGO']),
                 moedaFinanceiroClientes($registro['VLRRESTANTE']),
                 (string)$registro['STATUS'],
                 ($registro['financeiro_verificado'] ?? 'N') === 'S' ? 'Sim' : 'Nao',
@@ -903,7 +939,8 @@ if (in_array($exportar, ['excel', 'pdf', 'pdf_itens'], true)) {
         <div class="meta">
             Empresa: <?= escapeExcelFinanceiro($nomeEmpresaLogada) ?> |
             Cliente: <?= escapeExcelFinanceiro($clienteCabecalho) ?> |
-            Vencimento: <?= escapeExcelFinanceiro($periodoVencimento) ?>
+            Vencimento: <?= escapeExcelFinanceiro($periodoVencimento) ?> |
+            Pagamento: <?= escapeExcelFinanceiro($periodoPagamento) ?>
         </div>
 
         <?php if ($visao === 'sintetico'): ?>
@@ -936,7 +973,9 @@ if (in_array($exportar, ['excel', 'pdf', 'pdf_itens'], true)) {
                         <th>Cliente</th>
                         <th>Vencimento</th>
                         <th>Emissao</th>
+                        <th>Pagamento</th>
                         <th class="num">Valor</th>
+                        <th class="num">Pago</th>
                         <th class="num">Restante</th>
                         <th>Status</th>
                         <th>Verificado</th>
@@ -950,7 +989,9 @@ if (in_array($exportar, ['excel', 'pdf', 'pdf_itens'], true)) {
                             <td><?= escapeExcelFinanceiro($registro['nome_cliente'] ?: 'Cliente ' . $registro['CLICONTADOR']) ?></td>
                             <td><?= escapeExcelFinanceiro(dataFinanceiroClientes($registro['DTVENC'])) ?></td>
                             <td><?= escapeExcelFinanceiro(dataFinanceiroClientes($registro['DTEMISSAO'])) ?></td>
+                            <td><?= escapeExcelFinanceiro(dataFinanceiroClientes($registro['DTPAGTO'])) ?></td>
                             <td class="num"><?= number_format((float)$registro['VLRPARCELA'], 2, ',', '.') ?></td>
+                            <td class="num"><?= number_format((float)$registro['VLRPAGO'], 2, ',', '.') ?></td>
                             <td class="num"><?= number_format((float)$registro['VLRRESTANTE'], 2, ',', '.') ?></td>
                             <td><?= escapeExcelFinanceiro($registro['STATUS']) ?></td>
                             <td><?= ($registro['financeiro_verificado'] ?? 'N') === 'S' ? 'Sim' : 'Nao' ?></td>
@@ -1158,6 +1199,23 @@ require '../../layout/header.php';
                 <label class="form-label">Vencimento final</label>
                 <input type="date" name="venc_fim" class="form-control" value="<?= htmlspecialchars($vencFim) ?>">
             </div>
+            <div class="col-md-2">
+                <label class="form-label">Pagamento inicial</label>
+                <input type="date" name="pag_ini" class="form-control" value="<?= htmlspecialchars($pagInicio) ?>">
+            </div>
+            <div class="col-md-2">
+                <label class="form-label">Pagamento final</label>
+                <input type="date" name="pag_fim" class="form-control" value="<?= htmlspecialchars($pagFim) ?>">
+            </div>
+            <div class="col-md-2">
+                <label class="form-label">Status</label>
+                <select name="status" class="form-select">
+                    <option value="">Abertos</option>
+                    <option value="todos" <?= $status === 'todos' ? 'selected' : '' ?>>Todos</option>
+                    <option value="AB" <?= $status === 'AB' ? 'selected' : '' ?>>AB</option>
+                    <option value="QT" <?= $status === 'QT' ? 'selected' : '' ?>>QT</option>
+                </select>
+            </div>
             <div class="<?= $isRecebiveis ? 'col-md-2' : 'col-md-2' ?>">
                 <label class="form-label">Verificado</label>
                 <select name="verificado" class="form-select">
@@ -1188,19 +1246,25 @@ require '../../layout/header.php';
 
 <section class="mb-3">
     <div class="row g-3">
-        <div class="col-md-4">
+        <div class="col-md-3">
             <div class="bg-white border rounded-2 shadow-sm p-3 h-100">
                 <div class="small text-muted">Registros filtrados</div>
                 <div class="h5 fw-bold mb-0"><?= (int)$resumo['qtd'] ?></div>
             </div>
         </div>
-        <div class="col-md-4">
+        <div class="col-md-3">
             <div class="bg-white border rounded-2 shadow-sm p-3 h-100">
                 <div class="small text-muted">Total em aberto</div>
                 <div class="h5 fw-bold mb-0"><?= moedaFinanceiroClientes($resumo['total_restante']) ?></div>
             </div>
         </div>
-        <div class="col-md-4">
+        <div class="col-md-3">
+            <div class="bg-white border rounded-2 shadow-sm p-3 h-100">
+                <div class="small text-muted">Total pago</div>
+                <div class="h5 fw-bold mb-0"><?= moedaFinanceiroClientes($resumo['total_pago']) ?></div>
+            </div>
+        </div>
+        <div class="col-md-3">
             <div class="bg-white border rounded-2 shadow-sm p-3 h-100">
                 <div class="small text-muted">Total dos marcados</div>
                 <div class="h5 fw-bold mb-0" id="totalMarcado">R$ 0,00</div>
@@ -1298,7 +1362,9 @@ require '../../layout/header.php';
                         <th>Cliente</th>
                         <th class="col-date">Venc.</th>
                         <th class="col-date">Emis.</th>
+                        <th class="col-date">Pgto.</th>
                         <th class="text-end col-money">Valor</th>
+                        <th class="text-end col-money">Pago</th>
                         <th class="text-end col-money">Aberto</th>
                         <th class="col-status">Status</th>
                         <th class="text-center col-action">Itens</th>
@@ -1344,7 +1410,9 @@ require '../../layout/header.php';
                             </td>
                             <td data-label="Venc." class="col-date"><?= dataFinanceiroClientes($registro['DTVENC']) ?></td>
                             <td data-label="Emis." class="col-date"><?= dataFinanceiroClientes($registro['DTEMISSAO']) ?></td>
+                            <td data-label="Pgto." class="col-date"><?= dataFinanceiroClientes($registro['DTPAGTO']) ?></td>
                             <td data-label="Valor" class="text-end fw-semibold col-money"><?= moedaFinanceiroClientes($registro['VLRPARCELA']) ?></td>
+                            <td data-label="Pago" class="text-end col-money"><?= moedaFinanceiroClientes($registro['VLRPAGO']) ?></td>
                             <td data-label="Aberto" class="text-end col-money"><?= moedaFinanceiroClientes($registro['VLRRESTANTE']) ?></td>
                             <td data-label="Status" class="col-status">
                                 <span class="badge text-bg-warning"><?= htmlspecialchars($registro['STATUS'] ?: 'SEM STATUS') ?></span>
@@ -1371,7 +1439,7 @@ require '../../layout/header.php';
                             </td>
                         </tr>
                         <tr class="collapse bg-light" id="<?= $collapseItensId ?>">
-                            <td colspan="11">
+                            <td colspan="13">
                                 <?php if (empty($itensVenda)): ?>
                                     <div class="text-muted small py-2">
                                         Nenhum item encontrado para a venda <?= htmlspecialchars((string)$vendaOrigem) ?>.
@@ -1409,7 +1477,7 @@ require '../../layout/header.php';
                     <?php endforeach; ?>
                     <?php if (empty($registros)): ?>
                         <tr>
-                            <td colspan="11" class="text-center text-muted py-4">Nenhum titulo encontrado com os filtros informados.</td>
+                            <td colspan="13" class="text-center text-muted py-4">Nenhum titulo encontrado com os filtros informados.</td>
                         </tr>
                     <?php endif; ?>
                 </tbody>
