@@ -90,6 +90,15 @@ $atalhos = [
         'visivel' => grupoPermitido($pdo_master, $empresaId, 'Unimed', $nivelUsuario),
     ],
     [
+        'titulo' => 'Energia',
+        'descricao' => 'Controle de contas de energia, consumo e valores faturados.',
+        'href' => 'modulos/energia/menu_energia.php',
+        'classe' => 'border-primary',
+        'botao' => 'btn-primary',
+        'icone' => 'EN',
+        'visivel' => grupoPermitido($pdo_master, $empresaId, 'Energia', $nivelUsuario),
+    ],
+    [
         'titulo' => 'Desconto de Cheques',
         'descricao' => 'Controle de clientes, limites e operacoes de desconto.',
         'href' => 'modulos/desconto_cheques/menu_desconto_cheques.php',

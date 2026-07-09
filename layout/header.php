@@ -22,6 +22,7 @@ $gestaoUrl = ($appBaseUrl ?: '') . '/modulos/gestao/menu_gestao.php';
 $rotinasOperacionaisUrl = ($appBaseUrl ?: '') . '/modulos/rotinas_operacionais/menu_rotinas_operacionais.php';
 $colaboradoresUrl = ($appBaseUrl ?: '') . '/modulos/colaboradores/menu_colaboradores.php';
 $unimedUrl = ($appBaseUrl ?: '') . '/modulos/unimed/menu_unimed.php';
+$energiaUrl = ($appBaseUrl ?: '') . '/modulos/energia/menu_energia.php';
 $descontoChequesUrl = ($appBaseUrl ?: '') . '/modulos/desconto_cheques/menu_desconto_cheques.php';
 $movimentacaoBaixaUrl = ($appBaseUrl ?: '') . '/modulos/movimentacao_baixa/menu_movimentacao_baixa.php';
 $whatsappUrl = ($appBaseUrl ?: '') . '/modulos/whatsapp/index.php';
@@ -39,6 +40,7 @@ $mostrarGestaoTopbar = true;
 $mostrarRotinasOperacionaisTopbar = true;
 $mostrarColaboradoresTopbar = true;
 $mostrarUnimedTopbar = true;
+$mostrarEnergiaTopbar = true;
 $mostrarDescontoChequesTopbar = true;
 $mostrarMovimentacaoBaixaTopbar = $empresaIdSessao === 2;
 $mostrarWhatsappTopbar = $nivelUsuario === 'MASTER';
@@ -79,6 +81,7 @@ if (isset($pdo_master) && function_exists('grupoPermitido') && function_exists('
     $mostrarRotinasOperacionaisTopbar = grupoPermitido($pdo_master, $empresaIdSessao, 'Rotinas Operacionais', $nivelUsuario);
     $mostrarColaboradoresTopbar = grupoPermitido($pdo_master, $empresaIdSessao, 'Colaboradores', $nivelUsuario);
     $mostrarUnimedTopbar = grupoPermitido($pdo_master, $empresaIdSessao, 'Unimed', $nivelUsuario);
+    $mostrarEnergiaTopbar = grupoPermitido($pdo_master, $empresaIdSessao, 'Energia', $nivelUsuario);
     $mostrarDescontoChequesTopbar = grupoPermitido($pdo_master, $empresaIdSessao, 'Desconto de Cheques', $nivelUsuario);
     $mostrarMovimentacaoBaixaTopbar = $empresaIdSessao === 2 && grupoPermitido($pdo_master, $empresaIdSessao, 'Movimentacao/Baixa', $nivelUsuario);
     $mostrarWhatsappTopbar = $nivelUsuario === 'MASTER' && moduloPermitido($pdo_master, $empresaIdSessao, 'whatsapp', $nivelUsuario);
@@ -574,6 +577,11 @@ $bootstrapCssUrl = ($appBaseUrl ?: '') . '/assets/bootstrap/bootstrap.min.css';
                 <?php if ($mostrarUnimedTopbar): ?>
                     <li class="nav-item">
                         <a class="nav-link" href="<?= htmlspecialchars($unimedUrl) ?>">Unimed</a>
+                    </li>
+                <?php endif; ?>
+                <?php if ($mostrarEnergiaTopbar): ?>
+                    <li class="nav-item">
+                        <a class="nav-link" href="<?= htmlspecialchars($energiaUrl) ?>">Energia</a>
                     </li>
                 <?php endif; ?>
                 <?php if ($mostrarDescontoChequesTopbar): ?>
