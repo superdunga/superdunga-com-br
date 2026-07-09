@@ -258,7 +258,10 @@ function conciliar($pdo, $rec_id, $cm, $crcontador, $empresa_id) {
     try {
         $update = $pdo->prepare("
             UPDATE armazem_cr001
-            SET recebimento_id = ?, CMCONTADOR = ?
+            SET recebimento_id = ?,
+                CMCONTADOR = ?,
+                enviado_firebird = 'N',
+                data_envio_firebird = NULL
             WHERE CRCONTADOR = ?
             AND EMPRESA = ?
             AND recebimento_id IS NULL
