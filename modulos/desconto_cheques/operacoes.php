@@ -127,7 +127,7 @@ function gerarLancamentosFinanceirosDescontoCheques(PDO $pdo, int $empresaId, in
                     USERALT, DTALT, CHAVEINTEGRACAO, financeiro_verificado, excluido_firebird
                 ) VALUES (
                     ?, ?, ?, 1, ?, ?, NULL, ?, ?, ?, '1/1', ?, ?, 0, 'AB', 'DESCONTO_CHEQUES', ?, 'DESCONTO_CHEQUES',
-                    'CR', 302, NULL, NOW(), ?, NOW(), ?, NOW(), ?, 'N', 'N'
+                    'CR', 51, NULL, NOW(), ?, NOW(), ?, NOW(), ?, 'N', 'N'
                 )
             ");
             $stmtCr->execute([
