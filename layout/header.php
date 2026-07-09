@@ -40,7 +40,7 @@ $mostrarRotinasOperacionaisTopbar = true;
 $mostrarColaboradoresTopbar = true;
 $mostrarUnimedTopbar = true;
 $mostrarDescontoChequesTopbar = true;
-$mostrarMovimentacaoBaixaTopbar = true;
+$mostrarMovimentacaoBaixaTopbar = $empresaIdSessao === 2;
 $mostrarWhatsappTopbar = $nivelUsuario === 'MASTER';
 $mostrarUsuariosTopbar = $nivelUsuario === 'MASTER' || $nivelUsuario === 'ADMIN';
 $mostrarEmpresasTopbar = $nivelUsuario === 'MASTER';
@@ -80,7 +80,7 @@ if (isset($pdo_master) && function_exists('grupoPermitido') && function_exists('
     $mostrarColaboradoresTopbar = grupoPermitido($pdo_master, $empresaIdSessao, 'Colaboradores', $nivelUsuario);
     $mostrarUnimedTopbar = grupoPermitido($pdo_master, $empresaIdSessao, 'Unimed', $nivelUsuario);
     $mostrarDescontoChequesTopbar = grupoPermitido($pdo_master, $empresaIdSessao, 'Desconto de Cheques', $nivelUsuario);
-    $mostrarMovimentacaoBaixaTopbar = grupoPermitido($pdo_master, $empresaIdSessao, 'Movimentacao/Baixa', $nivelUsuario);
+    $mostrarMovimentacaoBaixaTopbar = $empresaIdSessao === 2 && grupoPermitido($pdo_master, $empresaIdSessao, 'Movimentacao/Baixa', $nivelUsuario);
     $mostrarWhatsappTopbar = $nivelUsuario === 'MASTER' && moduloPermitido($pdo_master, $empresaIdSessao, 'whatsapp', $nivelUsuario);
     $mostrarUsuariosTopbar = in_array($nivelUsuario, ['MASTER', 'ADMIN'], true) && moduloPermitido($pdo_master, $empresaIdSessao, 'usuarios', $nivelUsuario);
     $mostrarEmpresasTopbar = $nivelUsuario === 'MASTER' && moduloPermitido($pdo_master, $empresaIdSessao, 'empresas', $nivelUsuario);

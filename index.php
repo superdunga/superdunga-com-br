@@ -105,7 +105,7 @@ $atalhos = [
         'classe' => 'border-primary',
         'botao' => 'btn-primary',
         'icone' => 'MB',
-        'visivel' => grupoPermitido($pdo_master, $empresaId, 'Movimentacao/Baixa', $nivelUsuario),
+        'visivel' => $empresaId === 2 && grupoPermitido($pdo_master, $empresaId, 'Movimentacao/Baixa', $nivelUsuario),
     ],
     [
         'titulo' => 'Sincronizar Dados',

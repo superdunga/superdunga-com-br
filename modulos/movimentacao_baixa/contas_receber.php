@@ -2,6 +2,7 @@
 require '../../config/auth.php';
 require '../../config/conexao.php';
 require_once '../../config/modulos.php';
+require __DIR__ . '/_empresa2_guard.php';
 
 $pdo = $pdo_master;
 $empresaId = (int)($_SESSION['empresa_id'] ?? 0);
