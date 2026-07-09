@@ -232,7 +232,9 @@ function parseContaEnergiaCemig(string $texto): array
         'contribuicao_iluminacao' => 0.0,
     ];
 
-    $linhas = array_values(array_filter(array_map('trim', explode("\n", $texto)), static fn($linha) => $linha !== ''));
+    $linhas = array_values(array_filter(array_map('trim', explode("\n", $texto)), static function ($linha) {
+        return $linha !== '';
+    }));
     foreach ($linhas as $linha) {
         if (preg_match('/^(AV|AV\.|RUA|R\.|ROD|ROD\.|PRACA|PCA|AL|EST|TRAV|TV)\b/i', $linha)) {
             $dados['logradouro_complemento'] = $linha;
