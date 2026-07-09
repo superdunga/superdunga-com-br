@@ -72,6 +72,185 @@ function gerarMovimentoEnergia(PDO $pdo, int $empresaId, int $usuarioId, int $op
     return $movcontador;
 }
 
+function textoPdfEnergia($valor, int $limite = 0): string
+{
+    $texto = preg_replace('/\s+/', ' ', trim((string)$valor));
+    if ($limite > 0) {
+        if (function_exists('mb_strlen') && function_exists('mb_substr')) {
+            if (mb_strlen($texto, 'UTF-8') > $limite) {
+                $texto = mb_substr($texto, 0, max(0, $limite - 3), 'UTF-8') . '...';
+            }
+        } elseif (strlen($texto) > $limite) {
+            $texto = substr($texto, 0, max(0, $limite - 3)) . '...';
+        }
+    }
+
+    $convertido = iconv('UTF-8', 'ISO-8859-1//TRANSLIT', $texto);
+    return $convertido === false ? $texto : $convertido;
+}
+
+function escaparPdfEnergia(string $texto): string
+{
+    return str_replace(['\\', '(', ')'], ['\\\\', '\\(', '\\)'], $texto);
+}
+
+function textoCmdPdfEnergia(float $x, float $y, int $tamanho, string $texto, bool $negrito = false): string
+{
+    $fonte = $negrito ? 'F2' : 'F1';
+    return "BT /{$fonte} {$tamanho} Tf 1 0 0 1 " . number_format($x, 2, '.', '') . ' ' . number_format($y, 2, '.', '') . ' Tm (' . escaparPdfEnergia($texto) . ") Tj ET\n";
+}
+
+function corPdfEnergia(float $r, float $g, float $b): string
+{
+    return number_format($r, 3, '.', '') . ' ' . number_format($g, 3, '.', '') . ' ' . number_format($b, 3, '.', '') . " rg\n";
+}
+
+function retanguloPdfEnergia(float $x, float $y, float $w, float $h): string
+{
+    return number_format($x, 2, '.', '') . ' ' . number_format($y, 2, '.', '') . ' ' . number_format($w, 2, '.', '') . ' ' . number_format($h, 2, '.', '') . " re f\n";
+}
+
+function enviarPdfEnergia(string $conteudo, string $arquivo): void
+{
+    $largura = 595;
+    $altura = 842;
+    $objetos = [
+        1 => "<< /Type /Catalog /Pages 2 0 R >>",
+        2 => "<< /Type /Pages /Kids [6 0 R] /Count 1 >>",
+        3 => "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>",
+        4 => "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>",
+        5 => "<< /Length " . strlen($conteudo) . " >>\nstream\n{$conteudo}endstream",
+        6 => "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 {$largura} {$altura}] /Resources << /Font << /F1 3 0 R /F2 4 0 R >> >> /Contents 5 0 R >>",
+    ];
+
+    $pdf = "%PDF-1.4\n";
+    $offsets = [0 => 0];
+    foreach ($objetos as $id => $objeto) {
+        $offsets[$id] = strlen($pdf);
+        $pdf .= "{$id} 0 obj\n{$objeto}\nendobj\n";
+    }
+
+    $xref = strlen($pdf);
+    $pdf .= "xref\n0 " . (count($objetos) + 1) . "\n0000000000 65535 f \n";
+    for ($i = 1; $i <= count($objetos); $i++) {
+        $pdf .= str_pad((string)$offsets[$i], 10, '0', STR_PAD_LEFT) . " 00000 n \n";
+    }
+    $pdf .= "trailer\n<< /Size " . (count($objetos) + 1) . " /Root 1 0 R >>\nstartxref\n{$xref}\n%%EOF";
+
+    header('Content-Type: application/pdf');
+    header('Content-Disposition: attachment; filename="' . $arquivo . '.pdf"');
+    header('Content-Length: ' . strlen($pdf));
+    echo $pdf;
+    exit;
+}
+
+function gerarPdfDemonstrativoEnergia(PDO $pdo, int $empresaId, int $operacaoId): void
+{
+    $stmt = $pdo->prepare("
+        SELECT o.*, c.referencia, c.vencimento, c.logradouro_complemento, c.unidade_consumidora,
+               c.valor_total, c.consumo_kwh, c.valor_unitario_kw, c.franquia_minima,
+               c.custo_disponibilidade, c.contribuicao_iluminacao,
+               COALESCE(NULLIF(cli.APELIDO, ''), cli.NOME, CONCAT('Cliente ', o.cliente_id)) AS cliente_nome,
+               COALESCE(NULLIF(e.nome_fantasia, ''), NULLIF(e.razao_social, ''), CONCAT('Empresa ', e.id)) AS empresa_nome,
+               e.razao_social
+        FROM energia_operacoes o
+        INNER JOIN energia_contas c ON c.id = o.conta_id AND c.empresa_id = o.empresa_id
+        LEFT JOIN armazem_cr002 cli ON cli.EMPRESA = o.empresa_id AND cli.CLICONTADOR = o.cliente_id
+        LEFT JOIN empresas e ON e.id = o.empresa_id
+        WHERE o.id = ?
+          AND o.empresa_id = ?
+        LIMIT 1
+    ");
+    $stmt->execute([$operacaoId, $empresaId]);
+    $op = $stmt->fetch(PDO::FETCH_ASSOC);
+    if (!$op) {
+        http_response_code(404);
+        exit('Operacao nao encontrada.');
+    }
+
+    $quantidadeKw = (float)$op['quantidade_kw_injetada'];
+    $valorKw = (float)$op['valor_unitario_kw'];
+    $percentualDesconto = (float)$op['percentual_desconto_venda'];
+    $custoDisponibilidade = (float)$op['custo_disponibilidade'];
+    $iluminacao = (float)$op['contribuicao_iluminacao'];
+    $valorKwSemDesconto = round($quantidadeKw * $valorKw, 2);
+    $valorKwComDesconto = round($valorKwSemDesconto * max(0, 1 - ($percentualDesconto / 100)), 2);
+    $valorContaComDesconto = round((float)$op['valor_conta_com_desconto'], 2);
+    $economia = round($valorKwSemDesconto - $valorKwComDesconto, 2);
+
+    $largura = 595;
+    $altura = 842;
+    $margem = 36;
+    $conteudo = '';
+    $conteudo .= corPdfEnergia(0.05, 0.20, 0.45);
+    $conteudo .= retanguloPdfEnergia(0, $altura - 96, $largura, 96);
+    $conteudo .= "1 1 1 rg\n";
+    $conteudo .= textoCmdPdfEnergia($margem, $altura - 36, 18, textoPdfEnergia((string)$op['empresa_nome'], 60), true);
+    $conteudo .= textoCmdPdfEnergia($margem, $altura - 55, 9, textoPdfEnergia((string)($op['razao_social'] ?: ''), 80));
+    $conteudo .= textoCmdPdfEnergia($largura - 250, $altura - 36, 15, textoPdfEnergia('Demonstrativo de Energia'), true);
+    $conteudo .= textoCmdPdfEnergia($largura - 250, $altura - 55, 10, textoPdfEnergia('Operacao #' . $operacaoId . ' - ' . (string)$op['referencia'], 45));
+    $conteudo .= textoCmdPdfEnergia($largura - 250, $altura - 72, 9, textoPdfEnergia('Gerado em ' . date('d/m/Y H:i'), 45));
+    $conteudo .= "0 g\n";
+
+    $y = $altura - 130;
+    $conteudo .= corPdfEnergia(0.94, 0.97, 1.00);
+    $conteudo .= retanguloPdfEnergia($margem, $y - 70, $largura - ($margem * 2), 84);
+    $conteudo .= "0 g\n";
+    $conteudo .= textoCmdPdfEnergia($margem + 14, $y, 12, textoPdfEnergia('Dados do cliente e da unidade'), true);
+    $y -= 20;
+    $conteudo .= textoCmdPdfEnergia($margem + 14, $y, 10, textoPdfEnergia('Cliente: ' . (string)($op['cliente_nome'] ?: 'Nao informado'), 82), true);
+    $y -= 16;
+    $conteudo .= textoCmdPdfEnergia($margem + 14, $y, 9, textoPdfEnergia('Endereco: ' . (string)$op['logradouro_complemento'], 95));
+    $y -= 15;
+    $conteudo .= textoCmdPdfEnergia($margem + 14, $y, 9, textoPdfEnergia('Unidade consumidora: ' . (string)$op['unidade_consumidora'] . ' | Referencia: ' . (string)$op['referencia'] . ' | Vencimento: ' . ($op['vencimento'] ? date('d/m/Y', strtotime((string)$op['vencimento'])) : '-'), 105));
+
+    $y = $altura - 255;
+    $linhas = [
+        ['Custo de disponibilidade', 'R$ ' . moedaEnergiaOperacao($custoDisponibilidade)],
+        ['Taxa de iluminacao publica', 'R$ ' . moedaEnergiaOperacao($iluminacao)],
+        ['Quantidade de kW consumida/compensada', qtdEnergiaOperacao($quantidadeKw) . ' kWh'],
+        ['Valor unitario do kW', 'R$ ' . number_format($valorKw, 6, ',', '.')],
+        ['Valor total de kW sem desconto', 'R$ ' . moedaEnergiaOperacao($valorKwSemDesconto)],
+        ['Percentual de desconto', number_format($percentualDesconto, 4, ',', '.') . '%'],
+        ['Valor total de kW com desconto', 'R$ ' . moedaEnergiaOperacao($valorKwComDesconto)],
+        ['Economia concedida no kW', 'R$ ' . moedaEnergiaOperacao($economia)],
+    ];
+
+    $conteudo .= textoCmdPdfEnergia($margem, $y + 22, 13, textoPdfEnergia('Composicao dos valores cobrados'), true);
+    $linhaAltura = 28;
+    foreach ($linhas as $idx => $linha) {
+        if ($idx % 2 === 0) {
+            $conteudo .= corPdfEnergia(0.97, 0.98, 0.99);
+            $conteudo .= retanguloPdfEnergia($margem, $y - 8, $largura - ($margem * 2), 24);
+            $conteudo .= "0 g\n";
+        }
+        $conteudo .= textoCmdPdfEnergia($margem + 12, $y, 10, textoPdfEnergia($linha[0], 70));
+        $conteudo .= textoCmdPdfEnergia($largura - 210, $y, 10, textoPdfEnergia($linha[1], 35), true);
+        $y -= $linhaAltura;
+    }
+
+    $y -= 8;
+    $conteudo .= corPdfEnergia(0.05, 0.20, 0.45);
+    $conteudo .= retanguloPdfEnergia($margem, $y - 28, $largura - ($margem * 2), 46);
+    $conteudo .= "1 1 1 rg\n";
+    $conteudo .= textoCmdPdfEnergia($margem + 14, $y, 12, textoPdfEnergia('Valor total da conta com desconto'), true);
+    $conteudo .= textoCmdPdfEnergia($largura - 210, $y, 14, textoPdfEnergia('R$ ' . moedaEnergiaOperacao($valorContaComDesconto)), true);
+    $conteudo .= "0 g\n";
+
+    $y -= 72;
+    $conteudo .= textoCmdPdfEnergia($margem, $y, 9, textoPdfEnergia('Formula utilizada: (kW consumido/compensado x valor unitario do kW x (1 - desconto)) + custo de disponibilidade + taxa de iluminacao publica.', 120));
+    $y -= 16;
+    $conteudo .= textoCmdPdfEnergia($margem, $y, 8, textoPdfEnergia('Consumo total informado na fatura original: ' . qtdEnergiaOperacao((float)$op['consumo_kwh']) . ' kWh. Este demonstrativo considera a quantidade de kW informada na operacao comercial.', 125));
+    $conteudo .= "0.35 0.40 0.48 rg\n";
+    $conteudo .= textoCmdPdfEnergia($margem, 24, 8, textoPdfEnergia('SuperDunga - Demonstrativo gerado automaticamente'));
+
+    enviarPdfEnergia($conteudo, 'demonstrativo_energia_op_' . $operacaoId);
+}
+
+if (isset($_GET['pdf_cliente'])) {
+    gerarPdfDemonstrativoEnergia($pdo_master, $empresaId, (int)$_GET['pdf_cliente']);
+}
+
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $acao = (string)($_POST['acao'] ?? '');
 
@@ -630,6 +809,11 @@ require '../../layout/header.php';
                             <div class="col-md-4"><span class="text-muted d-block">CR gerado</span><strong><?= (int)($operacaoEditar['crcontador'] ?? 0) ?: '-' ?></strong></div>
                             <div class="col-md-6"><span class="text-muted d-block">Fornecedor</span><strong><?= (int)($operacaoEditar['fornecedor_id'] ?? 0) ?: '-' ?></strong></div>
                             <div class="col-md-6"><span class="text-muted d-block">Cliente</span><strong><?= (int)($operacaoEditar['cliente_id'] ?? 0) ?: '-' ?></strong></div>
+                            <div class="col-12 mt-3">
+                                <a href="operacoes.php?pdf_cliente=<?= (int)$operacaoEditar['id'] ?>" class="btn btn-outline-danger">
+                                    PDF demonstrativo do cliente
+                                </a>
+                            </div>
                         </div>
                     <?php endif; ?>
                 <?php else: ?>
@@ -705,6 +889,9 @@ require '../../layout/header.php';
                             <td><span class="badge text-bg-<?= $op['status'] === 'FECHADA' ? 'secondary' : 'success' ?>"><?= htmlspecialchars((string)$op['status']) ?></span></td>
                             <td class="text-end">
                                 <a href="operacoes.php?editar=<?= (int)$op['id'] ?>" class="btn btn-sm btn-outline-primary">Abrir</a>
+                                <?php if ($op['status'] === 'FECHADA'): ?>
+                                    <a href="operacoes.php?pdf_cliente=<?= (int)$op['id'] ?>" class="btn btn-sm btn-outline-danger">PDF</a>
+                                <?php endif; ?>
                             </td>
                         </tr>
                     <?php endforeach; ?>
