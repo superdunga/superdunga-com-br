@@ -253,9 +253,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['acao'] ?? '') !== 'gerar_f
     $nomesEmissores = $_POST['nome_emissor'] ?? [];
     $valores = $_POST['valor'] ?? [];
     $vencimentos = $_POST['data_vencimento'] ?? [];
-    $arquivos = $_FILES['arquivo_documento'] ?? null;
+    $arquivos = null;
     $arquivosFrente = $_FILES['arquivo_frente'] ?? null;
-    $arquivosVerso = $_FILES['arquivo_verso'] ?? null;
+    $arquivosVerso = null;
     $docsAtuaisPorId = [];
 
     if ($operacaoEditarId > 0) {
@@ -297,9 +297,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['acao'] ?? '') !== 'gerar_f
                 break;
             }
 
-            $arquivoLinha = arquivoUploadLinhaDC($arquivos, $idx);
+            $arquivoLinha = null;
             $arquivoFrenteLinha = arquivoUploadLinhaDC($arquivosFrente, $idx);
-            $arquivoVersoLinha = arquivoUploadLinhaDC($arquivosVerso, $idx);
+            $arquivoVersoLinha = null;
 
             $documentos[] = [
                 'id' => (int)($documentoIds[$idx] ?? 0),
@@ -449,15 +449,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['acao'] ?? '') !== 'gerar_f
                         $uploadVerso['nome'] = $docsAtuaisPorId[$docId]['arquivo_verso_nome'] ?? null;
                         $uploadVerso['caminho'] = $docsAtuaisPorId[$docId]['arquivo_verso_caminho'] ?? null;
                     }
-                    if ($documento['tipo_documento'] === 'CHEQUE') {
-                        if (!$uploadFrente['caminho'] && $upload['caminho']) {
-                            $uploadFrente = $upload;
-                        }
-                        $upload = $uploadFrente;
-                    } else {
-                        $uploadFrente = ['nome' => null, 'caminho' => null];
-                        $uploadVerso = ['nome' => null, 'caminho' => null];
+                    if (!$uploadFrente['caminho'] && $upload['caminho']) {
+                        $uploadFrente = $upload;
                     }
+                    $upload = $uploadFrente;
+                    $uploadVerso = ['nome' => null, 'caminho' => null];
                     $calculo = $documento['calculo'];
                     if ($docId > 0 && isset($docsAtuaisPorId[$docId])) {
                         $stmtDocUpdate->execute([
@@ -713,10 +709,6 @@ require '../../layout/header.php';
         grid-column: span 2;
     }
 
-    .dc-doc-grid .dc-doc-file-generico {
-        grid-column: span 2;
-    }
-
     .dc-doc-calculo-atual {
         background: #fff;
         border: 1px solid #d9e2ef;
@@ -730,11 +722,6 @@ require '../../layout/header.php';
 
     .dc-doc-calculo-atual span {
         display: block;
-    }
-
-    .documento-row[data-tipo-documento="CHEQUE"] .dc-doc-file-generico,
-    .documento-row[data-tipo-documento="BOLETO"] .dc-doc-file-cheque {
-        display: none;
     }
 
     .dc-doc-grid .dc-doc-remove {
@@ -812,8 +799,7 @@ require '../../layout/header.php';
             grid-column: span 2;
         }
 
-        .dc-doc-grid .dc-doc-file-cheque,
-        .dc-doc-grid .dc-doc-file-generico {
+        .dc-doc-grid .dc-doc-file-cheque {
             grid-column: span 2;
         }
 
@@ -831,8 +817,7 @@ require '../../layout/header.php';
             grid-column: auto;
         }
 
-        .dc-doc-grid .dc-doc-file-cheque,
-        .dc-doc-grid .dc-doc-file-generico {
+        .dc-doc-grid .dc-doc-file-cheque {
             grid-column: auto;
         }
 
@@ -1035,32 +1020,13 @@ require '../../layout/header.php';
                                             <label class="form-label small">Vencimento</label>
                                             <input type="date" name="data_vencimento[]" class="form-control" required value="<?= htmlspecialchars((string)($docForm['data_vencimento'] ?? '')) ?>">
                                         </div>
-                                        <div class="dc-doc-file-generico">
-                                            <label class="form-label small">Arquivo do boleto</label>
-                                            <input type="file" name="arquivo_documento[]" class="form-control" accept="image/*,.pdf">
-                                            <div class="small mt-1 dc-leitura-status text-muted"></div>
-                                            <?php if (!empty($docForm['arquivo_caminho'])): ?>
-                                                <div class="small mt-1">
-                                                    <a target="_blank" href="../../<?= htmlspecialchars($docForm['arquivo_caminho']) ?>">Anexo atual</a>
-                                                </div>
-                                            <?php endif; ?>
-                                        </div>
                                         <div class="dc-doc-file-cheque">
-                                            <label class="form-label small">Frente do cheque</label>
-                                            <input type="file" name="arquivo_frente[]" class="form-control" accept="image/*,.pdf">
+                                            <label class="form-label small">Foto da frente do cheque</label>
+                                            <input type="file" name="arquivo_frente[]" class="form-control" accept="image/*" capture="environment">
                                             <div class="small mt-1 dc-leitura-status text-muted"></div>
                                             <?php if (!empty($docFrenteCaminho)): ?>
                                                 <div class="small mt-1">
                                                     <a target="_blank" href="../../<?= htmlspecialchars($docFrenteCaminho) ?>">Frente atual</a>
-                                                </div>
-                                            <?php endif; ?>
-                                        </div>
-                                        <div class="dc-doc-file-cheque">
-                                            <label class="form-label small">Verso do cheque</label>
-                                            <input type="file" name="arquivo_verso[]" class="form-control" accept="image/*,.pdf">
-                                            <?php if (!empty($docVersoCaminho)): ?>
-                                                <div class="small mt-1">
-                                                    <a target="_blank" href="../../<?= htmlspecialchars($docVersoCaminho) ?>">Verso atual</a>
                                                 </div>
                                             <?php endif; ?>
                                         </div>
@@ -1576,210 +1542,6 @@ document.addEventListener('DOMContentLoaded', function () {
         }
     });
 
-    function aplicarSugestoes(linha, dados, sobrescrever) {
-        const numero = linha.querySelector('input[name="numero_documento[]"]');
-        const cnpjCpf = linha.querySelector('input[name="cnpj_cpf_emissor[]"]');
-        const nomeEmissor = linha.querySelector('input[name="nome_emissor[]"]');
-        const valor = linha.querySelector('input[name="valor[]"]');
-        const vencimento = linha.querySelector('input[name="data_vencimento[]"]');
-
-        if (dados.numero_documento && numero && (sobrescrever || !numero.value.trim())) {
-            numero.value = dados.numero_documento;
-        }
-        if (dados.cnpj_cpf_emissor && cnpjCpf && (sobrescrever || !cnpjCpf.value.trim())) {
-            cnpjCpf.value = dados.cnpj_cpf_emissor;
-            consultarEmissor(linha);
-        }
-        if (dados.nome_emissor && nomeEmissor && (sobrescrever || !nomeEmissor.value.trim())) {
-            nomeEmissor.value = dados.nome_emissor;
-        }
-        if (dados.valor_formatado && valor && (sobrescrever || !valor.value.trim())) {
-            valor.value = dados.valor_formatado;
-        }
-        if (dados.data_vencimento && vencimento && (sobrescrever || !vencimento.value.trim())) {
-            vencimento.value = dados.data_vencimento;
-        }
-    }
-
-    function montarResumoLeitura(dados) {
-        const partes = [];
-        if (dados.numero_documento) {
-            partes.push('numero ' + dados.numero_documento);
-        }
-        if (dados.cnpj_cpf_emissor) {
-            partes.push('CNPJ/CPF ' + dados.cnpj_cpf_emissor);
-        }
-        if (dados.nome_emissor) {
-            partes.push('emissor ' + dados.nome_emissor);
-        }
-        if (dados.valor_formatado) {
-            partes.push('valor R$ ' + dados.valor_formatado);
-        }
-        if (dados.data_vencimento) {
-            const pedacos = dados.data_vencimento.split('-');
-            partes.push('venc. ' + pedacos[2] + '/' + pedacos[1] + '/' + pedacos[0]);
-        }
-        return partes.join(' | ');
-    }
-
-    function escaparHtml(texto) {
-        return String(texto).replace(/[&<>"']/g, function (char) {
-            return {'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;'}[char];
-        });
-    }
-
-    function arquivoEhImagem(arquivo) {
-        return arquivo && (
-            (arquivo.type && arquivo.type.indexOf('image/') === 0)
-            || /\.(jpe?g|png|webp|bmp|tiff?)$/i.test(arquivo.name || '')
-        );
-    }
-
-    let promessaTesseract = null;
-    function carregarTesseract() {
-        if (window.Tesseract && typeof window.Tesseract.recognize === 'function') {
-            return Promise.resolve(window.Tesseract);
-        }
-        if (promessaTesseract) {
-            return promessaTesseract;
-        }
-        promessaTesseract = new Promise(function (resolve, reject) {
-            const script = document.createElement('script');
-            script.src = 'https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js';
-            script.async = true;
-            script.onload = function () {
-                if (window.Tesseract && typeof window.Tesseract.recognize === 'function') {
-                    resolve(window.Tesseract);
-                } else {
-                    reject(new Error('OCR indisponivel no navegador. Confira manualmente.'));
-                }
-            };
-            script.onerror = function () {
-                reject(new Error('OCR indisponivel no navegador. Confira manualmente.'));
-            };
-            document.head.appendChild(script);
-        });
-        return promessaTesseract;
-    }
-
-    function decimalOCR(valor) {
-        valor = String(valor || '').trim().replace(/[R$\s]/g, '');
-        if (!valor) {
-            return null;
-        }
-        valor = valor.replace(/\./g, '').replace(',', '.');
-        const numero = Number(valor);
-        return Number.isFinite(numero) && numero > 0 ? numero : null;
-    }
-
-    function valorBR(numero) {
-        return Number(numero).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-    }
-
-    function interpretarTextoOCR(texto) {
-        texto = String(texto || '').replace(/\r\n|\r/g, '\n').replace(/[ \t]+/g, ' ');
-        const textoPlano = texto.split('\n').map(function (linha) {
-            return linha.trim();
-        }).filter(Boolean).join(' ');
-
-        const datas = [];
-        const dataRegex = /\b(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{2,4})\b/g;
-        let dataMatch;
-        while ((dataMatch = dataRegex.exec(textoPlano)) !== null) {
-            let ano = Number(dataMatch[3]);
-            ano = ano < 100 ? 2000 + ano : ano;
-            const mes = Number(dataMatch[2]);
-            const dia = Number(dataMatch[1]);
-            if (mes >= 1 && mes <= 12 && dia >= 1 && dia <= 31) {
-                datas.push(String(ano).padStart(4, '0') + '-' + String(mes).padStart(2, '0') + '-' + String(dia).padStart(2, '0'));
-            }
-        }
-        datas.sort();
-
-        const valores = [];
-        const valorRegex = /(?:R\$\s*)?(\d{1,3}(?:\.\d{3})*,\d{2}|\d+,\d{2})\b/g;
-        let valorMatch;
-        while ((valorMatch = valorRegex.exec(textoPlano)) !== null) {
-            const numero = decimalOCR(valorMatch[1]);
-            if (numero && numero < 100000000) {
-                valores.push(numero);
-            }
-        }
-
-        let numeroDocumento = null;
-        const linhaDigitavel = textoPlano.match(/\b(\d[\d .-]{42,60}\d)\b/);
-        if (linhaDigitavel) {
-            numeroDocumento = linhaDigitavel[1].replace(/\D+/g, '');
-        }
-        if (!numeroDocumento) {
-            const rotuloNumero = textoPlano.match(/(?:cheque|boleto|documento|doc\.?|numero|no\.?|n\.?)[^\d]{0,20}(\d{4,20})/i);
-            if (rotuloNumero) {
-                numeroDocumento = rotuloNumero[1];
-            }
-        }
-
-        let cnpjCpf = null;
-        const cpf = textoPlano.match(/\b(\d{3}\.?\d{3}\.?\d{3}-?\d{2})\b/);
-        const cnpj = textoPlano.match(/\b(\d{2}\.?\d{3}\.?\d{3}\/?\d{4}-?\d{2})\b/);
-        if (cpf) {
-            cnpjCpf = cpf[1].replace(/\D+/g, '');
-        } else if (cnpj) {
-            cnpjCpf = cnpj[1].replace(/\D+/g, '');
-        }
-
-        let nomeEmissor = null;
-        const nomeMatch = textoPlano.match(/(?:emissor|emitente|sacado|pagador|cliente|cedente|beneficiario)\s*[:\-]?\s*([A-Z0-9][A-Z0-9 .,&\-]{4,120})/i);
-        if (nomeMatch) {
-            nomeEmissor = nomeMatch[1].replace(/\s+/g, ' ').replace(/\s+(CPF|CNPJ|VALOR|VENCIMENTO|DATA|DOCUMENTO|NUMERO|N)\b.*$/i, '').trim();
-        }
-
-        const maiorValor = valores.length ? Math.max.apply(null, valores) : null;
-        return {
-            numero_documento: numeroDocumento,
-            cnpj_cpf_emissor: cnpjCpf,
-            nome_emissor: nomeEmissor || null,
-            valor: maiorValor,
-            valor_formatado: maiorValor ? valorBR(maiorValor) : null,
-            data_vencimento: datas.length ? datas[datas.length - 1] : null,
-            avisos: []
-        };
-    }
-
-    function temSugestaoLeitura(dados) {
-        return !!(dados && (dados.numero_documento || dados.cnpj_cpf_emissor || dados.nome_emissor || dados.valor_formatado || dados.data_vencimento));
-    }
-
-    function lerImagemNoCelular(linha, arquivo, status) {
-        status.className = 'small mt-1 dc-leitura-status text-muted';
-        status.textContent = 'Carregando OCR para tentar ler a foto...';
-
-        return carregarTesseract().then(function (Tesseract) {
-            status.textContent = 'Tentando OCR no celular. A primeira leitura pode demorar...';
-            return Tesseract.recognize(arquivo, 'por+eng', {
-            logger: function (mensagem) {
-                if (mensagem && mensagem.status === 'recognizing text' && mensagem.progress) {
-                    status.textContent = 'Lendo foto no celular... ' + Math.round(mensagem.progress * 100) + '%';
-                }
-            }
-            });
-        }).then(function (resultado) {
-            const texto = resultado && resultado.data ? resultado.data.text : '';
-            const dados = interpretarTextoOCR(texto);
-            aplicarSugestoes(linha, dados, false);
-            const resumo = montarResumoLeitura(dados);
-            if (resumo) {
-                status.className = 'small mt-1 dc-leitura-status text-success';
-                status.innerHTML = 'Leitura pelo celular: ' + escaparHtml(resumo);
-            } else {
-                status.className = 'small mt-1 dc-leitura-status text-warning';
-                status.textContent = 'OCR do celular nao identificou os dados. Confira manualmente.';
-            }
-        }).catch(function () {
-            status.className = 'small mt-1 dc-leitura-status text-warning';
-            status.textContent = 'Nao foi possivel ler a foto no celular. Confira manualmente.';
-        });
-    }
-
     function statusEmissor(linha) {
         return linha ? linha.querySelector('.dc-emissor-status') : null;
     }
@@ -1960,56 +1722,21 @@ document.addEventListener('DOMContentLoaded', function () {
         if (
             !(input instanceof HTMLInputElement)
             || input.type !== 'file'
-            || !['arquivo_documento[]', 'arquivo_frente[]'].includes(input.name)
+            || input.name !== 'arquivo_frente[]'
         ) {
             return;
         }
 
         const arquivo = input.files && input.files[0] ? input.files[0] : null;
         const linha = input.closest('.documento-row');
-        const blocoArquivo = input.closest('.dc-doc-file, .dc-doc-file-cheque, .dc-doc-file-generico');
+        const blocoArquivo = input.closest('.dc-doc-file-cheque');
         const status = blocoArquivo ? blocoArquivo.querySelector('.dc-leitura-status') : null;
         if (!arquivo || !linha || !status) {
             return;
         }
 
         status.className = 'small mt-1 dc-leitura-status text-muted';
-        status.textContent = 'Lendo arquivo...';
-
-        const formData = new FormData();
-        formData.append('arquivo', arquivo);
-
-        fetch('ler_documento.php', {
-            method: 'POST',
-            body: formData,
-            credentials: 'same-origin'
-        })
-            .then(function (response) {
-                return response.json().then(function (json) {
-                    if (!response.ok) {
-                        throw new Error(json.erro || 'Falha na leitura do arquivo.');
-                    }
-                    return json;
-                });
-            })
-            .then(function (dados) {
-                aplicarSugestoes(linha, dados, false);
-                const resumo = montarResumoLeitura(dados);
-                const avisos = Array.isArray(dados.avisos) && dados.avisos.length ? ' ' + dados.avisos.join(' ') : '';
-                if (resumo) {
-                    status.className = 'small mt-1 dc-leitura-status text-success';
-                    status.innerHTML = 'Leitura: ' + escaparHtml(resumo + avisos);
-                } else if (arquivoEhImagem(arquivo)) {
-                    return lerImagemNoCelular(linha, arquivo, status);
-                } else {
-                    status.className = 'small mt-1 dc-leitura-status text-warning';
-                    status.textContent = 'Nao consegui identificar valor, vencimento ou numero. Confira manualmente.' + avisos;
-                }
-            })
-            .catch(function (erro) {
-                status.className = 'small mt-1 dc-leitura-status text-warning';
-                status.textContent = erro.message || 'Nao foi possivel ler o arquivo. Preencha manualmente.';
-            });
+        status.textContent = 'Foto da frente selecionada. Preencha os dados do documento manualmente.';
     });
 
     atualizarBotoes();
