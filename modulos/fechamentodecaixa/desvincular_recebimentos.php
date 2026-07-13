@@ -43,6 +43,22 @@ function moedaDesvinculo($valor): string
     return 'R$ ' . number_format((float)$valor, 2, ',', '.');
 }
 
+function valorDecimalDesvinculo(string $valor): ?float
+{
+    $valor = trim($valor);
+    if ($valor === '') {
+        return null;
+    }
+
+    $valor = str_replace(['R$', ' '], '', $valor);
+    if (strpos($valor, ',') !== false) {
+        $valor = str_replace('.', '', $valor);
+        $valor = str_replace(',', '.', $valor);
+    }
+
+    return is_numeric($valor) ? (float)$valor : null;
+}
+
 function classificarTipoMatchDesvinculo(array $vinculo): string
 {
     $valorRecebivel = abs((float)($vinculo['valor_bruto'] ?? 0));
@@ -104,6 +120,10 @@ $dataFim = trim($_GET['data_fim'] ?? date('Y-m-d'));
 $recebimentoFiltro = trim($_GET['recebimento_id'] ?? '');
 $crFiltro = trim($_GET['crcontador'] ?? '');
 $tipoMatchFiltro = trim($_GET['tipo_match'] ?? '');
+$valorMinFiltro = trim($_GET['valor_min'] ?? '');
+$valorMaxFiltro = trim($_GET['valor_max'] ?? '');
+$valorMinDecimal = valorDecimalDesvinculo($valorMinFiltro);
+$valorMaxDecimal = valorDecimalDesvinculo($valorMaxFiltro);
 $tiposMatchValidos = ['exato', 'movimento', 'aproximado', 'manual'];
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['acao'] ?? '') === 'desvincular') {
@@ -230,6 +250,16 @@ if ($crFiltro !== '' && ctype_digit($crFiltro)) {
     $params[] = (int)$crFiltro;
 }
 
+if ($valorMinDecimal !== null) {
+    $where[] = 'ABS(COALESCE(r.valor_bruto, c.VLRPARCELA, 0)) >= ?';
+    $params[] = $valorMinDecimal;
+}
+
+if ($valorMaxDecimal !== null) {
+    $where[] = 'ABS(COALESCE(r.valor_bruto, c.VLRPARCELA, 0)) <= ?';
+    $params[] = $valorMaxDecimal;
+}
+
 $whereSql = implode("\n      AND ", $where);
 
 $stmt = $pdo_master->prepare("
@@ -326,6 +356,14 @@ require '../../layout/header.php';
             <div class="col-md-2">
                 <label class="form-label">CRCONTADOR</label>
                 <input type="number" name="crcontador" class="form-control" value="<?= htmlspecialchars($crFiltro) ?>">
+            </div>
+            <div class="col-md-2">
+                <label class="form-label">Valor inicial</label>
+                <input type="text" name="valor_min" inputmode="decimal" class="form-control" value="<?= htmlspecialchars($valorMinFiltro) ?>" placeholder="0,00">
+            </div>
+            <div class="col-md-2">
+                <label class="form-label">Valor final</label>
+                <input type="text" name="valor_max" inputmode="decimal" class="form-control" value="<?= htmlspecialchars($valorMaxFiltro) ?>" placeholder="0,00">
             </div>
             <div class="col-md-2">
                 <label class="form-label">Tipo de match</label>
