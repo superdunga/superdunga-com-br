@@ -1533,6 +1533,92 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['acao'] ?? '') === 'gerar_r
     }
 }
 
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['acao'] ?? '') === 'desfazer_recebivel_extrato') {
+    $extratoIdDesfazer = (int)($_POST['extrato_id'] ?? 0);
+    $recebimentoIdDesfazer = (int)($_POST['recebimento_id'] ?? 0);
+
+    try {
+        if (!$usuarioMaster) {
+            throw new RuntimeException('Somente usuario MASTER pode desfazer recebiveis gerados pelo extrato.');
+        }
+        if ($extratoIdDesfazer <= 0 || $recebimentoIdDesfazer <= 0) {
+            throw new RuntimeException('Informe um recebivel valido para desfazer.');
+        }
+
+        $pdo_master->beginTransaction();
+
+        $stmtExtratoDesfazer = $pdo_master->prepare("
+            SELECT id, empresa_id, cbcontador, bnc001_movcontador, recebimento_id, conciliado
+            FROM financeiro_extrato_bancario
+            WHERE id = ?
+              AND empresa_id = ?
+            FOR UPDATE
+        ");
+        $stmtExtratoDesfazer->execute([$extratoIdDesfazer, $empresaExtratoId]);
+        $extratoDesfazer = $stmtExtratoDesfazer->fetch(PDO::FETCH_ASSOC);
+
+        if (!$extratoDesfazer || (int)($extratoDesfazer['recebimento_id'] ?? 0) !== $recebimentoIdDesfazer) {
+            throw new RuntimeException('Extrato e recebivel informados nao estao vinculados.');
+        }
+        if (($extratoDesfazer['conciliado'] ?? 'N') === 'S' || !empty($extratoDesfazer['bnc001_movcontador'])) {
+            throw new RuntimeException('Este extrato esta conciliado com BNC001. Desfaca o match bancario antes de remover o recebivel.');
+        }
+
+        $stmtRecebivelDesfazer = $pdo_master->prepare("
+            SELECT id, empresa_id, origem, CRCONTADOR
+            FROM armazem_conciliacao_recebimentos
+            WHERE id = ?
+              AND empresa_id = ?
+            FOR UPDATE
+        ");
+        $stmtRecebivelDesfazer->execute([$recebimentoIdDesfazer, $empresaId]);
+        $recebivelDesfazer = $stmtRecebivelDesfazer->fetch(PDO::FETCH_ASSOC);
+
+        if (!$recebivelDesfazer || ($recebivelDesfazer['origem'] ?? '') !== 'EXTRATO_BANCARIO') {
+            throw new RuntimeException('O recebivel informado nao foi gerado pelo extrato bancario.');
+        }
+        if (!empty($recebivelDesfazer['CRCONTADOR'])) {
+            throw new RuntimeException('Este recebivel ja possui CR001 vinculado. Desfaca o match de recebimentos antes.');
+        }
+
+        $stmtCrVinculado = $pdo_master->prepare("SELECT COUNT(*) FROM armazem_cr001 WHERE EMPRESA = ? AND recebimento_id = ?");
+        $stmtCrVinculado->execute([$empresaId, $recebimentoIdDesfazer]);
+        if ((int)$stmtCrVinculado->fetchColumn() > 0) {
+            throw new RuntimeException('Existe CR001 vinculado ao recebivel. Desfaca o match de recebimentos antes.');
+        }
+
+        $stmtLimparExtrato = $pdo_master->prepare("
+            UPDATE financeiro_extrato_bancario
+            SET recebimento_id = NULL
+            WHERE id = ?
+              AND empresa_id = ?
+              AND recebimento_id = ?
+        ");
+        $stmtLimparExtrato->execute([$extratoIdDesfazer, $empresaExtratoId, $recebimentoIdDesfazer]);
+
+        $stmtExcluirRecebivel = $pdo_master->prepare("
+            DELETE FROM armazem_conciliacao_recebimentos
+            WHERE id = ?
+              AND empresa_id = ?
+              AND origem = 'EXTRATO_BANCARIO'
+        ");
+        $stmtExcluirRecebivel->execute([$recebimentoIdDesfazer, $empresaId]);
+
+        $pdo_master->commit();
+
+        header('Location: conciliacao_extratos.php?' . queryConciliacaoExtratos([
+            'ok_recebivel_desfeito' => '1',
+            'recebimento_desfeito' => $recebimentoIdDesfazer,
+        ]));
+        exit;
+    } catch (Throwable $e) {
+        if ($pdo_master->inTransaction()) {
+            $pdo_master->rollBack();
+        }
+        $mensagemErro = $e->getMessage();
+    }
+}
+
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['acao'] ?? '') === 'conciliar_auto_seguro') {
     try {
         if ($cbcontador <= 0 || $dataIniSql === '' || $dataFimExclusivoSql === '') {
@@ -2167,6 +2253,10 @@ if (($_GET['ok_match'] ?? '') === 'manual') {
 
 if (($_GET['ok_recebiveis'] ?? '') === '1') {
     $mensagemOk = 'Recebiveis gerados a partir do extrato bancario: ' . (int)($_GET['qtd_recebiveis'] ?? 0) . '.';
+}
+
+if (($_GET['ok_recebivel_desfeito'] ?? '') === '1') {
+    $mensagemOk = 'Recebivel do extrato desfeito: #' . (int)($_GET['recebimento_desfeito'] ?? 0) . '.';
 }
 
 $empresasExtrato = $usuarioMaster ? empresasParaRegraExtrato($pdo_master) : [];
@@ -3613,7 +3703,19 @@ document.addEventListener('DOMContentLoaded', function () {
                                             <?php endif; ?>
 
                                             <?php if (!empty($item['recebimento_id'])): ?>
-                                                <div class="mt-1"><span class="badge text-bg-success">Recebivel #<?= (int)$item['recebimento_id'] ?></span></div>
+                                                <div class="mt-1 d-flex flex-wrap gap-1 align-items-center">
+                                                    <span class="badge text-bg-success">Recebivel #<?= (int)$item['recebimento_id'] ?></span>
+                                                    <?php if ($usuarioMaster && ($item['conciliado'] ?? 'N') !== 'S' && empty($item['bnc001_movcontador'])): ?>
+                                                        <button
+                                                            type="submit"
+                                                            form="form-desfazer-recebivel-extrato-<?= (int)$item['id'] ?>"
+                                                            class="btn btn-outline-danger btn-sm py-0"
+                                                            onclick="return confirm('Desfazer o recebivel #<?= (int)$item['recebimento_id'] ?> gerado por este extrato?');"
+                                                        >
+                                                            Desfazer
+                                                        </button>
+                                                    <?php endif; ?>
+                                                </div>
                                             <?php elseif (($item['tipo'] ?? '') !== 'C'): ?>
                                                 <div class="mt-1"><span class="badge text-bg-secondary">Recebivel nao aplicavel</span></div>
                                             <?php else: ?>
@@ -3628,6 +3730,17 @@ document.addEventListener('DOMContentLoaded', function () {
                             </tbody>
                         </table>
                     </form>
+                    <?php if ($usuarioMaster): ?>
+                        <?php foreach ($extratosPendentes as $itemFormDesfazer): ?>
+                            <?php if (!empty($itemFormDesfazer['recebimento_id']) && ($itemFormDesfazer['conciliado'] ?? 'N') !== 'S' && empty($itemFormDesfazer['bnc001_movcontador'])): ?>
+                                <form method="POST" id="form-desfazer-recebivel-extrato-<?= (int)$itemFormDesfazer['id'] ?>" class="d-none">
+                                    <input type="hidden" name="acao" value="desfazer_recebivel_extrato">
+                                    <input type="hidden" name="extrato_id" value="<?= (int)$itemFormDesfazer['id'] ?>">
+                                    <input type="hidden" name="recebimento_id" value="<?= (int)$itemFormDesfazer['recebimento_id'] ?>">
+                                </form>
+                            <?php endif; ?>
+                        <?php endforeach; ?>
+                    <?php endif; ?>
                 </div>
             </div>
         </div>

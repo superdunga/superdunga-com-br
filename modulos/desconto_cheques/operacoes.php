@@ -198,9 +198,13 @@ $faixasPrazo = buscarPrazosDescontoCheques($pdo_master, $empresaId);
 $feriadosRecorrentes = feriadosRecorrentesDC($pdo_master, $empresaId);
 $feriadosEspecificos = feriadosEspecificosDC($pdo_master, $empresaId, (int)date('Y') - 1, (int)date('Y') + 6);
 $operacaoEditarId = (int)($_GET['editar'] ?? $_POST['operacao_id'] ?? 0);
+$operacaoRenovarId = (int)($_GET['renovar'] ?? $_POST['renovar_origem_id'] ?? 0);
 $operacaoEditar = null;
 $documentosEditar = [];
-$mostrarFormulario = isset($_GET['nova']) || $operacaoEditarId > 0 || $_SERVER['REQUEST_METHOD'] === 'POST';
+$operacaoRenovar = null;
+$documentosRenovar = [];
+$modoRenovacao = $operacaoRenovarId > 0 && $operacaoEditarId <= 0;
+$mostrarFormulario = isset($_GET['nova']) || $operacaoEditarId > 0 || $modoRenovacao || $_SERVER['REQUEST_METHOD'] === 'POST';
 
 if ($operacaoEditarId > 0) {
     $stmtEditar = $pdo_master->prepare("
@@ -224,6 +228,35 @@ if ($operacaoEditarId > 0) {
         $documentosEditar = $stmtDocsEditar->fetchAll(PDO::FETCH_ASSOC);
     } else {
         $operacaoEditarId = 0;
+    }
+}
+
+if ($modoRenovacao) {
+    $stmtRenovar = $pdo_master->prepare("
+        SELECT *
+        FROM desconto_cheques_operacoes
+        WHERE id = ?
+          AND empresa_id = ?
+        LIMIT 1
+    ");
+    $stmtRenovar->execute([$operacaoRenovarId, $empresaId]);
+    $operacaoRenovar = $stmtRenovar->fetch(PDO::FETCH_ASSOC) ?: null;
+
+    if ($operacaoRenovar && ($operacaoRenovar['status'] ?? '') === 'LANCADA') {
+        $stmtDocsRenovar = $pdo_master->prepare("
+            SELECT *
+            FROM desconto_cheques_documentos
+            WHERE operacao_id = ?
+            ORDER BY data_vencimento, id
+        ");
+        $stmtDocsRenovar->execute([$operacaoRenovarId]);
+        $documentosRenovar = $stmtDocsRenovar->fetchAll(PDO::FETCH_ASSOC);
+    } else {
+        $operacaoRenovar = null;
+        $documentosRenovar = [];
+        $modoRenovacao = false;
+        $operacaoRenovarId = 0;
+        $mensagemErro = 'Somente operacoes lancadas podem ser renovadas.';
     }
 }
 
@@ -255,7 +288,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['acao'] ?? '') !== 'gerar_f
     $vencimentos = $_POST['data_vencimento'] ?? [];
     $arquivos = null;
     $arquivosFrente = $_FILES['arquivo_frente'] ?? null;
-    $arquivosVerso = null;
+    $arquivosVerso = $_FILES['arquivo_verso'] ?? null;
+    $arquivosFrenteNomeExistente = $_POST['arquivo_frente_nome_existente'] ?? [];
+    $arquivosFrenteCaminhoExistente = $_POST['arquivo_frente_caminho_existente'] ?? [];
+    $arquivosVersoNomeExistente = $_POST['arquivo_verso_nome_existente'] ?? [];
+    $arquivosVersoCaminhoExistente = $_POST['arquivo_verso_caminho_existente'] ?? [];
     $docsAtuaisPorId = [];
 
     if ($operacaoEditarId > 0) {
@@ -270,7 +307,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['acao'] ?? '') !== 'gerar_f
         }
     }
 
-    if ($operacaoEditar && ($operacaoEditar['status'] ?? '') === 'LANCADA') {
+    if ($mensagemErro !== '') {
+        // Mantem a mensagem ja definida, por exemplo renovacao invalida.
+    } elseif ($operacaoEditar && ($operacaoEditar['status'] ?? '') === 'LANCADA') {
         $mensagemErro = 'Operacao ja lancada no financeiro e nao pode ser editada.';
     } elseif (!isset($clientesPorId[$clienteId])) {
         $mensagemErro = 'Informe um cliente ativo.';
@@ -298,11 +337,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['acao'] ?? '') !== 'gerar_f
             }
 
             $arquivoLinha = null;
+            $docId = (int)($documentoIds[$idx] ?? 0);
             $arquivoFrenteLinha = arquivoUploadLinhaDC($arquivosFrente, $idx);
-            $arquivoVersoLinha = null;
+            $arquivoVersoLinha = arquivoUploadLinhaDC($arquivosVerso, $idx);
+            $frenteExistenteCaminho = trim((string)($arquivosFrenteCaminhoExistente[$idx] ?? ''));
+            $temFrenteAtual = $docId > 0
+                && isset($docsAtuaisPorId[$docId])
+                && trim((string)($docsAtuaisPorId[$docId]['arquivo_frente_caminho'] ?? $docsAtuaisPorId[$docId]['arquivo_caminho'] ?? '')) !== '';
+            $temNovaFrente = ($arquivoFrenteLinha['error'] ?? UPLOAD_ERR_NO_FILE) !== UPLOAD_ERR_NO_FILE;
+
+            if (!$temNovaFrente && !$temFrenteAtual && $frenteExistenteCaminho === '') {
+                $mensagemErro = 'A foto da frente do documento e obrigatoria.';
+                break;
+            }
 
             $documentos[] = [
-                'id' => (int)($documentoIds[$idx] ?? 0),
+                'id' => $docId,
                 'tipo_documento' => in_array(($tipos[$idx] ?? 'CHEQUE'), ['CHEQUE', 'BOLETO'], true) ? $tipos[$idx] : 'CHEQUE',
                 'numero_documento' => trim((string)($numeros[$idx] ?? '')),
                 'cnpj_cpf_emissor' => preg_replace('/\D+/', '', (string)($cnpjsCpfsEmissores[$idx] ?? '')),
@@ -312,6 +362,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['acao'] ?? '') !== 'gerar_f
                 'arquivo' => $arquivoLinha,
                 'arquivo_frente' => $arquivoFrenteLinha,
                 'arquivo_verso' => $arquivoVersoLinha,
+                'arquivo_frente_nome_existente' => trim((string)($arquivosFrenteNomeExistente[$idx] ?? '')),
+                'arquivo_frente_caminho_existente' => $frenteExistenteCaminho,
+                'arquivo_verso_nome_existente' => trim((string)($arquivosVersoNomeExistente[$idx] ?? '')),
+                'arquivo_verso_caminho_existente' => trim((string)($arquivosVersoCaminhoExistente[$idx] ?? '')),
                 'calculo' => $calculo,
             ];
         }
@@ -378,8 +432,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['acao'] ?? '') !== 'gerar_f
                         INSERT INTO desconto_cheques_operacoes
                             (empresa_id, cliente_id, data_referencia, status, valor_bruto, valor_desconto,
                              valor_taxas_tarifas, historico_taxas_tarifas, valor_descontar, historico_descontar,
-                             valor_liquido, observacao, criado_por)
-                        VALUES (?, ?, ?, 'ABERTA', ?, ?, ?, NULLIF(?, ''), ?, NULLIF(?, ''), ?, NULLIF(?, ''), ?)
+                             operacao_origem_id, valor_liquido, observacao, criado_por)
+                        VALUES (?, ?, ?, 'ABERTA', ?, ?, ?, NULLIF(?, ''), ?, NULLIF(?, ''), ?, ?, NULLIF(?, ''), ?)
                     ");
                     $stmtOperacao->execute([
                         $empresaId,
@@ -391,6 +445,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['acao'] ?? '') !== 'gerar_f
                         $historicoTaxasTarifas,
                         $valorDescontar,
                         $historicoDescontar,
+                        $operacaoRenovarId > 0 ? $operacaoRenovarId : null,
                         $valorLiquidoFinal,
                         $observacao,
                         $usuarioId ?: null,
@@ -437,6 +492,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['acao'] ?? '') !== 'gerar_f
                     $upload = salvarUploadDocumentoDC($documento['arquivo']);
                     $uploadFrente = salvarUploadDocumentoDC($documento['arquivo_frente']);
                     $uploadVerso = salvarUploadDocumentoDC($documento['arquivo_verso']);
+                    if (!$uploadFrente['caminho'] && $documento['arquivo_frente_caminho_existente'] !== '') {
+                        $uploadFrente['nome'] = $documento['arquivo_frente_nome_existente'] !== '' ? $documento['arquivo_frente_nome_existente'] : null;
+                        $uploadFrente['caminho'] = $documento['arquivo_frente_caminho_existente'];
+                    }
+                    if (!$uploadVerso['caminho'] && $documento['arquivo_verso_caminho_existente'] !== '') {
+                        $uploadVerso['nome'] = $documento['arquivo_verso_nome_existente'] !== '' ? $documento['arquivo_verso_nome_existente'] : null;
+                        $uploadVerso['caminho'] = $documento['arquivo_verso_caminho_existente'];
+                    }
                     if ($docId > 0 && isset($docsAtuaisPorId[$docId]) && !$upload['caminho']) {
                         $upload['nome'] = $docsAtuaisPorId[$docId]['arquivo_nome'];
                         $upload['caminho'] = $docsAtuaisPorId[$docId]['arquivo_caminho'];
@@ -453,7 +516,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['acao'] ?? '') !== 'gerar_f
                         $uploadFrente = $upload;
                     }
                     $upload = $uploadFrente;
-                    $uploadVerso = ['nome' => null, 'caminho' => null];
                     $calculo = $documento['calculo'];
                     if ($docId > 0 && isset($docsAtuaisPorId[$docId])) {
                         $stmtDocUpdate->execute([
@@ -628,21 +690,45 @@ $formOperacao = $operacaoEditar ?: [
     'valor_descontar' => 0,
     'historico_descontar' => '',
 ];
-$formDocumentos = $documentosEditar ?: [[
-    'id' => 0,
-    'tipo_documento' => 'CHEQUE',
-    'numero_documento' => '',
-    'cnpj_cpf_emissor' => '',
-    'nome_emissor' => '',
-    'valor' => '',
-    'data_vencimento' => '',
-    'arquivo_nome' => '',
-    'arquivo_caminho' => '',
-    'arquivo_frente_nome' => '',
-    'arquivo_frente_caminho' => '',
-    'arquivo_verso_nome' => '',
-    'arquivo_verso_caminho' => '',
-]];
+$formDocumentos = $documentosEditar ?: [];
+
+if ($modoRenovacao && $operacaoRenovar) {
+    $formOperacao = [
+        'id' => 0,
+        'cliente_id' => (int)$operacaoRenovar['cliente_id'],
+        'data_referencia' => date('Y-m-d'),
+        'observacao' => 'Renovacao da operacao #' . (int)$operacaoRenovar['id'],
+        'valor_taxas_tarifas' => (float)($operacaoRenovar['valor_taxas_tarifas'] ?? 0),
+        'historico_taxas_tarifas' => (string)($operacaoRenovar['historico_taxas_tarifas'] ?? ''),
+        'valor_descontar' => (float)($operacaoRenovar['valor_descontar'] ?? 0),
+        'historico_descontar' => (string)($operacaoRenovar['historico_descontar'] ?? ''),
+    ];
+    $formDocumentos = [];
+    foreach ($documentosRenovar as $docRenovar) {
+        $docRenovar['id'] = 0;
+        $docRenovar['data_vencimento_original'] = $docRenovar['data_vencimento'] ?? '';
+        $docRenovar['data_vencimento'] = '';
+        $formDocumentos[] = $docRenovar;
+    }
+}
+
+if (empty($formDocumentos)) {
+    $formDocumentos = [[
+        'id' => 0,
+        'tipo_documento' => 'CHEQUE',
+        'numero_documento' => '',
+        'cnpj_cpf_emissor' => '',
+        'nome_emissor' => '',
+        'valor' => '',
+        'data_vencimento' => '',
+        'arquivo_nome' => '',
+        'arquivo_caminho' => '',
+        'arquivo_frente_nome' => '',
+        'arquivo_frente_caminho' => '',
+        'arquivo_verso_nome' => '',
+        'arquivo_verso_caminho' => '',
+    ]];
+}
 $operacaoLancada = $operacaoEditar && ($operacaoEditar['status'] ?? '') === 'LANCADA';
 
 require '../../layout/header.php';
@@ -903,7 +989,13 @@ require '../../layout/header.php';
 
 <section class="mb-4">
     <div class="card shadow-sm">
-        <div class="card-header bg-white fw-semibold"><?= $operacaoEditar ? 'Editar operacao #' . (int)$operacaoEditar['id'] : 'Nova operacao' ?></div>
+        <div class="card-header bg-white fw-semibold">
+            <?php if ($modoRenovacao && $operacaoRenovar): ?>
+                Renovar operacao #<?= (int)$operacaoRenovar['id'] ?>
+            <?php else: ?>
+                <?= $operacaoEditar ? 'Editar operacao #' . (int)$operacaoEditar['id'] : 'Nova operacao' ?>
+            <?php endif; ?>
+        </div>
         <div class="card-body">
             <?php if (empty($clientes)): ?>
                 <div class="alert alert-warning mb-0">Cadastre um cliente ativo antes de lancar uma operacao.</div>
@@ -913,6 +1005,14 @@ require '../../layout/header.php';
                 <?php endif; ?>
                 <form method="post" enctype="multipart/form-data" id="formOperacao" class="row g-3">
                     <input type="hidden" name="operacao_id" value="<?= (int)$formOperacao['id'] ?>">
+                    <?php if ($modoRenovacao && $operacaoRenovar): ?>
+                        <input type="hidden" name="renovar_origem_id" value="<?= (int)$operacaoRenovar['id'] ?>">
+                        <div class="col-12">
+                            <div class="alert alert-info mb-0">
+                                Informe somente os novos vencimentos dos documentos. Os dados e fotos da operacao original serao reaproveitados.
+                            </div>
+                        </div>
+                    <?php endif; ?>
                     <input type="hidden" name="continuar_editando" id="continuarEditando" value="0">
                     <fieldset class="row g-3 m-0 p-0 border-0" <?= $operacaoLancada ? 'disabled' : '' ?>>
                     <div class="col-12 col-md-4 col-lg-3">
@@ -967,7 +1067,9 @@ require '../../layout/header.php';
                     <div class="col-12">
                         <div class="d-flex flex-column flex-md-row justify-content-between gap-2 mb-2">
                             <h2 class="h6 fw-bold mb-0">Documentos</h2>
-                            <button type="button" class="btn btn-sm btn-primary" id="btnAddDocumento">Adicionar documento</button>
+                            <?php if (!$modoRenovacao): ?>
+                                <button type="button" class="btn btn-sm btn-primary" id="btnAddDocumento">Adicionar documento</button>
+                            <?php endif; ?>
                         </div>
                         <div id="documentosContainer" class="d-flex flex-column gap-2" data-iniciar-recolhido="<?= $operacaoEditar ? '1' : '0' ?>">
                             <?php foreach ($formDocumentos as $docForm): ?>
@@ -991,42 +1093,58 @@ require '../../layout/header.php';
                                      data-arquivo-caminho="<?= htmlspecialchars($docFrenteCaminho ?: $docArquivoCaminho) ?>"
                                      data-arquivo-nome="<?= htmlspecialchars($docFrenteNome ?: $docArquivoNome) ?>">
                                     <input type="hidden" name="documento_id[]" value="<?= (int)($docForm['id'] ?? 0) ?>">
+                                    <input type="hidden" name="arquivo_frente_nome_existente[]" value="<?= htmlspecialchars($docFrenteNome ?: $docArquivoNome) ?>">
+                                    <input type="hidden" name="arquivo_frente_caminho_existente[]" value="<?= htmlspecialchars($docFrenteCaminho ?: $docArquivoCaminho) ?>">
+                                    <input type="hidden" name="arquivo_verso_nome_existente[]" value="<?= htmlspecialchars($docVersoNome) ?>">
+                                    <input type="hidden" name="arquivo_verso_caminho_existente[]" value="<?= htmlspecialchars($docVersoCaminho) ?>">
                                     <div class="dc-doc-grid">
                                         <div>
                                             <label class="form-label small">Tipo</label>
-                                            <select name="tipo_documento[]" class="form-select">
+                                            <select name="tipo_documento[]" class="form-select" <?= $modoRenovacao ? 'readonly' : '' ?>>
                                                 <option value="CHEQUE" <?= $docTipoAtual === 'CHEQUE' ? 'selected' : '' ?>>Cheque</option>
                                                 <option value="BOLETO" <?= $docTipoAtual === 'BOLETO' ? 'selected' : '' ?>>Boleto</option>
                                             </select>
                                         </div>
                                         <div>
                                             <label class="form-label small">Numero</label>
-                                            <input type="text" name="numero_documento[]" class="form-control" value="<?= htmlspecialchars((string)($docForm['numero_documento'] ?? '')) ?>">
+                                            <input type="text" name="numero_documento[]" class="form-control" value="<?= htmlspecialchars((string)($docForm['numero_documento'] ?? '')) ?>" <?= $modoRenovacao ? 'readonly' : '' ?>>
                                         </div>
                                         <div>
                                             <label class="form-label small">CNPJ/CPF emissor</label>
-                                            <input type="text" name="cnpj_cpf_emissor[]" class="form-control" inputmode="numeric" value="<?= htmlspecialchars((string)($docForm['cnpj_cpf_emissor'] ?? '')) ?>">
+                                            <input type="text" name="cnpj_cpf_emissor[]" class="form-control" inputmode="numeric" value="<?= htmlspecialchars((string)($docForm['cnpj_cpf_emissor'] ?? '')) ?>" <?= $modoRenovacao ? 'readonly' : '' ?>>
                                             <div class="small mt-1 dc-emissor-status text-muted"></div>
                                         </div>
                                         <div>
                                             <label class="form-label small">Nome do emissor</label>
-                                            <input type="text" name="nome_emissor[]" class="form-control" value="<?= htmlspecialchars((string)($docForm['nome_emissor'] ?? '')) ?>">
+                                            <input type="text" name="nome_emissor[]" class="form-control" value="<?= htmlspecialchars((string)($docForm['nome_emissor'] ?? '')) ?>" <?= $modoRenovacao ? 'readonly' : '' ?>>
                                         </div>
                                         <div>
                                             <label class="form-label small">Valor</label>
-                                            <input type="text" name="valor[]" class="form-control" inputmode="decimal" required value="<?= ($docForm['valor'] ?? '') !== '' ? htmlspecialchars(number_format((float)$docForm['valor'], 2, ',', '.')) : '' ?>">
+                                            <input type="text" name="valor[]" class="form-control" inputmode="decimal" required value="<?= ($docForm['valor'] ?? '') !== '' ? htmlspecialchars(number_format((float)$docForm['valor'], 2, ',', '.')) : '' ?>" <?= $modoRenovacao ? 'readonly' : '' ?>>
                                         </div>
                                         <div>
                                             <label class="form-label small">Vencimento</label>
                                             <input type="date" name="data_vencimento[]" class="form-control" required value="<?= htmlspecialchars((string)($docForm['data_vencimento'] ?? '')) ?>">
+                                            <?php if ($modoRenovacao && !empty($docForm['data_vencimento_original'])): ?>
+                                                <div class="small text-muted mt-1">Vencimento original: <?= dataBRDC($docForm['data_vencimento_original']) ?></div>
+                                            <?php endif; ?>
                                         </div>
                                         <div class="dc-doc-file-cheque">
-                                            <label class="form-label small">Foto da frente do cheque</label>
-                                            <input type="file" name="arquivo_frente[]" class="form-control" accept="image/*" capture="environment">
+                                            <label class="form-label small">Foto da frente do documento <span class="text-danger">*</span></label>
+                                            <input type="file" name="arquivo_frente[]" class="form-control" accept="image/*" capture="environment" <?= empty($docFrenteCaminho) ? 'required' : '' ?>>
                                             <div class="small mt-1 dc-leitura-status text-muted"></div>
                                             <?php if (!empty($docFrenteCaminho)): ?>
                                                 <div class="small mt-1">
                                                     <a target="_blank" href="../../<?= htmlspecialchars($docFrenteCaminho) ?>">Frente atual</a>
+                                                </div>
+                                            <?php endif; ?>
+                                        </div>
+                                        <div class="dc-doc-file-verso">
+                                            <label class="form-label small">Foto do verso do documento</label>
+                                            <input type="file" name="arquivo_verso[]" class="form-control" accept="image/*" capture="environment">
+                                            <?php if (!empty($docVersoCaminho)): ?>
+                                                <div class="small mt-1">
+                                                    <a target="_blank" href="../../<?= htmlspecialchars($docVersoCaminho) ?>">Verso atual</a>
                                                 </div>
                                             <?php endif; ?>
                                         </div>
@@ -1047,7 +1165,9 @@ require '../../layout/header.php';
                                         <div class="dc-doc-remove">
                                             <div class="d-grid gap-2">
                                                 <button type="button" class="btn btn-primary btn-salvar-doc">Salvar documento</button>
-                                                <button type="button" class="btn btn-outline-danger btn-remover-doc">Remover</button>
+                                                <?php if (!$modoRenovacao): ?>
+                                                    <button type="button" class="btn btn-outline-danger btn-remover-doc">Remover</button>
+                                                <?php endif; ?>
                                             </div>
                                         </div>
                                     </div>
@@ -1069,7 +1189,9 @@ require '../../layout/header.php';
                                         <div class="dc-doc-summary-thumb small text-muted">Sem anexo</div>
                                         <div class="dc-doc-summary-actions">
                                             <button type="button" class="btn btn-sm btn-outline-primary btn-editar-doc">Editar</button>
-                                            <button type="button" class="btn btn-sm btn-outline-danger btn-remover-doc">Remover</button>
+                                            <?php if (!$modoRenovacao): ?>
+                                                <button type="button" class="btn btn-sm btn-outline-danger btn-remover-doc">Remover</button>
+                                            <?php endif; ?>
                                         </div>
                                     </div>
                                 </div>
@@ -1114,7 +1236,7 @@ require '../../layout/header.php';
 
                     <div class="col-12 dc-main-actions">
                         <?php if (!$operacaoLancada): ?>
-                            <button type="submit" class="btn btn-primary"><?= $operacaoEditar ? 'Atualizar operacao' : 'Salvar operacao' ?></button>
+                            <button type="submit" class="btn btn-primary"><?= $modoRenovacao ? 'Salvar renovacao' : ($operacaoEditar ? 'Atualizar operacao' : 'Salvar operacao') ?></button>
                         <?php endif; ?>
                         <a href="operacoes.php" class="btn btn-outline-secondary">Voltar para operacoes</a>
                     </div>
@@ -1231,7 +1353,12 @@ require '../../layout/header.php';
                     <?php foreach ($operacoes as $operacao): ?>
                         <tr class="table-primary">
                             <td class="fw-semibold">#<?= (int)$operacao['id'] ?></td>
-                            <td><?= htmlspecialchars($operacao['cliente_nome']) ?></td>
+                            <td>
+                                <?= htmlspecialchars($operacao['cliente_nome']) ?>
+                                <?php if (!empty($operacao['operacao_origem_id'])): ?>
+                                    <div class="small text-muted">Renovacao da op. #<?= (int)$operacao['operacao_origem_id'] ?></div>
+                                <?php endif; ?>
+                            </td>
                             <td><?= dataBRDC($operacao['data_referencia']) ?></td>
                             <td class="text-end"><?= moedaDC($operacao['valor_bruto']) ?></td>
                             <td class="text-end text-danger"><?= moedaDC($operacao['valor_desconto']) ?></td>
@@ -1247,6 +1374,8 @@ require '../../layout/header.php';
                                         <input type="hidden" name="operacao_id" value="<?= (int)$operacao['id'] ?>">
                                         <button type="submit" class="btn btn-sm btn-success">Gerar lancamentos</button>
                                     </form>
+                                <?php else: ?>
+                                    <a href="operacoes.php?renovar=<?= (int)$operacao['id'] ?>" class="btn btn-sm btn-outline-success">Renovar</a>
                                 <?php endif; ?>
                                 <a href="operacao_pdf.php?id=<?= (int)$operacao['id'] ?>" target="_blank" class="btn btn-sm btn-outline-danger">PDF</a>
                             </td>
@@ -1267,7 +1396,7 @@ require '../../layout/header.php';
 document.addEventListener('DOMContentLoaded', function () {
     const container = document.getElementById('documentosContainer');
     const btnAdd = document.getElementById('btnAddDocumento');
-    if (!container || !btnAdd) {
+    if (!container) {
         return;
     }
     let linhaAtiva = container.dataset.iniciarRecolhido === '1' ? null : container.querySelector('.documento-row');
@@ -1456,27 +1585,29 @@ document.addEventListener('DOMContentLoaded', function () {
         clone.dataset.tipoDocumento = 'CHEQUE';
     }
 
-    btnAdd.addEventListener('click', function () {
-        if (linhaAtiva) {
-            linhaAtiva.scrollIntoView({behavior: 'smooth', block: 'center'});
-            const primeiroCampo = linhaAtiva.querySelector('input, select, textarea');
-            if (primeiroCampo) {
-                primeiroCampo.focus();
+    if (btnAdd) {
+        btnAdd.addEventListener('click', function () {
+            if (linhaAtiva) {
+                linhaAtiva.scrollIntoView({behavior: 'smooth', block: 'center'});
+                const primeiroCampo = linhaAtiva.querySelector('input, select, textarea');
+                if (primeiroCampo) {
+                    primeiroCampo.focus();
+                }
+                return;
             }
-            return;
-        }
 
-        const primeira = container.querySelector('.documento-row');
-        if (!primeira) {
-            return;
-        }
-        const clone = primeira.cloneNode(true);
-        limparLinhaDocumento(clone);
-        clone.classList.add('documento-ativo');
-        linhaAtiva = clone;
-        container.insertBefore(clone, primeira);
-        atualizarBotoes();
-    });
+            const primeira = container.querySelector('.documento-row');
+            if (!primeira) {
+                return;
+            }
+            const clone = primeira.cloneNode(true);
+            limparLinhaDocumento(clone);
+            clone.classList.add('documento-ativo');
+            linhaAtiva = clone;
+            container.insertBefore(clone, primeira);
+            atualizarBotoes();
+        });
+    }
 
     container.addEventListener('click', function (event) {
         if (event.target.classList.contains('btn-editar-doc')) {

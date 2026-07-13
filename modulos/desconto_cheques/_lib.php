@@ -76,6 +76,7 @@ function garantirTabelasDescontoCheques(PDO $pdo): void
             historico_taxas_tarifas VARCHAR(255) NULL,
             valor_descontar DECIMAL(15,2) NOT NULL DEFAULT 0,
             historico_descontar VARCHAR(255) NULL,
+            operacao_origem_id INT NULL,
             valor_liquido DECIMAL(15,2) NOT NULL DEFAULT 0,
             observacao TEXT NULL,
             criado_por INT NULL,
@@ -95,6 +96,8 @@ function garantirTabelasDescontoCheques(PDO $pdo): void
     garantirColunaDC($pdo, 'desconto_cheques_operacoes', 'mov_desconto', "INT NULL AFTER mov_bruto");
     garantirColunaDC($pdo, 'desconto_cheques_operacoes', 'mov_taxas', "INT NULL AFTER mov_desconto");
     garantirColunaDC($pdo, 'desconto_cheques_operacoes', 'mov_outros', "INT NULL AFTER mov_taxas");
+    garantirColunaDC($pdo, 'desconto_cheques_operacoes', 'operacao_origem_id', "INT NULL AFTER historico_descontar");
+    garantirIndiceDC($pdo, 'desconto_cheques_operacoes', 'idx_dc_operacoes_origem', ['empresa_id', 'operacao_origem_id']);
 
     $pdo->exec("
         CREATE TABLE IF NOT EXISTS desconto_cheques_documentos (
@@ -876,8 +879,12 @@ function buscarResumoCreditoClienteDC(PDO $pdo, int $empresaId, int $clienteId, 
     return $resumo;
 }
 
-function salvarUploadDocumentoDC(array $arquivo): array
+function salvarUploadDocumentoDC(?array $arquivo): array
 {
+    if ($arquivo === null) {
+        return ['nome' => null, 'caminho' => null];
+    }
+
     if (($arquivo['error'] ?? UPLOAD_ERR_NO_FILE) === UPLOAD_ERR_NO_FILE) {
         return ['nome' => null, 'caminho' => null];
     }
