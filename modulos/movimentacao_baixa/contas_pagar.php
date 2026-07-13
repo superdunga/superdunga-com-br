@@ -1075,6 +1075,7 @@ $stmtLista = $pdo->prepare("
            t.DESCES AS tipoes_desc,
            CASE
                WHEN cp.TIPODOCORIGEM = 'SUPERDUNGA' AND cp.CONTROLE = 'MOVIMENTACAO_BAIXA' THEN 'Mov/Baixa'
+               WHEN cp.TIPODOCORIGEM = 'SUPERDUNGA' AND cp.CONTROLE = 'MOV_BAIXA_CONTRAPARTIDA' THEN 'Contrapartida Mov/Baixa'
                WHEN cp.TIPODOCORIGEM = 'SUPERDUNGA' THEN 'SuperDunga'
                WHEN cp.TIPODOCORIGEM = 'CARTAO' THEN 'Cartao'
                ELSE 'Firebird'

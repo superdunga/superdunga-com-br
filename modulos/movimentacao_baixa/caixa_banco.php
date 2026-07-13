@@ -80,9 +80,44 @@ function mbH($valor)
     return htmlspecialchars((string)$valor, ENT_QUOTES, 'UTF-8');
 }
 
+function mbGarantirEstruturaContrapartidaAberta(PDO $pdo)
+{
+    $pdo->exec("
+        CREATE TABLE IF NOT EXISTS mov_baixa_contrapartidas (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            empresa_id INT NOT NULL,
+            movcontador INT NOT NULL,
+            tipo_contrapartida ENUM('CP','CR') NOT NULL,
+            contador_contrapartida INT NOT NULL,
+            valor DECIMAL(15,2) NOT NULL DEFAULT 0,
+            criado_por INT NULL,
+            criado_em DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE KEY uniq_mb_contrap_mov (empresa_id, movcontador),
+            UNIQUE KEY uniq_mb_contrap_titulo (empresa_id, tipo_contrapartida, contador_contrapartida),
+            KEY idx_mb_contrap_empresa_tipo (empresa_id, tipo_contrapartida)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    ");
+}
+
+mbGarantirEstruturaContrapartidaAberta($pdo);
+
 function mbProximoMovcontador(PDO $pdo)
 {
     $stmt = $pdo->query("SELECT COALESCE(MAX(MOVCONTADOR), 0) + 1 FROM armazem_bnc001");
+    return (int)$stmt->fetchColumn();
+}
+
+function mbProximoCpcontador(PDO $pdo, $empresaId)
+{
+    $stmt = $pdo->prepare("SELECT COALESCE(MAX(CPCONTADOR), 0) + 1 FROM armazem_cp001 WHERE EMPRESA = ?");
+    $stmt->execute([$empresaId]);
+    return (int)$stmt->fetchColumn();
+}
+
+function mbProximoCrcontador(PDO $pdo, $empresaId)
+{
+    $stmt = $pdo->prepare("SELECT COALESCE(MAX(CRCONTADOR), 0) + 1 FROM armazem_cr001 WHERE EMPRESA = ?");
+    $stmt->execute([$empresaId]);
     return (int)$stmt->fetchColumn();
 }
 
@@ -133,6 +168,36 @@ function mbBuscarTipo(PDO $pdo, $empresaId, $tipoes)
     return $stmt->fetch(PDO::FETCH_ASSOC);
 }
 
+function mbBuscarFornecedor(PDO $pdo, $empresaId, $fcontador)
+{
+    $stmt = $pdo->prepare("
+        SELECT *
+        FROM armazem_cp003
+        WHERE EMPRESA = ?
+          AND FCONTADOR = ?
+          AND COALESCE(excluido_firebird, 'N') <> 'S'
+          AND COALESCE(INATIVO, 'N') <> 'S'
+        LIMIT 1
+    ");
+    $stmt->execute([$empresaId, $fcontador]);
+    return $stmt->fetch(PDO::FETCH_ASSOC);
+}
+
+function mbBuscarCliente(PDO $pdo, $empresaId, $clicontador)
+{
+    $stmt = $pdo->prepare("
+        SELECT *
+        FROM armazem_cr002
+        WHERE EMPRESA = ?
+          AND CLICONTADOR = ?
+          AND COALESCE(excluido_firebird, 'N') <> 'S'
+          AND COALESCE(INATIVO, 'N') <> 'S'
+        LIMIT 1
+    ");
+    $stmt->execute([$empresaId, $clicontador]);
+    return $stmt->fetch(PDO::FETCH_ASSOC);
+}
+
 function mbDescricaoConta($conta)
 {
     if (!$conta) {
@@ -164,6 +229,167 @@ function mbCarregarContrapartida(PDO $pdo, $empresaId, $movcontador)
     ");
     $stmt->execute([$empresaId, $movcontador]);
     return $stmt->fetch(PDO::FETCH_ASSOC);
+}
+
+function mbCarregarContrapartidaAberta(PDO $pdo, $empresaId, $movcontador)
+{
+    $stmt = $pdo->prepare("
+        SELECT *
+        FROM mov_baixa_contrapartidas
+        WHERE empresa_id = ?
+          AND movcontador = ?
+        LIMIT 1
+    ");
+    $stmt->execute([$empresaId, $movcontador]);
+    return $stmt->fetch(PDO::FETCH_ASSOC);
+}
+
+function mbMovimentoTemContrapartidaAberta(PDO $pdo, $empresaId, $movcontador)
+{
+    return (bool)mbCarregarContrapartidaAberta($pdo, $empresaId, $movcontador);
+}
+
+function mbValidarContrapartidaAberta(PDO $pdo, $empresaId, array $dados)
+{
+    $erros = [];
+    $criar = !empty($dados['criar_contrap_aberta']);
+
+    if (!$criar) {
+        return $erros;
+    }
+
+    $tipo = strtoupper((string)($dados['contrap_aberta_tipo'] ?? ''));
+    if (!in_array($tipo, ['CP', 'CR'], true)) {
+        $erros[] = 'Informe se a contrapartida em aberto sera a pagar ou a receber.';
+    }
+
+    if (empty($dados['contrap_aberta_vencimento'])) {
+        $erros[] = 'Informe o vencimento da contrapartida em aberto.';
+    }
+
+    $valorContrap = mbFloat($dados['contrap_aberta_valor'] ?? $dados['valor'] ?? 0);
+    if ($valorContrap <= 0) {
+        $erros[] = 'Informe um valor valido para a contrapartida em aberto.';
+    }
+
+    if (empty($dados['contrap_aberta_tipoes']) || !mbBuscarTipo($pdo, $empresaId, (int)$dados['contrap_aberta_tipoes'])) {
+        $erros[] = 'Informe um TIPOES valido para a contrapartida em aberto.';
+    }
+
+    if ($tipo === 'CP') {
+        if (empty($dados['contrap_aberta_fcontador']) || !mbBuscarFornecedor($pdo, $empresaId, (int)$dados['contrap_aberta_fcontador'])) {
+            $erros[] = 'Informe um fornecedor valido para a contrapartida a pagar.';
+        }
+    } elseif ($tipo === 'CR') {
+        if (empty($dados['contrap_aberta_clicontador']) || !mbBuscarCliente($pdo, $empresaId, (int)$dados['contrap_aberta_clicontador'])) {
+            $erros[] = 'Informe um cliente valido para a contrapartida a receber.';
+        }
+    }
+
+    return $erros;
+}
+
+function mbCriarContrapartidaAberta(PDO $pdo, $empresaId, $usuarioId, $movcontador, array $dados)
+{
+    if (empty($dados['criar_contrap_aberta'])) {
+        return null;
+    }
+
+    $tipo = strtoupper((string)($dados['contrap_aberta_tipo'] ?? ''));
+    $valor = mbFloat($dados['contrap_aberta_valor'] ?? $dados['valor'] ?? 0);
+    $vencimento = $dados['contrap_aberta_vencimento'];
+    $tipoes = (int)$dados['contrap_aberta_tipoes'];
+    $historicoBase = trim((string)($dados['historico'] ?? ''));
+    $historico = trim((string)($dados['contrap_aberta_historico'] ?? ''));
+    if ($historico === '') {
+        $historico = 'CONTRAPARTIDA EM ABERTO - ' . $historicoBase;
+    }
+    $numdoc = trim((string)($dados['numdoc'] ?? ''));
+    $titulo = $numdoc !== '' ? $numdoc : ('MOV ' . $movcontador);
+
+    if ($tipo === 'CP') {
+        $contador = mbProximoCpcontador($pdo, $empresaId);
+        $chave = 'MOVBAIXA-CONTRAP-CP-' . $empresaId . '-' . $movcontador . '-' . $contador;
+        $stmt = $pdo->prepare("
+            INSERT INTO armazem_cp001 (
+                EMPRESA, CPCONTADOR, DTCOMPRA, NUMPARCELA, TITULO, VALORCOMPRA,
+                FCONTADOR, OBSERVACAO, DTEMISSAO, VLRPARCELA, PARCELA, DTVENC,
+                VLRRESTANTE, VLRPAGO, STATUS, TIPODOCORIGEM, NUMDOCORIGEM, CONTROLE,
+                TIPOCP, TIPOES, NOTAFISCAL, REGSTAMP, REGIMPORT, USERLANC, DTLANC,
+                USERALT, DTALT, CHAVEINTEGRACAO, financeiro_verificado, excluido_firebird
+            ) VALUES (
+                ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, '1/1', ?, ?, 0, 'AB', 'SUPERDUNGA', ?, 'MOV_BAIXA_CONTRAPARTIDA',
+                'CP', ?, NULL, NOW(), 'S', ?, NOW(), ?, NOW(), ?, 'N', 'N'
+            )
+        ");
+        $stmt->execute([
+            $empresaId,
+            $contador,
+            $dados['dtmov'],
+            $titulo,
+            $valor,
+            (int)$dados['contrap_aberta_fcontador'],
+            $historico,
+            $dados['dtmov'],
+            $valor,
+            $vencimento,
+            $valor,
+            $movcontador,
+            $tipoes,
+            $usuarioId ?: null,
+            $usuarioId ?: null,
+            $chave,
+        ]);
+    } else {
+        $contador = mbProximoCrcontador($pdo, $empresaId);
+        $chave = 'MOVBAIXA-CONTRAP-CR-' . $empresaId . '-' . $movcontador . '-' . $contador;
+        $stmt = $pdo->prepare("
+            INSERT INTO armazem_cr001 (
+                EMPRESA, CRCONTADOR, DTVENDA, NUMPARCELA, TITULO, VALORVENDA,
+                CLICONTADOR, OBSERVACAO, DTEMISSAO, VLRPARCELA, PARCELA, DTVENC,
+                VLRRESTANTE, VLRPAGO, STATUS, TIPODOCORIGEM, NUMDOCORIGEM, CONTROLE,
+                TIPOCR, TIPOES, NOTAFISCAL, REGSTAMP, USERLANC, DTLANC,
+                USERALT, DTALT, CHAVEINTEGRACAO, financeiro_verificado, excluido_firebird
+            ) VALUES (
+                ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, '1/1', ?, ?, 0, 'AB', 'SUPERDUNGA', ?, 'MOV_BAIXA_CONTRAPARTIDA',
+                'CR', ?, NULL, NOW(), ?, NOW(), ?, NOW(), ?, 'N', 'N'
+            )
+        ");
+        $stmt->execute([
+            $empresaId,
+            $contador,
+            $dados['dtmov'],
+            $titulo,
+            $valor,
+            (int)$dados['contrap_aberta_clicontador'],
+            $historico,
+            $dados['dtmov'],
+            $valor,
+            $vencimento,
+            $valor,
+            $movcontador,
+            $tipoes,
+            $usuarioId ?: null,
+            $usuarioId ?: null,
+            $chave,
+        ]);
+    }
+
+    $stmtVinculo = $pdo->prepare("
+        INSERT INTO mov_baixa_contrapartidas
+            (empresa_id, movcontador, tipo_contrapartida, contador_contrapartida, valor, criado_por)
+        VALUES (?, ?, ?, ?, ?, ?)
+    ");
+    $stmtVinculo->execute([
+        $empresaId,
+        $movcontador,
+        $tipo,
+        $contador,
+        $valor,
+        $usuarioId ?: null,
+    ]);
+
+    return ['tipo' => $tipo, 'contador' => $contador];
 }
 
 function mbValidarLancamento(PDO $pdo, $empresaId, $dados)
@@ -210,6 +436,8 @@ function mbValidarLancamento(PDO $pdo, $empresaId, $dados)
         }
     }
 
+    $erros = array_merge($erros, mbValidarContrapartidaAberta($pdo, $empresaId, $dados));
+
     return [$erros, $tipo];
 }
 
@@ -254,6 +482,10 @@ function mbSalvarLancamento(PDO $pdo, $empresaId, $usuarioId, $dados, $movcontad
 
             if (!$atual) {
                 throw new RuntimeException('Lancamento nao encontrado para edicao.');
+            }
+
+            if (mbMovimentoTemContrapartidaAberta($pdo, $empresaId, $movcontadorEdicao)) {
+                throw new RuntimeException('Lancamento com contrapartida em aberto nao pode ser editado. O par deve permanecer integro.');
             }
 
             if (mbMovimentoVinculadoAcerto($pdo, $empresaId, $movcontadorEdicao)) {
@@ -412,6 +644,8 @@ function mbSalvarLancamento(PDO $pdo, $empresaId, $usuarioId, $dados, $movcontad
                     $usuarioId,
                 ]);
             }
+
+            mbCriarContrapartidaAberta($pdo, $empresaId, $usuarioId, $movcontadorPrincipal, $dados);
         }
 
         $pdo->commit();
@@ -469,6 +703,10 @@ function mbExcluirLancamento(PDO $pdo, $empresaId, $usuarioId, $movcontador)
 
     if (($lancamento['TIPODOCORIGEM'] ?? '') !== 'SUPERDUNGA' || (int)($lancamento['ORIGEMCPART'] ?? 0) !== 0) {
         throw new RuntimeException('Somente lancamentos criados diretamente na tela Caixa/Banco podem ser excluidos aqui.');
+    }
+
+    if (mbMovimentoTemContrapartidaAberta($pdo, $empresaId, $movcontador)) {
+        throw new RuntimeException('Lancamento com contrapartida em aberto nao pode ser excluido. O par deve permanecer integro.');
     }
 
     if (mbMovimentoVinculadoAcerto($pdo, $empresaId, $movcontador)) {
@@ -566,6 +804,28 @@ $tiposStmt = $pdo->prepare("
 $tiposStmt->execute([$empresaId]);
 $tipos = $tiposStmt->fetchAll(PDO::FETCH_ASSOC);
 
+$fornecedoresStmt = $pdo->prepare("
+    SELECT FCONTADOR, NOME, APELIDO
+    FROM armazem_cp003
+    WHERE EMPRESA = ?
+      AND COALESCE(excluido_firebird, 'N') <> 'S'
+      AND COALESCE(INATIVO, 'N') <> 'S'
+    ORDER BY COALESCE(NULLIF(APELIDO, ''), NOME), FCONTADOR
+");
+$fornecedoresStmt->execute([$empresaId]);
+$fornecedores = $fornecedoresStmt->fetchAll(PDO::FETCH_ASSOC);
+
+$clientesStmt = $pdo->prepare("
+    SELECT CLICONTADOR, NOME, APELIDO
+    FROM armazem_cr002
+    WHERE EMPRESA = ?
+      AND COALESCE(excluido_firebird, 'N') <> 'S'
+      AND COALESCE(INATIVO, 'N') <> 'S'
+    ORDER BY COALESCE(NULLIF(APELIDO, ''), NOME), CLICONTADOR
+");
+$clientesStmt->execute([$empresaId]);
+$clientes = $clientesStmt->fetchAll(PDO::FETCH_ASSOC);
+
 $contasPorId = [];
 foreach ($contas as $conta) {
     $contasPorId[(int)$conta['CBCONTADOR']] = $conta;
@@ -609,6 +869,14 @@ $form = [
     'valor' => $lancamentoEdicao ? number_format((float)$lancamentoEdicao['VALORMOV'], 2, ',', '.') : '',
     'historico' => $lancamentoEdicao['HISTMOV'] ?? '',
     'contrap_cbcontador' => $contrapEdicao['CBCONTADOR'] ?? '',
+    'criar_contrap_aberta' => '',
+    'contrap_aberta_tipo' => '',
+    'contrap_aberta_fcontador' => '',
+    'contrap_aberta_clicontador' => '',
+    'contrap_aberta_vencimento' => date('Y-m-d'),
+    'contrap_aberta_tipoes' => '',
+    'contrap_aberta_valor' => '',
+    'contrap_aberta_historico' => '',
 ];
 
 $fDataIni = $_GET['data_ini'] ?? date('Y-m-01');
@@ -675,7 +943,10 @@ $sqlLista = "
            ext.extrato_id AS EXTRATO_ID,
            ext.extrato_data AS EXTRATO_DATA,
            ext.extrato_valor AS EXTRATO_VALOR,
-           ext.extrato_conta AS EXTRATO_CONTA
+           ext.extrato_conta AS EXTRATO_CONTA,
+           mca.tipo_contrapartida AS ABERTA_TIPO,
+           mca.contador_contrapartida AS ABERTA_CONTADOR,
+           mca.valor AS ABERTA_VALOR
     FROM armazem_bnc001 b
     LEFT JOIN armazem_bnc002 c
       ON c.EMPRESA = b.EMPRESA AND c.CBCONTADOR = b.CBCONTADOR
@@ -702,6 +973,9 @@ $sqlLista = "
     ) ext
       ON ext.bnc001_empresa = b.EMPRESA
      AND ext.bnc001_movcontador = b.MOVCONTADOR
+    LEFT JOIN mov_baixa_contrapartidas mca
+      ON mca.empresa_id = b.EMPRESA
+     AND mca.movcontador = b.MOVCONTADOR
     WHERE " . implode(' AND ', $where) . "
     ORDER BY b.DTMOV DESC, b.MOVCONTADOR DESC
     LIMIT 200
@@ -889,6 +1163,31 @@ require_once __DIR__ . '/../../layout/header.php';
     .mb-contrap-box.active {
         display: block;
     }
+    .mb-contrap-aberta-box {
+        grid-column: span 12;
+        border: 1px solid #bbf7d0;
+        background: #f0fdf4;
+        border-radius: 6px;
+        padding: 12px;
+    }
+    .mb-switch-line {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-weight: 700;
+        color: #14532d;
+        margin-bottom: 10px;
+    }
+    .mb-switch-line input {
+        width: 18px;
+        height: 18px;
+    }
+    .mb-contrap-aberta-campos {
+        display: none;
+    }
+    .mb-contrap-aberta-box.active .mb-contrap-aberta-campos {
+        display: block;
+    }
     @media (max-width: 820px) {
         .mb-page {
             padding: 12px;
@@ -905,7 +1204,8 @@ require_once __DIR__ . '/../../layout/header.php';
         .mb-field.w4,
         .mb-field.w6,
         .mb-field.w12,
-        .mb-contrap-box {
+        .mb-contrap-box,
+        .mb-contrap-aberta-box {
             grid-column: span 1;
         }
         .mb-actions .mb-btn {
@@ -1030,6 +1330,81 @@ require_once __DIR__ . '/../../layout/header.php';
                     </div>
                 </div>
 
+                <?php if (!$lancamentoEdicao): ?>
+                    <div id="contrapAbertaBox" class="mb-contrap-aberta-box">
+                        <label class="mb-switch-line">
+                            <input type="checkbox" id="criar_contrap_aberta" name="criar_contrap_aberta" value="1">
+                            Criar contrapartida em aberto
+                        </label>
+                        <div class="mb-note" style="margin-bottom:12px;">
+                            O movimento em Caixa/Banco sera gravado agora e o sistema criara uma conta a pagar ou a receber em aberto. Depois de salvo, o par fica protegido contra edicao ou exclusao individual.
+                        </div>
+                        <div class="mb-contrap-aberta-campos">
+                            <div class="mb-grid">
+                                <div class="mb-field w3">
+                                    <label for="contrap_aberta_tipo">Tipo</label>
+                                    <select id="contrap_aberta_tipo" name="contrap_aberta_tipo">
+                                        <option value="">Selecione</option>
+                                        <option value="CR">Conta a receber</option>
+                                        <option value="CP">Conta a pagar</option>
+                                    </select>
+                                </div>
+                                <div class="mb-field w3 mb-campo-cr">
+                                    <label for="contrap_aberta_clicontador">Cliente</label>
+                                    <select id="contrap_aberta_clicontador" name="contrap_aberta_clicontador">
+                                        <option value="">Selecione</option>
+                                        <?php foreach ($clientes as $cliente): ?>
+                                            <option value="<?= (int)$cliente['CLICONTADOR'] ?>">
+                                                <?= mbH(trim((string)($cliente['APELIDO'] ?: $cliente['NOME'])) . ' (' . $cliente['CLICONTADOR'] . ')') ?>
+                                            </option>
+                                        <?php endforeach; ?>
+                                    </select>
+                                </div>
+                                <div class="mb-field w3 mb-campo-cp">
+                                    <label for="contrap_aberta_fcontador">Fornecedor</label>
+                                    <select id="contrap_aberta_fcontador" name="contrap_aberta_fcontador">
+                                        <option value="">Selecione</option>
+                                        <?php foreach ($fornecedores as $fornecedor): ?>
+                                            <option value="<?= (int)$fornecedor['FCONTADOR'] ?>">
+                                                <?= mbH(trim((string)($fornecedor['APELIDO'] ?: $fornecedor['NOME'])) . ' (' . $fornecedor['FCONTADOR'] . ')') ?>
+                                            </option>
+                                        <?php endforeach; ?>
+                                    </select>
+                                </div>
+                                <div class="mb-field w3">
+                                    <label for="contrap_aberta_vencimento">Vencimento</label>
+                                    <input type="date" id="contrap_aberta_vencimento" name="contrap_aberta_vencimento" value="<?= mbH($form['contrap_aberta_vencimento']) ?>">
+                                </div>
+                                <div class="mb-field w4">
+                                    <label for="contrap_aberta_tipoes">TIPOES do titulo</label>
+                                    <select id="contrap_aberta_tipoes" name="contrap_aberta_tipoes">
+                                        <option value="">Selecione</option>
+                                        <?php foreach ($tipos as $tipo): ?>
+                                            <option value="<?= (int)$tipo['ESCONTADOR'] ?>">
+                                                <?= mbH(($tipo['DESCES'] ?? '') . ' (' . $tipo['ESCONTADOR'] . ')') ?>
+                                            </option>
+                                        <?php endforeach; ?>
+                                    </select>
+                                </div>
+                                <div class="mb-field w2">
+                                    <label for="contrap_aberta_valor">Valor</label>
+                                    <input type="text" id="contrap_aberta_valor" name="contrap_aberta_valor" inputmode="decimal" placeholder="Mesmo valor">
+                                </div>
+                                <div class="mb-field w6">
+                                    <label for="contrap_aberta_historico">Historico do titulo</label>
+                                    <input type="text" id="contrap_aberta_historico" name="contrap_aberta_historico" placeholder="Se vazio, usa o historico do movimento">
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                <?php elseif (mbMovimentoTemContrapartidaAberta($pdo, $empresaId, (int)$lancamentoEdicao['MOVCONTADOR'])): ?>
+                    <div class="mb-contrap-aberta-box active">
+                        <div class="mb-note">
+                            Este lancamento possui contrapartida em aberto vinculada e nao pode ser alterado parcialmente.
+                        </div>
+                    </div>
+                <?php endif; ?>
+
                 <div class="mb-field w12">
                     <div class="mb-note">
                         Data de processamento sera preenchida automaticamente pelo sistema no momento da gravacao.
@@ -1142,7 +1517,8 @@ require_once __DIR__ . '/../../layout/header.php';
                         <?php
                             $dc = strtoupper((string)$linha['TIPOMOV']);
                             $origem = trim((string)($linha['TIPODOCORIGEM'] ?? ''));
-                            $editavel = $origem === 'SUPERDUNGA' && (int)($linha['ORIGEMCPART'] ?? 0) === 0;
+                            $temContrapAberta = !empty($linha['ABERTA_TIPO']) && !empty($linha['ABERTA_CONTADOR']);
+                            $editavel = $origem === 'SUPERDUNGA' && (int)($linha['ORIGEMCPART'] ?? 0) === 0 && !$temContrapAberta;
                         ?>
                         <tr>
                             <td><?= (int)$linha['MOVCONTADOR'] ?></td>
@@ -1170,6 +1546,11 @@ require_once __DIR__ . '/../../layout/header.php';
                             <td>
                                 <?php if (!empty($linha['CONTRAP_MOVCONTADOR'])): ?>
                                     #<?= (int)$linha['CONTRAP_MOVCONTADOR'] ?> / conta <?= mbH($linha['CONTRAP_CONTA']) ?>
+                                <?php elseif ($temContrapAberta): ?>
+                                    <span class="mb-badge c"><?= mbH($linha['ABERTA_TIPO']) ?> aberto #<?= (int)$linha['ABERTA_CONTADOR'] ?></span>
+                                    <div style="margin-top:4px;color:#475569;font-size:0.82rem;">
+                                        <?= mbH(mbMoeda($linha['ABERTA_VALOR'])) ?>
+                                    </div>
                                 <?php elseif (!empty($linha['CONTRAP_TIPOES'])): ?>
                                     <span class="mb-badge">Pendente</span>
                                 <?php else: ?>
@@ -1203,6 +1584,18 @@ require_once __DIR__ . '/../../layout/header.php';
     const contrapBox = document.getElementById('contrapBox');
     const contrapSelect = document.getElementById('contrap_cbcontador');
     const valorInput = document.getElementById('valor');
+    const historicoInput = document.getElementById('historico');
+    const criarContrapAberta = document.getElementById('criar_contrap_aberta');
+    const contrapAbertaBox = document.getElementById('contrapAbertaBox');
+    const contrapAbertaTipo = document.getElementById('contrap_aberta_tipo');
+    const contrapAbertaValor = document.getElementById('contrap_aberta_valor');
+    const contrapAbertaHistorico = document.getElementById('contrap_aberta_historico');
+    const contrapAbertaVencimento = document.getElementById('contrap_aberta_vencimento');
+    const contrapAbertaTipoes = document.getElementById('contrap_aberta_tipoes');
+    const contrapAbertaCliente = document.getElementById('contrap_aberta_clicontador');
+    const contrapAbertaFornecedor = document.getElementById('contrap_aberta_fcontador');
+    const camposCr = document.querySelectorAll('.mb-campo-cr');
+    const camposCp = document.querySelectorAll('.mb-campo-cp');
 
     function nomeTipoMov(valor) {
         valor = (valor || '').toUpperCase();
@@ -1219,6 +1612,10 @@ require_once __DIR__ . '/../../layout/header.php';
 
         tipoVisual.value = nomeTipoMov(tipomov);
 
+        if (contrapAbertaTipo && criarContrapAberta && criarContrapAberta.checked && !contrapAbertaTipo.value) {
+            contrapAbertaTipo.value = (tipomov || '').toUpperCase() === 'D' ? 'CR' : ((tipomov || '').toUpperCase() === 'C' ? 'CP' : '');
+        }
+
         if (contrap > 0) {
             contrapBox.classList.add('active');
             contrapSelect.required = true;
@@ -1234,6 +1631,55 @@ require_once __DIR__ . '/../../layout/header.php';
 
     tipoSelect.addEventListener('change', atualizarTipo);
     atualizarTipo();
+
+    function atualizarContrapAberta() {
+        if (!criarContrapAberta || !contrapAbertaBox) {
+            return;
+        }
+
+        const ativo = criarContrapAberta.checked;
+        contrapAbertaBox.classList.toggle('active', ativo);
+
+        const option = tipoSelect.options[tipoSelect.selectedIndex];
+        const tipomov = option ? (option.getAttribute('data-tipomov') || '').toUpperCase() : '';
+        if (ativo && contrapAbertaTipo && !contrapAbertaTipo.value) {
+            contrapAbertaTipo.value = tipomov === 'D' ? 'CR' : (tipomov === 'C' ? 'CP' : '');
+        }
+
+        if (ativo && contrapAbertaValor && !contrapAbertaValor.value && valorInput) {
+            contrapAbertaValor.value = valorInput.value;
+        }
+
+        if (ativo && contrapAbertaHistorico && !contrapAbertaHistorico.value && historicoInput) {
+            contrapAbertaHistorico.value = 'CONTRAPARTIDA EM ABERTO - ' + historicoInput.value;
+        }
+
+        const tipo = contrapAbertaTipo ? contrapAbertaTipo.value : '';
+        camposCr.forEach(function (campo) {
+            campo.style.display = tipo === 'CR' ? '' : 'none';
+        });
+        camposCp.forEach(function (campo) {
+            campo.style.display = tipo === 'CP' ? '' : 'none';
+        });
+
+        [contrapAbertaTipo, contrapAbertaValor, contrapAbertaVencimento, contrapAbertaTipoes].forEach(function (campo) {
+            if (campo) campo.required = ativo;
+        });
+        if (contrapAbertaCliente) {
+            contrapAbertaCliente.required = ativo && tipo === 'CR';
+        }
+        if (contrapAbertaFornecedor) {
+            contrapAbertaFornecedor.required = ativo && tipo === 'CP';
+        }
+    }
+
+    if (criarContrapAberta) {
+        criarContrapAberta.addEventListener('change', atualizarContrapAberta);
+    }
+    if (contrapAbertaTipo) {
+        contrapAbertaTipo.addEventListener('change', atualizarContrapAberta);
+    }
+    atualizarContrapAberta();
 
     function formatarValorDecimal(valor) {
         valor = (valor || '').toString().trim().replace(/[^\d.,]/g, '');
@@ -1265,6 +1711,9 @@ require_once __DIR__ . '/../../layout/header.php';
 
         valorInput.addEventListener('blur', function () {
             this.value = formatarValorDecimal(this.value);
+            if (contrapAbertaValor && criarContrapAberta && criarContrapAberta.checked && !contrapAbertaValor.value) {
+                contrapAbertaValor.value = this.value;
+            }
         });
 
         const form = valorInput.closest('form');
@@ -1275,6 +1724,15 @@ require_once __DIR__ . '/../../layout/header.php';
         }
 
         valorInput.value = formatarValorDecimal(valorInput.value);
+    }
+
+    if (contrapAbertaValor) {
+        contrapAbertaValor.addEventListener('input', function () {
+            this.value = this.value.replace(/[^\d.,]/g, '');
+        });
+        contrapAbertaValor.addEventListener('blur', function () {
+            this.value = formatarValorDecimal(this.value);
+        });
     }
 })();
 </script>
