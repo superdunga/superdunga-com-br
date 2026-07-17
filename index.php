@@ -108,6 +108,15 @@ $atalhos = [
         'visivel' => grupoPermitido($pdo_master, $empresaId, 'Desconto de Cheques', $nivelUsuario),
     ],
     [
+        'titulo' => 'Vale-Compras',
+        'descricao' => 'Controle de compra, uso, saldo e lancamentos de vales-compras.',
+        'href' => 'modulos/vale_compras/cadastro.php',
+        'classe' => 'border-warning',
+        'botao' => 'btn-warning',
+        'icone' => 'VC',
+        'visivel' => $empresaId === 2 && grupoPermitido($pdo_master, $empresaId, 'Vale-Compras', $nivelUsuario),
+    ],
+    [
         'titulo' => 'Movimentacao/Baixa',
         'descricao' => 'Lancamentos diretos em caixa/banco e base para baixas financeiras.',
         'href' => 'modulos/movimentacao_baixa/menu_movimentacao_baixa.php',
