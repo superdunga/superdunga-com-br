@@ -1737,4 +1737,5 @@ require_once __DIR__ . '/../../layout/header.php';
 })();
 </script>
 
+<?php require __DIR__ . '/_select_busca.php'; ?>
 <?php require_once __DIR__ . '/../../layout/footer.php'; ?>

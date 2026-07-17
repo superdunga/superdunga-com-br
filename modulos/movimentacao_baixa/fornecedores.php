@@ -365,4 +365,5 @@ require '../../layout/header.php';
     <?php endif; ?>
 </div>
 
+<?php require __DIR__ . '/_select_busca.php'; ?>
 <?php require '../../layout/footer.php'; ?>

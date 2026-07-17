@@ -52,6 +52,29 @@ function garantirTabelasValeCompras(PDO $pdo): void
             INDEX idx_vcm_data (empresa_id, data_movimento)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
     ");
+
+    $pdo->exec("
+        CREATE TABLE IF NOT EXISTS vale_compras_estabelecimentos (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            empresa_id INT NOT NULL,
+            nome VARCHAR(180) NOT NULL,
+            nome_normalizado VARCHAR(180) NOT NULL,
+            ultimo_uso DATETIME NULL,
+            criado_em DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            atualizado_em DATETIME NULL DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP,
+            UNIQUE KEY uniq_vce_empresa_nome (empresa_id, nome_normalizado),
+            INDEX idx_vce_empresa_nome (empresa_id, nome)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    ");
+
+    $pdo->exec("
+        INSERT IGNORE INTO vale_compras_estabelecimentos (empresa_id, nome, nome_normalizado, ultimo_uso)
+        SELECT empresa_id, TRIM(estabelecimento), UPPER(TRIM(estabelecimento)), MAX(criado_em)
+        FROM vale_compras_movimentos
+        WHERE tipo = 'VENDA'
+          AND TRIM(COALESCE(estabelecimento, '')) <> ''
+        GROUP BY empresa_id, UPPER(TRIM(estabelecimento)), TRIM(estabelecimento)
+    ");
 }
 
 function vcH($valor): string
@@ -83,6 +106,50 @@ function vcData($data): string
         return '-';
     }
     return date('d/m/Y', strtotime((string)$data));
+}
+
+function vcNormalizarEstabelecimento(string $nome): string
+{
+    $nome = preg_replace('/\s+/', ' ', trim($nome));
+    if (function_exists('mb_strtoupper')) {
+        return mb_strtoupper($nome, 'UTF-8');
+    }
+    return strtoupper($nome);
+}
+
+function vcRegistrarEstabelecimento(PDO $pdo, int $empresaId, string $nome): string
+{
+    $nome = preg_replace('/\s+/', ' ', trim($nome));
+    if ($nome === '') {
+        return '';
+    }
+
+    $normalizado = vcNormalizarEstabelecimento($nome);
+    $stmt = $pdo->prepare("
+        SELECT nome
+        FROM vale_compras_estabelecimentos
+        WHERE empresa_id = ?
+          AND nome_normalizado = ?
+        LIMIT 1
+    ");
+    $stmt->execute([$empresaId, $normalizado]);
+    $existente = $stmt->fetchColumn();
+
+    if ($existente) {
+        $pdo->prepare("
+            UPDATE vale_compras_estabelecimentos
+            SET ultimo_uso = NOW()
+            WHERE empresa_id = ? AND nome_normalizado = ?
+        ")->execute([$empresaId, $normalizado]);
+        return (string)$existente;
+    }
+
+    $stmt = $pdo->prepare("
+        INSERT INTO vale_compras_estabelecimentos (empresa_id, nome, nome_normalizado, ultimo_uso)
+        VALUES (?, ?, ?, NOW())
+    ");
+    $stmt->execute([$empresaId, $nome, $normalizado]);
+    return $nome;
 }
 
 function vcProximoMovcontador(PDO $pdo): int

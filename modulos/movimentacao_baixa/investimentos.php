@@ -730,4 +730,5 @@ require '../../layout/header.php';
     </div>
 <?php endif; ?>
 
+<?php require __DIR__ . '/_select_busca.php'; ?>
 <?php require '../../layout/footer.php'; ?>

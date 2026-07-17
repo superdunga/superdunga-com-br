@@ -221,6 +221,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $permitido && $empresaId === 2) {
             if ($estabelecimento === '') {
                 throw new RuntimeException('Informe o estabelecimento.');
             }
+            $estabelecimento = vcRegistrarEstabelecimento($pdo, $empresaId, $estabelecimento);
             if ($valor <= 0) {
                 throw new RuntimeException('Informe valor maior que zero.');
             }
@@ -375,6 +376,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $permitido && $empresaId === 2) {
                 if ($estabelecimento === '') {
                     throw new RuntimeException('Informe o estabelecimento.');
                 }
+                $estabelecimento = vcRegistrarEstabelecimento($pdo, $empresaId, $estabelecimento);
                 if ($valor <= 0) {
                     throw new RuntimeException('Informe valor maior que zero.');
                 }
@@ -523,6 +525,7 @@ if ($ok === 'compra') {
 
 $fornecedores = [];
 $clientes = [];
+$estabelecimentos = [];
 $valeAtual = null;
 $movimentoEditar = null;
 $movimentos = [];
@@ -563,6 +566,16 @@ if ($permitido && $empresaId === 2) {
     ");
     $stmt->execute([$empresaId]);
     $clientes = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+    $stmt = $pdo->prepare("
+        SELECT nome
+        FROM vale_compras_estabelecimentos
+        WHERE empresa_id = ?
+        ORDER BY COALESCE(ultimo_uso, criado_em) DESC, nome
+        LIMIT 300
+    ");
+    $stmt->execute([$empresaId]);
+    $estabelecimentos = $stmt->fetchAll(PDO::FETCH_COLUMN);
 
     $valeId = (int)($_GET['vale'] ?? 0);
     if ($valeId > 0) {
@@ -708,6 +721,12 @@ require '../../layout/header.php';
         <?php if ($mensagem): ?><div class="alert alert-success mt-3"><?= vcH($mensagem) ?></div><?php endif; ?>
         <?php if ($erro): ?><div class="alert alert-danger mt-3"><?= vcH($erro) ?></div><?php endif; ?>
 
+        <datalist id="vcEstabelecimentos">
+            <?php foreach ($estabelecimentos as $estabelecimentoOpcao): ?>
+                <option value="<?= vcH($estabelecimentoOpcao) ?>"></option>
+            <?php endforeach; ?>
+        </datalist>
+
         <?php if ($valeAtual): ?>
             <section class="vc-card">
                 <div class="vc-section-title">
@@ -785,7 +804,7 @@ require '../../layout/header.php';
                                 </div>
                                 <div class="vc-field">
                                     <label>Estabelecimento</label>
-                                    <input type="text" name="estabelecimento" required maxlength="180" value="<?= vcH($movimentoEditar['estabelecimento'] ?? '') ?>">
+                                    <input type="text" name="estabelecimento" required maxlength="180" list="vcEstabelecimentos" value="<?= vcH($movimentoEditar['estabelecimento'] ?? '') ?>" placeholder="Digite para buscar no historico">
                                 </div>
                                 <div class="vc-field">
                                     <label>Data da venda</label>
@@ -873,7 +892,7 @@ require '../../layout/header.php';
                         </div>
                         <div class="vc-field">
                             <label>Estabelecimento</label>
-                            <input type="text" name="estabelecimento" required maxlength="180" placeholder="ABC">
+                            <input type="text" name="estabelecimento" required maxlength="180" list="vcEstabelecimentos" placeholder="Digite para buscar no historico">
                         </div>
                         <div class="vc-field">
                             <label>Data da venda</label>
@@ -925,7 +944,7 @@ require '../../layout/header.php';
                     </div>
                     <div class="vc-field">
                         <label>Estabelecimento</label>
-                        <input type="text" name="estabelecimento" value="<?= vcH($filtrosExtrato['estabelecimento']) ?>">
+                        <input type="text" name="estabelecimento" list="vcEstabelecimentos" value="<?= vcH($filtrosExtrato['estabelecimento']) ?>">
                     </div>
                     <div class="vc-field">
                         <label>Valor minimo</label>
