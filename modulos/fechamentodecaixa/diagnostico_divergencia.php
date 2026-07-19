@@ -79,11 +79,17 @@ $pendentesCR001 = $stmtPendCR->fetchAll(PDO::FETCH_ASSOC);
 $stmtExcluidosCR = $pdo_master->prepare("
     SELECT
         c.*,
-        COALESCE(NULLIF(cli.NOME, ''), NULLIF(cli.APELIDO, ''), '') AS cliente_nome
+        COALESCE(NULLIF(cli.NOME, ''), NULLIF(cli.APELIDO, ''), '') AS cliente_nome,
+        v.VENDACONTADOR AS venda_origem_encontrada,
+        v.CANCELADO AS venda_origem_cancelada,
+        v.excluido_firebird AS venda_origem_excluida
     FROM armazem_cr001 c
     LEFT JOIN armazem_cr002 cli
         ON cli.EMPRESA = c.EMPRESA
        AND cli.CLICONTADOR = c.CLICONTADOR
+    LEFT JOIN armazem_est007 v
+        ON v.EMPRESA = c.EMPRESA
+       AND v.VENDACONTADOR = c.NUMDOCORIGEM
     WHERE c.DTLANC BETWEEN ? AND ?
       AND c.EMPRESA = ?
       AND COALESCE(c.excluido_firebird, 'N') = 'S'
@@ -166,6 +172,27 @@ function renderizarItensVendaDiagnostico(array $itens): void
         </table>
     </div>
     <?php
+}
+
+function badgeVendaOrigemDiagnostico(array $registro): string
+{
+    if (empty($registro['NUMDOCORIGEM']) || (int)$registro['NUMDOCORIGEM'] <= 0) {
+        return '<span class="badge bg-light text-dark border">Sem venda origem</span>';
+    }
+
+    if (empty($registro['venda_origem_encontrada'])) {
+        return '<span class="badge bg-dark">Venda nao encontrada</span>';
+    }
+
+    if (($registro['venda_origem_excluida'] ?? 'N') === 'S') {
+        return '<span class="badge bg-dark">Venda excluida</span>';
+    }
+
+    if (($registro['venda_origem_cancelada'] ?? 'N') === 'S') {
+        return '<span class="badge bg-secondary">Venda cancelada</span>';
+    }
+
+    return '<span class="badge bg-success">Venda ativa</span>';
 }
 
 $totalPendenteSistema = array_sum(array_column($pendentesSistema, 'valor_bruto'));
@@ -308,6 +335,7 @@ $diferencaPendentes = $totalPendenteSistema - $totalPendenteCR001;
                     <thead>
                         <tr>
                             <th>NUMDOCORIGEM</th>
+                            <th>Venda origem</th>
                             <th>Data</th>
                             <th>Valor</th>
                             <th>CM</th>
@@ -319,7 +347,7 @@ $diferencaPendentes = $totalPendenteSistema - $totalPendenteCR001;
                     </thead>
                     <tbody>
                         <?php if (empty($excluidosCR001)): ?>
-                            <tr><td colspan="7" class="text-muted">Nenhum registro</td></tr>
+                            <tr><td colspan="9" class="text-muted">Nenhum registro</td></tr>
                         <?php else: ?>
                             <?php foreach ($excluidosCR001 as $c): ?>
                                 <?php
@@ -332,6 +360,7 @@ $diferencaPendentes = $totalPendenteSistema - $totalPendenteCR001;
                                 ?>
                                 <tr>
                                     <td><?= htmlspecialchars($c['NUMDOCORIGEM'] ?? '') ?></td>
+                                    <td><?= badgeVendaOrigemDiagnostico($c) ?></td>
                                     <td><?= !empty($c['DTLANC']) ? date('d/m/Y H:i', strtotime($c['DTLANC'])) : '-' ?></td>
                                     <td>R$ <?= number_format($c['VLRPARCELA'], 2, ',', '.') ?></td>
                                     <td><?= $c['CMCONTADOR'] ?></td>
@@ -353,7 +382,7 @@ $diferencaPendentes = $totalPendenteSistema - $totalPendenteCR001;
                                     <td><?= !empty($c['data_exclusao_firebird']) ? date('d/m/Y H:i', strtotime($c['data_exclusao_firebird'])) : '-' ?></td>
                                 </tr>
                                 <tr class="collapse" id="<?= $collapseId ?>">
-                                    <td colspan="8" class="bg-light">
+                                    <td colspan="9" class="bg-light">
                                         <?php renderizarItensVendaDiagnostico($itensPorVenda[$vendaOrigem] ?? []); ?>
                                     </td>
                                 </tr>
