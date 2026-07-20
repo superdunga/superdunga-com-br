@@ -35,12 +35,23 @@
 }
 .mb-select-search-arrow {
     position: absolute;
-    right: 10px;
-    top: 50%;
-    transform: translateY(-50%);
+    right: 1px;
+    top: 1px;
+    bottom: 1px;
+    width: 34px;
+    border: 0;
+    border-left: 1px solid #e2e8f0;
+    border-radius: 0 6px 6px 0;
+    background: transparent;
     color: #64748b;
-    pointer-events: none;
+    cursor: pointer;
     font-size: 0.8rem;
+}
+.mb-select-search-arrow:focus {
+    outline: 0;
+}
+.mb-select-search-arrow:disabled {
+    cursor: not-allowed;
 }
 .mb-select-search-list {
     position: absolute;
@@ -127,9 +138,11 @@
         input.autocomplete = 'off';
         input.placeholder = 'Digite para buscar...';
         input.disabled = select.disabled;
-        const arrow = document.createElement('span');
+        const arrow = document.createElement('button');
+        arrow.type = 'button';
         arrow.className = 'mb-select-search-arrow';
         arrow.textContent = 'v';
+        arrow.disabled = select.disabled;
         const list = document.createElement('div');
         list.className = 'mb-select-search-list';
         control.appendChild(input);
@@ -145,7 +158,7 @@
 
         function sincronizarTexto() {
             const option = optionSelecionada();
-            input.value = option ? textoOpcao(option) : '';
+            input.value = option && option.value !== '' ? textoOpcao(option) : '';
         }
 
         function fechar() {
@@ -189,6 +202,7 @@
                     item.classList.add('active');
                     indiceAtivo = index;
                 }
+                item.dataset.value = option.value;
                 item.textContent = textoOpcao(option);
                 item.addEventListener('mousedown', function (event) {
                     event.preventDefault();
@@ -198,16 +212,39 @@
             });
         }
 
-        function abrir() {
+        function abrir(filtro) {
             if (select.disabled) {
                 return;
             }
-            renderizar(input.value);
+            renderizar(filtro !== undefined ? filtro : input.value);
             wrapper.classList.add('open');
+        }
+
+        function itensRenderizados() {
+            return Array.from(list.querySelectorAll('.mb-select-search-option:not(.empty)'));
+        }
+
+        function atualizarAtivo(itens) {
+            itens.forEach(function (item, index) {
+                item.classList.toggle('active', index === indiceAtivo);
+            });
+            if (itens[indiceAtivo]) {
+                itens[indiceAtivo].scrollIntoView({ block: 'nearest' });
+            }
         }
 
         input.addEventListener('focus', abrir);
         input.addEventListener('click', abrir);
+        arrow.addEventListener('mousedown', function (event) {
+            event.preventDefault();
+        });
+        arrow.addEventListener('click', function () {
+            if (select.disabled) {
+                return;
+            }
+            input.focus();
+            abrir('');
+        });
         input.addEventListener('input', function () {
             wrapper.classList.add('open');
             indiceAtivo = -1;
@@ -220,20 +257,26 @@
             }, 160);
         });
         input.addEventListener('keydown', function (event) {
-            const itens = Array.from(list.querySelectorAll('.mb-select-search-option:not(.empty)'));
             if (event.key === 'ArrowDown') {
                 event.preventDefault();
                 abrir();
+                const itens = itensRenderizados();
                 indiceAtivo = Math.min(indiceAtivo + 1, itens.length - 1);
+                atualizarAtivo(itens);
             } else if (event.key === 'ArrowUp') {
                 event.preventDefault();
+                if (!wrapper.classList.contains('open')) {
+                    abrir();
+                }
+                const itens = itensRenderizados();
                 indiceAtivo = Math.max(indiceAtivo - 1, 0);
+                atualizarAtivo(itens);
             } else if (event.key === 'Enter') {
+                const itens = itensRenderizados();
                 if (wrapper.classList.contains('open') && itens[indiceAtivo]) {
                     event.preventDefault();
-                    const texto = itens[indiceAtivo].textContent;
                     const option = opcoesDisponiveis(select).find(function (opt) {
-                        return textoOpcao(opt) === texto;
+                        return opt.value === itens[indiceAtivo].dataset.value;
                     });
                     if (option) {
                         selecionar(option);
@@ -246,16 +289,13 @@
             } else {
                 return;
             }
-
-            itens.forEach(function (item, index) {
-                item.classList.toggle('active', index === indiceAtivo);
-            });
-            if (itens[indiceAtivo]) {
-                itens[indiceAtivo].scrollIntoView({ block: 'nearest' });
-            }
         });
 
         select.addEventListener('change', sincronizarTexto);
+        select.addEventListener('disabledchange', function () {
+            input.disabled = select.disabled;
+            arrow.disabled = select.disabled;
+        });
         sincronizarTexto();
 
         const form = select.closest('form');
