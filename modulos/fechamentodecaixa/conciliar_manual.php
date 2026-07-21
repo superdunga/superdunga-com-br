@@ -36,6 +36,7 @@ if ($rec && !empty($rec['CRCONTADOR'])) {
     $stmtCrVinculado = $pdo_master->prepare("
         SELECT
             CRCONTADOR,
+            NUMDOCORIGEM,
             DTLANC,
             DTEMISSAO,
             VLRPARCELA,
@@ -76,7 +77,7 @@ if ($rec && !empty($rec['CRCONTADOR'])) {
         <div class="card">
             <div class="card-header">CR001 vinculado</div>
             <div class="card-body">
-                <div>CRCONTADOR: <strong><?= (int)$crVinculado['CRCONTADOR'] ?></strong></div>
+                <div>Venda: <strong><?= htmlspecialchars((string)($crVinculado['NUMDOCORIGEM'] ?? '')) ?></strong></div>
                 <div>CM: <strong><?= htmlspecialchars((string)$crVinculado['CMCONTADOR']) ?></strong></div>
                 <div>Data: <?= !empty($crVinculado['DTLANC']) ? date('d/m/Y H:i', strtotime($crVinculado['DTLANC'])) : '-' ?></div>
                 <div>Data do Movimento: <?= !empty($crVinculado['DTEMISSAO']) ? date('d/m/Y', strtotime($crVinculado['DTEMISSAO'])) : '-' ?></div>
@@ -101,10 +102,26 @@ if (!$rec) {
 $stmtCr = $pdo_master->prepare("
     SELECT 
         c.CRCONTADOR,
+        c.NUMDOCORIGEM,
         c.DTLANC,
         c.DTEMISSAO,
+        c.DTVENDA,
         c.VLRPARCELA,
-        c.CMCONTADOR
+        c.CMCONTADOR,
+        CASE
+            WHEN DATE(c.DTEMISSAO) = DATE(?) AND c.CMCONTADOR = ? THEN 0
+            WHEN DATE(c.DTVENDA) = DATE(?) AND c.CMCONTADOR = ? THEN 1
+            WHEN DATE(c.DTEMISSAO) = DATE(?) THEN 2
+            WHEN DATE(c.DTVENDA) = DATE(?) THEN 3
+            WHEN c.DTLANC BETWEEN ? AND ? THEN 4
+            ELSE 5
+        END AS prioridade_match,
+        CASE
+            WHEN DATE(c.DTEMISSAO) = DATE(?) THEN 'Data movimento'
+            WHEN DATE(c.DTVENDA) = DATE(?) THEN 'Data venda'
+            WHEN c.DTLANC BETWEEN ? AND ? THEN 'Data lancamento'
+            ELSE 'Aproximado'
+        END AS criterio_match
     FROM armazem_cr001 c
     WHERE c.recebimento_id IS NULL
       AND NOT EXISTS (
@@ -119,20 +136,35 @@ $stmtCr = $pdo_master->prepare("
       AND (c.validado IS NULL OR c.validado <> 'S')
       AND COALESCE(c.excluido_firebird, 'N') = 'N'
 
-      -- mesma janela da tela principal
-      AND c.DTLANC BETWEEN ? AND ?
-
-      -- mesma regra de valor
       AND ABS(c.VLRPARCELA) = ABS(?)
+      AND (
+          DATE(c.DTEMISSAO) = DATE(?)
+          OR DATE(c.DTVENDA) = DATE(?)
+          OR c.DTLANC BETWEEN ? AND ?
+      )
 
-    ORDER BY c.DTLANC ASC, c.CRCONTADOR ASC
+    ORDER BY prioridade_match ASC, c.DTLANC ASC, c.CRCONTADOR ASC
 ");
 
 $stmtCr->execute([
-    $empresa_id,
+    $rec['data_venda'],
+    $rec['CMCONTADOR'],
+    $rec['data_venda'],
+    $rec['CMCONTADOR'],
+    $rec['data_venda'],
+    $rec['data_venda'],
     $inicio,
     $fim,
-    $rec['valor_bruto']
+    $rec['data_venda'],
+    $rec['data_venda'],
+    $inicio,
+    $fim,
+    $empresa_id,
+    $rec['valor_bruto'],
+    $rec['data_venda'],
+    $rec['data_venda'],
+    $inicio,
+    $fim
 ]);
 
 $crs = $stmtCr->fetchAll(PDO::FETCH_ASSOC);
@@ -149,6 +181,7 @@ if (empty($crs)) {
     $stmtCr = $pdo_master->prepare("
         SELECT 
             c.CRCONTADOR,
+            c.NUMDOCORIGEM,
             c.DTLANC,
             c.DTEMISSAO,
             c.VLRPARCELA,
@@ -191,6 +224,7 @@ if ($modoFallback && empty($crs)) {
     $stmtCr = $pdo_master->prepare("
         SELECT
             c.CRCONTADOR,
+            c.NUMDOCORIGEM,
             c.DTLANC,
             c.DTEMISSAO,
             c.VLRPARCELA,
@@ -271,11 +305,12 @@ if ($modoFallback && empty($crs)) {
         <table class="table table-sm table-bordered table-hover">
             <thead>
                 <tr>
-                    <th>CRCONTADOR</th>
+                    <th>Venda</th>
                     <th>CM</th>
                     <th>Data</th>
                     <th>Data do Movimento</th>
                     <th>Valor</th>
+                    <th>Criterio</th>
 
                     <?php if ($modoFallback): ?>
                         <th>Diferença</th>
@@ -289,7 +324,7 @@ if ($modoFallback && empty($crs)) {
 
                 <?php if (empty($crs)): ?>
                     <tr>
-                        <td colspan="7" class="text-center text-muted">
+                        <td colspan="<?= $modoFallback ? 8 : 7 ?>" class="text-center text-muted">
                             Nenhum lançamento encontrado.
                         </td>
                     </tr>
@@ -298,7 +333,7 @@ if ($modoFallback && empty($crs)) {
                 <?php foreach ($crs as $c): ?>
                 <tr>
 
-                    <td><?= $c['CRCONTADOR'] ?></td>
+                    <td><?= htmlspecialchars((string)($c['NUMDOCORIGEM'] ?? '')) ?></td>
 
                     <td><?= $c['CMCONTADOR'] ?></td>
 
@@ -309,6 +344,8 @@ if ($modoFallback && empty($crs)) {
                     <td>
                         R$ <?= number_format($c['VLRPARCELA'],2,',','.') ?>
                     </td>
+
+                    <td><?= htmlspecialchars($c['criterio_match'] ?? ($modoFallback ? 'Aproximado' : '-')) ?></td>
 
                     <?php if ($modoFallback): ?>
                     <td>
