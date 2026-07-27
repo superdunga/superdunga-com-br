@@ -108,6 +108,104 @@ function normalizarTextoEnergia(string $texto): string
     return trim($texto);
 }
 
+function decodificarStringPdfEnergia(string $valor): string
+{
+    $valor = trim($valor);
+
+    if ($valor === '') {
+        return '';
+    }
+
+    if ($valor[0] === '<' && substr($valor, -1) === '>' && substr($valor, 0, 2) !== '<<') {
+        $hex = preg_replace('/\s+/', '', substr($valor, 1, -1)) ?? '';
+        if ($hex === '' || strlen($hex) % 2 !== 0) {
+            return '';
+        }
+
+        $bin = @hex2bin($hex);
+        if ($bin === false) {
+            return '';
+        }
+
+        if (strncmp($bin, "\xFE\xFF", 2) === 0 && function_exists('mb_convert_encoding')) {
+            return (string)mb_convert_encoding(substr($bin, 2), 'UTF-8', 'UTF-16BE');
+        }
+
+        return normalizarTextoEnergia($bin);
+    }
+
+    if ($valor[0] === '(' && substr($valor, -1) === ')') {
+        $texto = substr($valor, 1, -1);
+        $texto = preg_replace_callback('/\\\\([0-7]{1,3})/', static function (array $m): string {
+            return chr(octdec($m[1]));
+        }, $texto) ?? $texto;
+
+        $texto = strtr($texto, [
+            '\\n' => "\n",
+            '\\r' => "\r",
+            '\\t' => "\t",
+            '\\b' => "\b",
+            '\\f' => "\f",
+            '\\(' => '(',
+            '\\)' => ')',
+            '\\\\' => '\\',
+        ]);
+
+        return normalizarTextoEnergia($texto);
+    }
+
+    return '';
+}
+
+function extrairTextoPdfBasicoEnergia(string $arquivoPdf): string
+{
+    $conteudo = (string)@file_get_contents($arquivoPdf);
+    if ($conteudo === '') {
+        return '';
+    }
+
+    if (!preg_match_all('/stream\s*(.*?)\s*endstream/s', $conteudo, $streams)) {
+        return '';
+    }
+
+    $partes = [];
+    foreach ($streams[1] as $stream) {
+        $dados = $stream;
+        $descomprimido = @zlib_decode($stream);
+        if ($descomprimido !== false) {
+            $dados = $descomprimido;
+        }
+
+        if (strpos($dados, 'BT') === false || strpos($dados, 'ET') === false) {
+            continue;
+        }
+
+        if (!preg_match_all('/BT(.*?)ET/s', $dados, $blocos)) {
+            continue;
+        }
+
+        foreach ($blocos[1] as $bloco) {
+            if (!preg_match_all('/(\((?:\\\\.|[^\\\\()])*\)|(?<!<)<[0-9A-Fa-f\s]+>)/s', $bloco, $strings)) {
+                continue;
+            }
+
+            $linha = [];
+            foreach ($strings[1] as $stringPdf) {
+                $texto = decodificarStringPdfEnergia($stringPdf);
+                if ($texto !== '') {
+                    $linha[] = $texto;
+                }
+            }
+
+            if (!empty($linha)) {
+                $partes[] = implode(' ', $linha);
+            }
+        }
+    }
+
+    return normalizarTextoEnergia(implode("\n", $partes));
+}
+
 function extrairTextoPdfEnergia(string $arquivoPdf): string
 {
     if (!is_file($arquivoPdf)) {
@@ -173,11 +271,25 @@ function extrairTextoPdfEnergia(string $arquivoPdf): string
     foreach ($pythonCandidates as $python) {
         $cmd = escapeshellarg($python) . ' ' . escapeshellarg($pythonScript) . ' ' . escapeshellarg($arquivoPdf) . ' 2>&1';
         $saida = normalizarTextoEnergia((string)@shell_exec($cmd));
-        if ($saida !== '' && stripos($saida, 'Traceback') === false && stripos($saida, 'No module named') === false) {
+        if (
+            $saida !== ''
+            && stripos($saida, 'Traceback') === false
+            && stripos($saida, 'No module named') === false
+            && stripos($saida, 'was not found') === false
+            && stripos($saida, 'Microsoft Store') === false
+            && stripos($saida, 'Nao foi encontrado') === false
+        ) {
             @unlink($tmpTxt);
             @unlink($pythonScript);
             return $saida;
         }
+    }
+
+    $textoBasico = extrairTextoPdfBasicoEnergia($arquivoPdf);
+    if ($textoBasico !== '') {
+        @unlink($tmpTxt);
+        @unlink($pythonScript);
+        return $textoBasico;
     }
 
     @unlink($tmpTxt);
