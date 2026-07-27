@@ -347,9 +347,15 @@ function parseContaEnergiaCemig(string $texto): array
     $linhas = array_values(array_filter(array_map('trim', explode("\n", $texto)), static function ($linha) {
         return $linha !== '';
     }));
-    foreach ($linhas as $linha) {
-        if (preg_match('/^(AV|AV\.|RUA|R\.|ROD|ROD\.|PRACA|PCA|AL|EST|TRAV|TV)\b/i', $linha)) {
-            $dados['logradouro_complemento'] = $linha;
+    foreach ($linhas as $idx => $linha) {
+        if (preg_match('/^(AV\.?|AVENIDA|RUA|R\.|ROD\.?|RODOVIA|PRACA|PCA|ALAMEDA|ESTRADA|TRAV\.?|TRAVESSA|TV\.?)\b/i', $linha)) {
+            $endereco = $linha;
+            $proxima = trim((string)($linhas[$idx + 1] ?? ''));
+            if ($proxima !== '' && preg_match('/^\d+[A-Z0-9\s\/\.\-]*$/i', $proxima)) {
+                $endereco .= ' ' . $proxima;
+            }
+
+            $dados['logradouro_complemento'] = trim($endereco);
             break;
         }
     }
