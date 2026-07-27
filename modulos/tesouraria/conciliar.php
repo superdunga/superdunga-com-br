@@ -350,7 +350,7 @@ if (!empty($pendentes)) {
     ");
 
     foreach ($pendentes as $p) {
-        if ((int)$p['qtd_matches'] > 1) {
+        if ((int)$p['qtd_matches'] >= 1) {
             $stmtCandidatos->execute([$p['valor_operacao'], $p['data_mov'], $p['data_mov'], $p['tipo_operacao'], $empresa_id, $cbcontador_tesouraria, $empresa_id]);
             $candidatosPorTesouraria[(int)$p['id']] = $stmtCandidatos->fetchAll(PDO::FETCH_ASSOC);
         }
@@ -527,7 +527,7 @@ require '../../layout/header.php';
                         <?php endif; ?>
                     </tr>
 
-                    <?php if ((int)$p['qtd_matches'] > 1): ?>
+                    <?php if ((int)$p['qtd_matches'] >= 1): ?>
                         <tr>
                             <td colspan="<?= $_SESSION['nivel'] === 'MASTER' ? 6 : 5 ?>" class="bg-light">
                                 <div class="d-flex flex-column flex-lg-row justify-content-between gap-2">
@@ -539,9 +539,15 @@ require '../../layout/header.php';
                                             <?= htmlspecialchars($p['observacao']) ?>
                                         </div>
                                     </div>
-                                    <span class="badge bg-warning align-self-start">
-                                        <?= (int)$p['qtd_matches'] ?> candidatos
-                                    </span>
+                                    <?php if ((int)$p['qtd_matches'] > 1): ?>
+                                        <span class="badge bg-warning align-self-start">
+                                            <?= (int)$p['qtd_matches'] ?> candidatos
+                                        </span>
+                                    <?php else: ?>
+                                        <span class="badge bg-success align-self-start">
+                                            1 candidato
+                                        </span>
+                                    <?php endif; ?>
                                 </div>
 
                                 <div class="table-responsive mt-2">
