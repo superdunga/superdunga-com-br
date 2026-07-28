@@ -46,6 +46,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $permitido && $empresaId === 2) {
 
         if ($acao === 'encerrar_vale') {
             $valeId = (int)($_POST['vale_id'] ?? 0);
+            $resumo = vcResumoVale($pdo, $valeId);
+            if (abs((float)$resumo['saldo']) >= 0.01) {
+                throw new RuntimeException('Nao e possivel encerrar vale com saldo diferente de zero.');
+            }
+
             $stmt = $pdo->prepare("UPDATE vale_compras_vales SET status = 'ENCERRADO' WHERE id = ? AND empresa_id = ?");
             $stmt->execute([$valeId, $empresaId]);
             vcCadastroRedirect(['ok' => 'encerrado']);
@@ -126,7 +131,7 @@ if ($permitido && $empresaId === 2) {
         LEFT JOIN vale_compras_movimentos m ON " . implode(' AND ', $join) . "
         WHERE " . implode(' AND ', $where) . "
         GROUP BY v.id
-        ORDER BY v.id DESC
+        ORDER BY v.identificacao ASC, v.id ASC
         LIMIT 300
     ");
     $stmt->execute(array_merge($joinParams, $whereParams));
@@ -208,6 +213,23 @@ require '../../layout/header.php';
                     <?php endif; ?>
                 </div>
             </form>
+            <?php if ($valeAtual): ?>
+                <div class="vc-actions mt-3">
+                    <?php if (($valeAtual['status'] ?? '') === 'ENCERRADO'): ?>
+                        <form method="post" class="m-0">
+                            <input type="hidden" name="acao" value="reabrir_vale">
+                            <input type="hidden" name="vale_id" value="<?= (int)$valeAtual['id'] ?>">
+                            <button class="btn btn-outline-success" onclick="return confirm('Reabrir este vale-compra?');">Reabrir vale</button>
+                        </form>
+                    <?php else: ?>
+                        <form method="post" class="m-0">
+                            <input type="hidden" name="acao" value="encerrar_vale">
+                            <input type="hidden" name="vale_id" value="<?= (int)$valeAtual['id'] ?>">
+                            <button class="btn btn-outline-danger" onclick="return confirm('Encerrar este vale-compra?');">Encerrar vale</button>
+                        </form>
+                    <?php endif; ?>
+                </div>
+            <?php endif; ?>
         </section>
 
         <section class="vc-card">

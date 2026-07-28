@@ -186,6 +186,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $permitido && $empresaId === 2) {
             if ($valorPago > $valorNominal) {
                 throw new RuntimeException('O valor pago nao pode ser maior que o valor do vale.');
             }
+            $valorDesagio = round($valorNominal - $valorPago, 2);
+            $valorLiquido = $valorPago;
+            $taxaDesconto = $valorNominal > 0 && $valorDesagio > 0 ? round(($valorDesagio / $valorNominal) * 100, 4) : 0.0;
 
             $stmt = $pdo->prepare("
                 INSERT INTO vale_compras_movimentos (
@@ -356,6 +359,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $permitido && $empresaId === 2) {
                 if ($valorPago > $valorNominal) {
                     throw new RuntimeException('O valor pago nao pode ser maior que o valor do vale.');
                 }
+                $valorDesagio = round($valorNominal - $valorPago, 2);
+                $valorLiquido = $valorPago;
+                $taxaDesconto = $valorNominal > 0 && $valorDesagio > 0 ? round(($valorDesagio / $valorNominal) * 100, 4) : 0.0;
 
                 $stmt = $pdo->prepare("
                     UPDATE vale_compras_movimentos
@@ -1099,8 +1105,24 @@ document.addEventListener('DOMContentLoaded', function () {
             return;
         }
         const valor = parseMoney(valorVale.value);
+        if (valor <= 0) {
+            return;
+        }
+        if (pago.dataset.editado && parseMoney(pago.value) > 0) {
+            const valorPago = Math.min(valor, parseMoney(pago.value));
+            const valorDesconto = Math.max(0, Math.round((valor - valorPago) * 100) / 100);
+            const taxaCalculada = valorDesconto > 0 ? Math.round((valorDesconto / valor * 100) * 10000) / 10000 : 0;
+            desconto.value = formatMoney(valorDesconto);
+            liquido.value = formatMoney(valorPago);
+            taxa.value = taxaCalculada.toLocaleString('pt-BR', {
+                minimumFractionDigits: 4,
+                maximumFractionDigits: 4
+            });
+            return;
+        }
+
         const taxaPercentual = parseMoney(taxa.value);
-        if (valor <= 0 || taxaPercentual < 0) {
+        if (taxaPercentual < 0) {
             return;
         }
         const valorDesconto = Math.round((valor * taxaPercentual / 100) * 100) / 100;
@@ -1115,7 +1137,9 @@ document.addEventListener('DOMContentLoaded', function () {
     if (pago) {
         pago.addEventListener('input', function () {
             pago.dataset.editado = '1';
+            calcular();
         });
+        pago.addEventListener('blur', calcular);
     }
     [valorVale, taxa].forEach(function (campo) {
         if (campo) {
