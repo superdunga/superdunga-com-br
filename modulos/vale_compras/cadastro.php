@@ -119,7 +119,9 @@ if ($permitido && $empresaId === 2) {
         SELECT v.*,
                COALESCE(SUM(CASE WHEN m.tipo = 'COMPRA' THEN m.valor_nominal ELSE 0 END), 0) AS total_compras,
                COALESCE(SUM(CASE WHEN m.tipo = 'COMPRA' THEN m.valor_desagio ELSE 0 END), 0) AS total_desconto,
-               COALESCE(SUM(CASE WHEN m.tipo = 'VENDA' THEN m.valor ELSE 0 END), 0) AS total_vendas
+               COALESCE(SUM(CASE WHEN m.tipo = 'VENDA' THEN m.valor ELSE 0 END), 0) AS total_vendas,
+               COALESCE(SUM(CASE WHEN m.tipo = 'COMPRA' AND (m.mov_nominal IS NULL OR (m.valor_desagio > 0 AND m.mov_desagio IS NULL)) THEN 1 ELSE 0 END), 0) AS compras_pendentes,
+               COALESCE(SUM(CASE WHEN m.tipo = 'VENDA' AND m.crcontador IS NULL THEN 1 ELSE 0 END), 0) AS vendas_pendentes
         FROM vale_compras_vales v
         LEFT JOIN vale_compras_movimentos m ON " . implode(' AND ', $join) . "
         WHERE " . implode(' AND ', $where) . "
@@ -261,6 +263,7 @@ require '../../layout/header.php';
                             <th>Vendas</th>
                             <th>Desconto</th>
                             <th>Saldo</th>
+                            <th>Pendências</th>
                             <th>Status</th>
                             <th></th>
                         </tr>
@@ -273,6 +276,7 @@ require '../../layout/header.php';
                             $vendas = (float)$vale['total_vendas'];
                             $desconto = (float)$vale['total_desconto'];
                             $saldo = $saldoInicial + $compras - $vendas;
+                            $pendencias = (int)$vale['compras_pendentes'] + (int)$vale['vendas_pendentes'];
                             ?>
                             <tr>
                                 <td>#<?= (int)$vale['id'] ?></td>
@@ -282,6 +286,13 @@ require '../../layout/header.php';
                                 <td><?= vcMoeda($vendas) ?></td>
                                 <td><?= vcMoeda($desconto) ?></td>
                                 <td class="fw-semibold"><?= vcMoeda($saldo) ?></td>
+                                <td>
+                                    <?php if ($pendencias > 0): ?>
+                                        <span class="badge text-bg-warning"><?= $pendencias ?></span>
+                                    <?php else: ?>
+                                        <span class="badge text-bg-success">0</span>
+                                    <?php endif; ?>
+                                </td>
                                 <td><span class="badge text-bg-<?= ($vale['status'] ?? '') === 'ENCERRADO' ? 'secondary' : 'primary' ?>"><?= vcH($vale['status']) ?></span></td>
                                 <td class="text-end">
                                     <div class="vc-actions justify-content-end">
@@ -292,7 +303,7 @@ require '../../layout/header.php';
                             </tr>
                         <?php endforeach; ?>
                         <?php if (!$vales): ?>
-                            <tr><td colspan="9" class="text-center text-muted py-4">Nenhum vale-compra encontrado.</td></tr>
+                            <tr><td colspan="10" class="text-center text-muted py-4">Nenhum vale-compra encontrado.</td></tr>
                         <?php endif; ?>
                     </tbody>
                 </table>
