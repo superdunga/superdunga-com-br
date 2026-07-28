@@ -114,7 +114,12 @@ function gerarLancamentosFinanceirosDescontoCheques(PDO $pdo, int $empresaId, in
                 continue;
             }
             $crcontador = proximoCrcontadorDescontoCheques($pdo, $empresaId);
+            $clienteTitulo = trim((string)($operacao['cliente_nome'] ?? ''));
             $titulo = trim(($doc['tipo_documento'] ?? 'CHEQUE') . ' DESC. CHEQUES OP #' . $operacaoId . ' DOC ' . ($doc['numero_documento'] ?: $doc['id']));
+            if ($clienteTitulo !== '') {
+                $titulo .= ' - ' . $clienteTitulo;
+            }
+            $titulo = mb_substr($titulo, 0, 255, 'UTF-8');
             $obs = trim('Operacao de desconto #' . $operacaoId . ' | Emissor: ' . ($doc['nome_emissor'] ?: '-') . ' | CPF/CNPJ: ' . ($doc['cnpj_cpf_emissor'] ?: '-'));
             $chave = 'DESCONTO-CHEQUES-DOC-' . $empresaId . '-' . (int)$doc['id'];
 

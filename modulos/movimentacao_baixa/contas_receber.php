@@ -448,7 +448,8 @@ function crbBaixarTitulos(PDO $pdo, $empresaId, $usuarioId, array $dados)
 
             $movcontador = crbProximoMovcontador($pdo);
             $documento = $titulo['TITULO'] ?: ($titulo['NOTAFISCAL'] ?: $titulo['CRCONTADOR']);
-            $historico = trim('BAIXA CR ' . (int)$titulo['CRCONTADOR'] . ' - ' . ($titulo['cliente_nome'] ?? '') . ' - ' . $documento);
+            $clienteHistorico = trim((string)($titulo['cliente_nome'] ?? ''));
+            $historico = trim('BAIXA CR ' . (int)$titulo['CRCONTADOR'] . ' - ' . ($clienteHistorico !== '' ? $clienteHistorico . ' - ' : '') . $documento);
 
             $stmtBnc = $pdo->prepare("
                 INSERT INTO armazem_bnc001 (

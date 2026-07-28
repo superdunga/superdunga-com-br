@@ -86,13 +86,8 @@ if ($permitido && $editarId > 0) {
 
 $fStatus = $_GET['status'] ?? 'abertos';
 $fBusca = trim((string)($_GET['busca'] ?? ''));
-$fSemData = ($_GET['sem_data'] ?? 'S') === 'S';
-$fDataIni = trim((string)($_GET['data_ini'] ?? ''));
-$fDataFim = trim((string)($_GET['data_fim'] ?? ''));
 $where = ["v.empresa_id = ?"];
 $whereParams = [$empresaId];
-$join = ["m.vale_id = v.id"];
-$joinParams = [];
 if ($fStatus === 'abertos') {
     $where[] = "v.status <> 'ENCERRADO'";
 } elseif ($fStatus === 'encerrados') {
@@ -103,22 +98,9 @@ if ($fBusca !== '') {
     $whereParams[] = '%' . $fBusca . '%';
     $whereParams[] = ctype_digit($fBusca) ? (int)$fBusca : 0;
 }
-if (!$fSemData) {
-    if ($fDataIni !== '') {
-        $join[] = "m.data_movimento >= ?";
-        $joinParams[] = $fDataIni;
-    }
-    if ($fDataFim !== '') {
-        $join[] = "m.data_movimento <= ?";
-        $joinParams[] = $fDataFim;
-    }
-    if ($fDataIni !== '' || $fDataFim !== '') {
-        $where[] = "m.id IS NOT NULL";
-    }
-}
 
 $vales = [];
-$totaisVales = ['saldo_inicial' => 0.0, 'compras' => 0.0, 'vendas' => 0.0, 'desconto' => 0.0, 'saldo' => 0.0];
+$totaisVales = ['saldo_inicial' => 0.0, 'compras' => 0.0, 'vendas' => 0.0, 'saldo' => 0.0];
 if ($permitido && $empresaId === 2) {
     $stmt = $pdo->prepare("
         SELECT v.*,
@@ -128,21 +110,102 @@ if ($permitido && $empresaId === 2) {
                COALESCE(SUM(CASE WHEN m.tipo = 'COMPRA' AND (m.mov_nominal IS NULL OR (m.valor_desagio > 0 AND m.mov_desagio IS NULL)) THEN 1 ELSE 0 END), 0) AS compras_pendentes,
                COALESCE(SUM(CASE WHEN m.tipo = 'VENDA' AND m.crcontador IS NULL THEN 1 ELSE 0 END), 0) AS vendas_pendentes
         FROM vale_compras_vales v
-        LEFT JOIN vale_compras_movimentos m ON " . implode(' AND ', $join) . "
+        LEFT JOIN vale_compras_movimentos m ON m.vale_id = v.id AND m.empresa_id = v.empresa_id
         WHERE " . implode(' AND ', $where) . "
         GROUP BY v.id
         ORDER BY v.identificacao ASC, v.id ASC
         LIMIT 300
     ");
-    $stmt->execute(array_merge($joinParams, $whereParams));
+    $stmt->execute($whereParams);
     $vales = $stmt->fetchAll(PDO::FETCH_ASSOC);
     foreach ($vales as $valeTotal) {
         $totaisVales['saldo_inicial'] += (float)($valeTotal['saldo_inicial'] ?? 0);
         $totaisVales['compras'] += (float)$valeTotal['total_compras'];
         $totaisVales['vendas'] += (float)$valeTotal['total_vendas'];
-        $totaisVales['desconto'] += (float)$valeTotal['total_desconto'];
     }
     $totaisVales['saldo'] = $totaisVales['saldo_inicial'] + $totaisVales['compras'] - $totaisVales['vendas'];
+}
+
+$movVale = trim((string)($_GET['mov_vale'] ?? ''));
+$movTipo = trim((string)($_GET['mov_tipo'] ?? ''));
+$movDataIni = trim((string)($_GET['mov_data_ini'] ?? ''));
+$movDataFim = trim((string)($_GET['mov_data_fim'] ?? ''));
+$movPessoa = trim((string)($_GET['mov_pessoa'] ?? ''));
+$movFinanceiro = trim((string)($_GET['mov_financeiro'] ?? 'todos'));
+if ($movDataIni === '') {
+    $movDataIni = date('Y-m-01');
+}
+if ($movDataFim === '') {
+    $movDataFim = date('Y-m-t');
+}
+$movimentos = [];
+$totaisMovimentos = ['compras' => 0.0, 'vendas' => 0.0, 'desconto' => 0.0, 'saldo' => 0.0];
+if ($permitido && $empresaId === 2) {
+    $movWhere = ["m.empresa_id = ?"];
+    $movParams = [$empresaId];
+
+    if ($movVale !== '') {
+        $movWhere[] = "(v.identificacao LIKE ? OR v.id = ?)";
+        $movParams[] = '%' . $movVale . '%';
+        $movParams[] = ctype_digit($movVale) ? (int)$movVale : 0;
+    }
+    if (in_array($movTipo, ['COMPRA', 'VENDA'], true)) {
+        $movWhere[] = "m.tipo = ?";
+        $movParams[] = $movTipo;
+    }
+    if ($movDataIni !== '') {
+        $movWhere[] = "m.data_movimento >= ?";
+        $movParams[] = $movDataIni;
+    }
+    if ($movDataFim !== '') {
+        $movWhere[] = "m.data_movimento <= ?";
+        $movParams[] = $movDataFim;
+    }
+    if ($movPessoa !== '') {
+        $movWhere[] = "(
+            f.NOME LIKE ? OR f.APELIDO LIKE ? OR f.FCONTADOR = ?
+            OR c.NOME LIKE ? OR c.APELIDO LIKE ? OR c.CLICONTADOR = ?
+        )";
+        $likePessoa = '%' . $movPessoa . '%';
+        $codigoPessoa = ctype_digit($movPessoa) ? (int)$movPessoa : 0;
+        array_push($movParams, $likePessoa, $likePessoa, $codigoPessoa, $likePessoa, $likePessoa, $codigoPessoa);
+    }
+    if ($movFinanceiro === 'pendente') {
+        $movWhere[] = "(
+            (m.tipo = 'COMPRA' AND (m.mov_nominal IS NULL OR (m.valor_desagio > 0 AND m.mov_desagio IS NULL)))
+            OR (m.tipo = 'VENDA' AND m.crcontador IS NULL)
+        )";
+    } elseif ($movFinanceiro === 'lancado') {
+        $movWhere[] = "(
+            (m.tipo = 'COMPRA' AND m.mov_nominal IS NOT NULL AND (m.valor_desagio <= 0 OR m.mov_desagio IS NOT NULL))
+            OR (m.tipo = 'VENDA' AND m.crcontador IS NOT NULL)
+        )";
+    }
+
+    $stmt = $pdo->prepare("
+        SELECT m.*,
+               v.identificacao AS vale_identificacao,
+               f.NOME AS fornecedor_nome, f.APELIDO AS fornecedor_apelido,
+               c.NOME AS cliente_nome, c.APELIDO AS cliente_apelido
+        FROM vale_compras_movimentos m
+        INNER JOIN vale_compras_vales v ON v.id = m.vale_id AND v.empresa_id = m.empresa_id
+        LEFT JOIN armazem_cp003 f ON f.EMPRESA = m.empresa_id AND f.FCONTADOR = m.fornecedor_id
+        LEFT JOIN armazem_cr002 c ON c.EMPRESA = m.empresa_id AND c.CLICONTADOR = m.cliente_id
+        WHERE " . implode(' AND ', $movWhere) . "
+        ORDER BY m.data_movimento DESC, m.id DESC
+        LIMIT 500
+    ");
+    $stmt->execute($movParams);
+    $movimentos = $stmt->fetchAll(PDO::FETCH_ASSOC);
+    foreach ($movimentos as $movimentoTotal) {
+        if (($movimentoTotal['tipo'] ?? '') === 'COMPRA') {
+            $totaisMovimentos['compras'] += (float)$movimentoTotal['valor_nominal'];
+            $totaisMovimentos['desconto'] += (float)$movimentoTotal['valor_desagio'];
+        } elseif (($movimentoTotal['tipo'] ?? '') === 'VENDA') {
+            $totaisMovimentos['vendas'] += (float)$movimentoTotal['valor'];
+        }
+    }
+    $totaisMovimentos['saldo'] = $totaisMovimentos['compras'] - $totaisMovimentos['vendas'];
 }
 
 require '../../layout/header.php';
@@ -156,14 +219,15 @@ require '../../layout/header.php';
 .vc-field label { font-size:12px; font-weight:700; color:#495057; margin-bottom:4px; display:block; }
 .vc-field input, .vc-field select { width:100%; border:1px solid #ced4da; border-radius:6px; padding:9px 10px; }
 .vc-actions { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
-.vc-filter { display:grid; grid-template-columns:2fr 1fr 1fr 1fr auto auto; gap:10px; align-items:end; }
+.vc-filter { display:grid; grid-template-columns:2fr 1fr auto auto; gap:10px; align-items:end; }
+.vc-filter-mov { display:grid; grid-template-columns:repeat(6,minmax(0,1fr)) auto; gap:10px; align-items:end; }
 .vc-table { width:100%; border-collapse:collapse; font-size:13px; }
 .vc-table th, .vc-table td { border-bottom:1px solid #e9ecef; padding:9px; vertical-align:middle; }
 .vc-table th { background:#f1f5f9; font-size:12px; text-transform:uppercase; color:#334155; }
 .vc-kpi { border:1px solid #e2e8f0; border-radius:8px; padding:14px; background:#f8fafc; }
 .vc-kpi small { color:#64748b; display:block; font-weight:700; text-transform:uppercase; font-size:11px; }
 .vc-kpi strong { font-size:20px; }
-@media (max-width: 900px) { .vc-hero { display:block; } .vc-grid, .vc-filter { grid-template-columns:1fr; } .vc-table { min-width:760px; } .vc-scroll { overflow-x:auto; } }
+@media (max-width: 900px) { .vc-hero { display:block; } .vc-grid, .vc-filter, .vc-filter-mov { grid-template-columns:1fr; } .vc-table { min-width:760px; } .vc-scroll { overflow-x:auto; } }
 </style>
 
 <div class="vc-wrap">
@@ -248,19 +312,6 @@ require '../../layout/header.php';
                         <option value="encerrados" <?= $fStatus === 'encerrados' ? 'selected' : '' ?>>Encerrados</option>
                         </select>
                     </div>
-                    <div class="vc-field">
-                        <label>Data inicial operacao</label>
-                        <input type="date" name="data_ini" value="<?= vcH($fDataIni) ?>" <?= $fSemData ? 'disabled' : '' ?>>
-                    </div>
-                    <div class="vc-field">
-                        <label>Data final operacao</label>
-                        <input type="date" name="data_fim" value="<?= vcH($fDataFim) ?>" <?= $fSemData ? 'disabled' : '' ?>>
-                    </div>
-                    <input type="hidden" name="sem_data" value="N">
-                    <label class="form-check d-flex align-items-center gap-2 mb-2">
-                        <input class="form-check-input" type="checkbox" name="sem_data" value="S" <?= $fSemData ? 'checked' : '' ?> onchange="this.form.querySelectorAll('input[type=date]').forEach(function(el){ el.disabled = this.checked; }, this);">
-                        <span>Sem data</span>
-                    </label>
                     <div class="vc-actions mb-2">
                         <button class="btn btn-sm btn-outline-secondary">Filtrar</button>
                         <a class="btn btn-sm btn-outline-light text-dark border" href="cadastro.php">Limpar</a>
@@ -271,7 +322,6 @@ require '../../layout/header.php';
                 <div class="col-md"><div class="vc-kpi"><small>Saldo inicial</small><strong><?= vcMoeda($totaisVales['saldo_inicial']) ?></strong></div></div>
                 <div class="col-md"><div class="vc-kpi"><small>Compras</small><strong><?= vcMoeda($totaisVales['compras']) ?></strong></div></div>
                 <div class="col-md"><div class="vc-kpi"><small>Vendas</small><strong><?= vcMoeda($totaisVales['vendas']) ?></strong></div></div>
-                <div class="col-md"><div class="vc-kpi"><small>Desconto</small><strong><?= vcMoeda($totaisVales['desconto']) ?></strong></div></div>
                 <div class="col-md"><div class="vc-kpi"><small>Saldo</small><strong><?= vcMoeda($totaisVales['saldo']) ?></strong></div></div>
             </div>
             <div class="vc-scroll">
@@ -283,7 +333,6 @@ require '../../layout/header.php';
                             <th>Saldo inicial</th>
                             <th>Compras</th>
                             <th>Vendas</th>
-                            <th>Desconto</th>
                             <th>Saldo</th>
                             <th>Pendências</th>
                             <th>Status</th>
@@ -296,7 +345,6 @@ require '../../layout/header.php';
                             $saldoInicial = (float)($vale['saldo_inicial'] ?? 0);
                             $compras = (float)$vale['total_compras'];
                             $vendas = (float)$vale['total_vendas'];
-                            $desconto = (float)$vale['total_desconto'];
                             $saldo = $saldoInicial + $compras - $vendas;
                             $pendencias = (int)$vale['compras_pendentes'] + (int)$vale['vendas_pendentes'];
                             ?>
@@ -306,7 +354,6 @@ require '../../layout/header.php';
                                 <td><?= vcMoeda($saldoInicial) ?></td>
                                 <td><?= vcMoeda($compras) ?></td>
                                 <td><?= vcMoeda($vendas) ?></td>
-                                <td><?= vcMoeda($desconto) ?></td>
                                 <td class="fw-semibold"><?= vcMoeda($saldo) ?></td>
                                 <td>
                                     <?php if ($pendencias > 0): ?>
@@ -319,13 +366,118 @@ require '../../layout/header.php';
                                 <td class="text-end">
                                     <div class="vc-actions justify-content-end">
                                         <a href="cadastro.php?editar=<?= (int)$vale['id'] ?>" class="btn btn-sm btn-outline-secondary">Editar</a>
-                                        <a href="lancamentos.php?vale=<?= (int)$vale['id'] ?>" class="btn btn-sm btn-outline-primary">Lançamentos</a>
+                                        <a href="lancamentos.php?vale=<?= (int)$vale['id'] ?>" class="btn btn-sm btn-outline-primary">Lan&ccedil;amentos</a>
                                     </div>
                                 </td>
                             </tr>
                         <?php endforeach; ?>
                         <?php if (!$vales): ?>
-                            <tr><td colspan="10" class="text-center text-muted py-4">Nenhum vale-compra encontrado.</td></tr>
+                            <tr><td colspan="9" class="text-center text-muted py-4">Nenhum vale-compra encontrado.</td></tr>
+                        <?php endif; ?>
+                    </tbody>
+                </table>
+            </div>
+        </section>
+
+        <section class="vc-card">
+            <div class="mb-3">
+                <h2 class="h6 fw-bold mb-3">Lan&ccedil;amentos dos vales</h2>
+                <form method="get" class="vc-filter-mov">
+                    <div class="vc-field">
+                        <label>Vale</label>
+                        <input type="text" name="mov_vale" value="<?= vcH($movVale) ?>" placeholder="Numero ou identificacao">
+                    </div>
+                    <div class="vc-field">
+                        <label>Tipo</label>
+                        <select name="mov_tipo">
+                            <option value="" <?= $movTipo === '' ? 'selected' : '' ?>>Todos</option>
+                            <option value="COMPRA" <?= $movTipo === 'COMPRA' ? 'selected' : '' ?>>Compra</option>
+                            <option value="VENDA" <?= $movTipo === 'VENDA' ? 'selected' : '' ?>>Venda</option>
+                        </select>
+                    </div>
+                    <div class="vc-field">
+                        <label>Data inicial</label>
+                        <input type="date" name="mov_data_ini" value="<?= vcH($movDataIni) ?>">
+                    </div>
+                    <div class="vc-field">
+                        <label>Data final</label>
+                        <input type="date" name="mov_data_fim" value="<?= vcH($movDataFim) ?>">
+                    </div>
+                    <div class="vc-field">
+                        <label>Fornecedor/Cliente</label>
+                        <input type="text" name="mov_pessoa" value="<?= vcH($movPessoa) ?>" placeholder="Codigo ou nome">
+                    </div>
+                    <div class="vc-field">
+                        <label>Financeiro</label>
+                        <select name="mov_financeiro">
+                            <option value="todos" <?= $movFinanceiro === 'todos' ? 'selected' : '' ?>>Todos</option>
+                            <option value="pendente" <?= $movFinanceiro === 'pendente' ? 'selected' : '' ?>>Pendente</option>
+                            <option value="lancado" <?= $movFinanceiro === 'lancado' ? 'selected' : '' ?>>Lan&ccedil;ado</option>
+                        </select>
+                    </div>
+                    <div class="vc-actions mb-2">
+                        <button class="btn btn-sm btn-outline-secondary">Filtrar</button>
+                        <a class="btn btn-sm btn-outline-light text-dark border" href="cadastro.php">Limpar</a>
+                    </div>
+                </form>
+            </div>
+            <div class="row g-3 mb-3">
+                <div class="col-md"><div class="vc-kpi"><small>Compras</small><strong><?= vcMoeda($totaisMovimentos['compras']) ?></strong></div></div>
+                <div class="col-md"><div class="vc-kpi"><small>Vendas</small><strong><?= vcMoeda($totaisMovimentos['vendas']) ?></strong></div></div>
+                <div class="col-md"><div class="vc-kpi"><small>Desconto</small><strong><?= vcMoeda($totaisMovimentos['desconto']) ?></strong></div></div>
+                <div class="col-md"><div class="vc-kpi"><small>Saldo</small><strong><?= vcMoeda($totaisMovimentos['saldo']) ?></strong></div></div>
+            </div>
+            <div class="vc-scroll">
+                <table class="vc-table">
+                    <thead>
+                        <tr>
+                            <th>#</th>
+                            <th>Vale</th>
+                            <th>Tipo</th>
+                            <th>Data</th>
+                            <th>Fornecedor/Cliente</th>
+                            <th>Estabelecimento</th>
+                            <th>Valor</th>
+                            <th>Venc.</th>
+                            <th>Financeiro</th>
+                            <th></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <?php foreach ($movimentos as $movimento): ?>
+                            <?php
+                            $isCompra = ($movimento['tipo'] ?? '') === 'COMPRA';
+                            $pessoa = $isCompra
+                                ? trim((string)($movimento['fornecedor_apelido'] ?: $movimento['fornecedor_nome'] ?: $movimento['fornecedor_id']))
+                                : trim((string)($movimento['cliente_apelido'] ?: $movimento['cliente_nome'] ?: $movimento['cliente_id']));
+                            $valorMovimento = $isCompra ? (float)$movimento['valor_nominal'] : (float)$movimento['valor'];
+                            $financeiroOk = $isCompra
+                                ? (!empty($movimento['mov_nominal']) && ((float)$movimento['valor_desagio'] <= 0 || !empty($movimento['mov_desagio'])))
+                                : !empty($movimento['crcontador']);
+                            ?>
+                            <tr>
+                                <td>#<?= (int)$movimento['id'] ?></td>
+                                <td><?= vcH($movimento['vale_identificacao']) ?></td>
+                                <td><span class="badge text-bg-<?= $isCompra ? 'success' : 'primary' ?>"><?= vcH($movimento['tipo']) ?></span></td>
+                                <td><?= vcH(date('d/m/Y', strtotime((string)$movimento['data_movimento']))) ?></td>
+                                <td><?= vcH($pessoa) ?></td>
+                                <td><?= vcH($movimento['estabelecimento'] ?: '-') ?></td>
+                                <td><?= vcMoeda($valorMovimento) ?></td>
+                                <td><?= $movimento['vencimento'] ? vcH(date('d/m/Y', strtotime((string)$movimento['vencimento']))) : '-' ?></td>
+                                <td>
+                                    <?php if ($financeiroOk): ?>
+                                        <span class="badge text-bg-success">Lan&ccedil;ado</span>
+                                    <?php else: ?>
+                                        <span class="badge text-bg-warning">Pendente</span>
+                                    <?php endif; ?>
+                                </td>
+                                <td class="text-end">
+                                    <a href="lancamentos.php?vale=<?= (int)$movimento['vale_id'] ?>" class="btn btn-sm btn-outline-primary">Abrir</a>
+                                </td>
+                            </tr>
+                        <?php endforeach; ?>
+                        <?php if (!$movimentos): ?>
+                            <tr><td colspan="10" class="text-center text-muted py-4">Nenhum lan&ccedil;amento encontrado.</td></tr>
                         <?php endif; ?>
                     </tbody>
                 </table>
