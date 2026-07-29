@@ -74,6 +74,8 @@ function sistemaModulosPadrao(): array
         ['codigo' => 'movimentacao_baixa_tipoes', 'grupo' => 'Movimentacao/Baixa', 'nome' => 'TipoES', 'url' => 'modulos/movimentacao_baixa/tipoes.php', 'ordem' => 335, 'somente_master' => true],
         ['codigo' => 'movimentacao_baixa_recorrencias', 'grupo' => 'Movimentacao/Baixa', 'nome' => 'Recorrencias', 'url' => 'modulos/movimentacao_baixa/recorrencias.php', 'ordem' => 336, 'somente_master' => true],
         ['codigo' => 'movimentacao_baixa_investimentos', 'grupo' => 'Movimentacao/Baixa', 'nome' => 'Investimentos', 'url' => 'modulos/movimentacao_baixa/investimentos.php', 'ordem' => 337, 'somente_master' => true],
+        ['codigo' => 'movimentacao_baixa_access_legado', 'grupo' => 'Movimentacao/Baixa', 'nome' => 'Analise Access', 'url' => 'modulos/movimentacao_baixa/access_legado.php', 'ordem' => 338, 'somente_master' => true],
+        ['codigo' => 'movimentacao_baixa_access_tabela', 'grupo' => 'Movimentacao/Baixa', 'nome' => 'Tabela Access', 'url' => 'modulos/movimentacao_baixa/access_tabela.php', 'ordem' => 339, 'somente_master' => true],
 
         ['codigo' => 'whatsapp', 'grupo' => 'Administracao', 'nome' => 'Mensagens WhatsApp', 'url' => 'modulos/whatsapp/index.php', 'ordem' => 310],
         ['codigo' => 'usuarios', 'grupo' => 'Administracao', 'nome' => 'Gerenciar Usuarios', 'url' => 'modulos/usuarios/listar.php', 'ordem' => 320],

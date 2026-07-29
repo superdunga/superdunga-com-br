@@ -83,6 +83,24 @@ $opcoes = [
         'botao' => 'btn-success',
         'somente_empresa' => 2,
     ],
+    [
+        'titulo' => 'Analise Access',
+        'descricao' => 'Compare lancamentos antigos importados do Access com Caixa/Banco, CR001 e CP001.',
+        'href' => 'access_legado.php',
+        'modulo' => 'movimentacao_baixa_access_legado',
+        'icone' => 'AC',
+        'botao' => 'btn-primary',
+        'somente_empresa' => 2,
+    ],
+    [
+        'titulo' => 'Tabela Access',
+        'descricao' => 'Consulte a tabela original importada do Access, sem comparacao ou lancamentos.',
+        'href' => 'access_tabela.php',
+        'modulo' => 'movimentacao_baixa_access_tabela',
+        'icone' => 'TA',
+        'botao' => 'btn-secondary',
+        'somente_empresa' => 2,
+    ],
 ];
 
 $opcoes = array_values(array_filter($opcoes, static function ($opcao) use ($empresaId) {
