@@ -35,9 +35,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['arquivo'])) {
     $nomeArquivo = $_FILES['arquivo']['name'];
 
     // VALIDAR NOME DO ARQUIVO
-    if (stripos($nomeArquivo, 'pagseguro') === false) {
+    if (stripos($nomeArquivo, 'pagseguro') === false && stripos($nomeArquivo, 'pagbank') === false) {
         echo "<div class='alert alert-danger'>
-                Arquivo inválido - nome deve conter 'pagseguro'
+                Arquivo inválido - nome deve conter 'pagseguro' ou 'pagbank'
               </div>";
         require '../../layout/footer.php';
         exit;
