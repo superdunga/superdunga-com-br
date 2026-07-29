@@ -7,6 +7,7 @@ $data = $_GET['data'] ?? '';
 $usuario = $_GET['user'] ?? '';
 $empresa_id = (int)$_SESSION['empresa_id'];
 $produtoFiltro = trim((string)($_GET['produto'] ?? ''));
+$vendaPdfIndividual = (int)($_GET['venda'] ?? 0);
 
 if (!$data || !$usuario) {
     echo "<div class='alert alert-danger'>Parâmetros inválidos</div>";
@@ -136,6 +137,12 @@ if ($produtoFiltroNormalizado !== '') {
     }
 }
 
+if ($vendaPdfIndividual > 0) {
+    $vendasRelatorio = array_values(array_filter($vendasRelatorio, static function ($vendaFiltro) use ($vendaPdfIndividual) {
+        return (int)($vendaFiltro['VENDACONTADOR'] ?? 0) === $vendaPdfIndividual;
+    }));
+}
+
 $total_venda = 0;
 foreach ($vendas as $vendaTotal) {
     $total_venda += (float)($vendaTotal['valor'] ?? 0);
@@ -240,11 +247,14 @@ if (($_GET['exportar_vendas'] ?? '') === 'pdf') {
 
 <div class="relatorio-vendas-caixa">
     <div class="relatorio-topo">
-        <h1>Relatorio de Vendas do Caixa</h1>
+        <h1><?= $vendaPdfIndividual > 0 ? 'Relatorio da Venda ' . (int)$vendaPdfIndividual : 'Relatorio de Vendas do Caixa' ?></h1>
         <div>Data: <?= date('d/m/Y', strtotime($data)) ?> | Operador: <?= htmlspecialchars((string)$usuario) ?></div>
         <div>Periodo: <?= dataHoraDetalheCaixa($data_inicio) ?> ate <?= dataHoraDetalheCaixa($data_fim) ?></div>
         <?php if ($produtoFiltro !== ''): ?>
             <div>Produto: <?= htmlspecialchars($produtoFiltro) ?></div>
+        <?php endif; ?>
+        <?php if ($vendaPdfIndividual > 0): ?>
+            <div>Venda: <?= (int)$vendaPdfIndividual ?></div>
         <?php endif; ?>
         <div>Total de vendas: <?= count($vendasRelatorio) ?> | Valor total: <?= moedaDetalheCaixa($total_venda_relatorio) ?></div>
     </div>
@@ -254,6 +264,9 @@ if (($_GET['exportar_vendas'] ?? '') === 'pdf') {
             <input type="hidden" name="data" value="<?= htmlspecialchars($data) ?>">
             <input type="hidden" name="user" value="<?= htmlspecialchars($usuario) ?>">
             <input type="hidden" name="exportar_vendas" value="pdf">
+            <?php if ($vendaPdfIndividual > 0): ?>
+                <input type="hidden" name="venda" value="<?= (int)$vendaPdfIndividual ?>">
+            <?php endif; ?>
             <div class="col-md-7">
                 <label class="form-label mb-1">Produto</label>
                 <input type="text" name="produto" value="<?= htmlspecialchars($produtoFiltro) ?>" class="form-control form-control-sm" placeholder="Ex.: CERV. 473ML BRAHMA">
@@ -407,12 +420,21 @@ foreach ($vendasRelatorio as $v) {
     <td><?= htmlspecialchars($v['nome_cliente'] ?? '') ?></td>
     <td>R$ <?= number_format((float)$v['valor'], 2, ',', '.') ?></td>
     <td>
-        <button class="btn btn-sm btn-outline-primary"
-                type="button"
-                data-bs-toggle="collapse"
-                data-bs-target="#<?= $collapseId ?>">
-            Detalhe
-        </button>
+        <div class="d-flex gap-1 flex-wrap">
+            <button class="btn btn-sm btn-outline-primary"
+                    type="button"
+                    data-bs-toggle="collapse"
+                    data-bs-target="#<?= $collapseId ?>">
+                Detalhe
+            </button>
+            <a
+                href="detalhar_fechamento.php?data=<?= urlencode($data) ?>&user=<?= urlencode($usuario) ?>&exportar_vendas=pdf&venda=<?= $vendaId ?>"
+                target="_blank"
+                class="btn btn-sm btn-outline-success"
+            >
+                PDF
+            </a>
+        </div>
     </td>
 </tr>
 <tr class="collapse" id="<?= $collapseId ?>">

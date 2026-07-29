@@ -95,6 +95,21 @@ function dataContasBanco($valor): string
     return $valor ? date('d/m/Y', strtotime($valor)) : '';
 }
 
+function numeroCsvContasBanco($valor): string
+{
+    return number_format((float)$valor, 2, '.', '');
+}
+
+function naturezaSaldoContasBanco($valor): string
+{
+    $valor = (float)$valor;
+    if (abs($valor) < 0.01) {
+        return '';
+    }
+
+    return $valor < 0 ? 'D' : 'C';
+}
+
 function normalizarDecimalConta(string $valor): float
 {
     $valor = trim($valor);
@@ -130,6 +145,12 @@ $contasSelecionadas = normalizarContasSelecionadas($_GET['cbcontador'] ?? []);
 $contaSelecionada = count($contasSelecionadas) === 1 ? $contasSelecionadas[0] : 0;
 $dataIni = trim($_GET['data_ini'] ?? '');
 $dataFim = trim($_GET['data_fim'] ?? '');
+if ($dataIni === '') {
+    $dataIni = date('Y-m-01');
+}
+if ($dataFim === '') {
+    $dataFim = date('Y-m-t');
+}
 $tipoes = trim($_GET['tipoes'] ?? '');
 $historico = trim($_GET['historico'] ?? '');
 $documento = trim($_GET['documento'] ?? '');
@@ -752,56 +773,52 @@ function queryContasBanco(array $extra = []): string
     return http_build_query($params);
 }
 
-if (($_GET['exportar'] ?? '') === 'excel') {
-    $nomeArquivo = 'contas_' . $visao . '_' . date('Ymd_His') . '.xls';
+if (in_array(($_GET['exportar'] ?? ''), ['excel', 'csv'], true)) {
+    $nomeArquivo = 'contas_' . $visao . '_' . date('Ymd_His') . '.csv';
 
-    header('Content-Type: application/vnd.ms-excel; charset=utf-8');
+    header('Content-Type: text/csv; charset=utf-8');
     header('Content-Disposition: attachment; filename="' . $nomeArquivo . '"');
     header('Pragma: no-cache');
     header('Expires: 0');
 
     echo "\xEF\xBB\xBF";
-    echo '<table border="1">';
+    $saidaCsv = fopen('php://output', 'w');
 
     if ($visao === 'sintetico') {
-        echo '<tr>';
-        foreach (['Conta', 'Nome', 'Creditos', 'Debitos', 'Saldo'] as $cabecalho) {
-            echo '<th>' . htmlspecialchars($cabecalho) . '</th>';
-        }
-        echo '</tr>';
+        fputcsv($saidaCsv, ['Conta', 'Nome', 'Creditos', 'Debitos', 'Saldo D/C', 'Saldo Valor'], ';');
 
         foreach ($contasSintetico as $contaResumo) {
-            echo '<tr>';
-            echo '<td>' . (int)$contaResumo['CBCONTADOR'] . '</td>';
-            echo '<td>' . htmlspecialchars((string)$contaResumo['conta_nome']) . '</td>';
-            echo '<td>' . number_format((float)$contaResumo['total_creditos'], 2, ',', '.') . '</td>';
-            echo '<td>' . number_format((float)$contaResumo['total_debitos'], 2, ',', '.') . '</td>';
-            echo '<td>' . htmlspecialchars(saldoContasBancoTexto($contaResumo['saldo'])) . '</td>';
-            echo '</tr>';
+            fputcsv($saidaCsv, [
+                (int)$contaResumo['CBCONTADOR'],
+                (string)$contaResumo['conta_nome'],
+                numeroCsvContasBanco($contaResumo['total_creditos']),
+                numeroCsvContasBanco($contaResumo['total_debitos']),
+                naturezaSaldoContasBanco($contaResumo['saldo']),
+                numeroCsvContasBanco(abs((float)$contaResumo['saldo'])),
+            ], ';');
         }
     } else {
-        echo '<tr>';
-        foreach (['Data', 'Conta', 'TipoEs', 'Historico', 'Documento', 'D/C', 'Valor', 'Saldo'] as $cabecalho) {
-            echo '<th>' . htmlspecialchars($cabecalho) . '</th>';
-        }
-        echo '</tr>';
+        fputcsv($saidaCsv, ['Data', 'Conta Codigo', 'Conta Nome', 'TipoEs Codigo', 'TipoEs Nome', 'Historico', 'Documento', 'D/C', 'Valor', 'Saldo D/C', 'Saldo Valor'], ';');
 
         foreach ($registros as $registro) {
             $documentoExcel = $registro['NUMDOC'] ?: ($registro['NUMDOCORIGEM'] ?: $registro['NUMCONTROLE']);
-            echo '<tr>';
-            echo '<td>' . htmlspecialchars(dataContasBanco($registro['DTMOV'])) . '</td>';
-            echo '<td>' . (int)$registro['CBCONTADOR'] . ' - ' . htmlspecialchars((string)$registro['conta_nome']) . '</td>';
-            echo '<td>' . (int)$registro['TIPOES'] . ' - ' . htmlspecialchars((string)$registro['tipo_nome']) . '</td>';
-            echo '<td>' . htmlspecialchars((string)$registro['HISTMOV']) . '</td>';
-            echo '<td>' . htmlspecialchars((string)$documentoExcel) . '</td>';
-            echo '<td>' . htmlspecialchars((string)$registro['TIPOMOV']) . '</td>';
-            echo '<td>' . number_format(abs((float)$registro['VALORMOV']), 2, ',', '.') . '</td>';
-            echo '<td>' . (!empty($contasSelecionadas) ? htmlspecialchars(saldoContasBancoTexto($registro['saldo_calculado'])) : '') . '</td>';
-            echo '</tr>';
+            fputcsv($saidaCsv, [
+                dataContasBanco($registro['DTMOV']),
+                (int)$registro['CBCONTADOR'],
+                (string)$registro['conta_nome'],
+                (int)$registro['TIPOES'],
+                (string)$registro['tipo_nome'],
+                (string)$registro['HISTMOV'],
+                (string)$documentoExcel,
+                (string)$registro['TIPOMOV'],
+                numeroCsvContasBanco(abs((float)$registro['VALORMOV'])),
+                !empty($contasSelecionadas) ? naturezaSaldoContasBanco($registro['saldo_calculado']) : '',
+                !empty($contasSelecionadas) ? numeroCsvContasBanco(abs((float)$registro['saldo_calculado'])) : '',
+            ], ';');
         }
     }
 
-    echo '</table>';
+    fclose($saidaCsv);
     exit;
 }
 
@@ -1025,7 +1042,7 @@ require '../../layout/header.php';
                 <a href="contas.php" class="btn btn-outline-secondary">Limpar</a>
                 <a href="contas.php?<?= htmlspecialchars(queryContasBanco(['visao' => 'sintetico'])) ?>" class="btn <?= $visao === 'sintetico' ? 'btn-success' : 'btn-outline-success' ?>">Sintetico</a>
                 <a href="contas.php?<?= htmlspecialchars(queryContasBanco(['visao' => 'extrato'])) ?>" class="btn <?= $visao === 'extrato' ? 'btn-primary' : 'btn-outline-primary' ?>">Extrato</a>
-                <a href="contas.php?<?= htmlspecialchars(queryContasBanco(['exportar' => 'excel'])) ?>" class="btn btn-outline-success">Exportar Excel</a>
+                <a href="contas.php?<?= htmlspecialchars(queryContasBanco(['exportar' => 'csv'])) ?>" class="btn btn-outline-success">Exportar CSV</a>
                 <button type="submit" class="btn btn-primary">Filtrar</button>
             </div>
         </div>
