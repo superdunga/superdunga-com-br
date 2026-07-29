@@ -802,6 +802,10 @@ if (in_array(($_GET['exportar'] ?? ''), ['excel', 'csv'], true)) {
 
         foreach ($registros as $registro) {
             $documentoExcel = $registro['NUMDOC'] ?: ($registro['NUMDOCORIGEM'] ?: $registro['NUMCONTROLE']);
+            $valorCsv = abs((float)$registro['VALORMOV']);
+            if (strtoupper((string)$registro['TIPOMOV']) === 'D') {
+                $valorCsv *= -1;
+            }
             fputcsv($saidaCsv, [
                 dataContasBanco($registro['DTMOV']),
                 (int)$registro['CBCONTADOR'],
@@ -811,7 +815,7 @@ if (in_array(($_GET['exportar'] ?? ''), ['excel', 'csv'], true)) {
                 (string)$registro['HISTMOV'],
                 (string)$documentoExcel,
                 (string)$registro['TIPOMOV'],
-                numeroCsvContasBanco(abs((float)$registro['VALORMOV'])),
+                numeroCsvContasBanco($valorCsv),
                 !empty($contasSelecionadas) ? naturezaSaldoContasBanco($registro['saldo_calculado']) : '',
                 !empty($contasSelecionadas) ? numeroCsvContasBanco(abs((float)$registro['saldo_calculado'])) : '',
             ], ';');
