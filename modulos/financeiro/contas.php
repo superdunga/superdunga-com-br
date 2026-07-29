@@ -97,7 +97,7 @@ function dataContasBanco($valor): string
 
 function numeroCsvContasBanco($valor): string
 {
-    return number_format((float)$valor, 2, '.', '');
+    return number_format((float)$valor, 2, ',', '');
 }
 
 function naturezaSaldoContasBanco($valor): string
