@@ -89,6 +89,16 @@ function atCsvLinha(array $linha): array
         $linha['conferido2_origem'] ?? '',
         $linha['funcionario_origem'] ?? '',
         $linha['correntista_origem'] ?? '',
+        $linha['enviado_superdunga'] ?? '',
+        $linha['status_controle'] ?? '',
+        $linha['resultado_comparacao'] ?? '',
+        $linha['tabela_destino'] ?? '',
+        $linha['id_destino'] ?? '',
+        $linha['movcontador_destino'] ?? '',
+        $linha['crcontador_destino'] ?? '',
+        $linha['cpcontador_destino'] ?? '',
+        atDataCsv($linha['enviado_em'] ?? ''),
+        $linha['observacao_controle'] ?? '',
     ];
 }
 
@@ -117,6 +127,16 @@ $colunasAccess = [
     'Conferido2',
     'Funcionario',
     'Correntista',
+    'EnviadoSuperDunga',
+    'StatusControle',
+    'ResultadoComparacao',
+    'TabelaDestino',
+    'IdDestino',
+    'MovcontadorDestino',
+    'CrcontadorDestino',
+    'CpcontadorDestino',
+    'EnviadoEm',
+    'ObservacaoControle',
 ];
 
 $fCodigo = trim((string)($_GET['codigo'] ?? ''));
