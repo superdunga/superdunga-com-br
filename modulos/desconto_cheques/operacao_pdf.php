@@ -146,10 +146,51 @@ function retanguloPdfDescontoCheques(float $x, float $y, float $w, float $h): st
     return number_format($x, 2, '.', '') . ' ' . number_format($y, 2, '.', '') . ' ' . number_format($w, 2, '.', '') . ' ' . number_format($h, 2, '.', '') . " re f\n";
 }
 
+function prepararImagemPdfDescontoCheques(string $arquivoAbs, bool $rotacionar = false): ?array
+{
+    if (!is_file($arquivoAbs) || !function_exists('imagecreatefromstring')) {
+        return null;
+    }
+
+    $dadosOriginais = file_get_contents($arquivoAbs);
+    if ($dadosOriginais === false) {
+        return null;
+    }
+
+    $imagem = @imagecreatefromstring($dadosOriginais);
+    if (!$imagem) {
+        return null;
+    }
+
+    $deveRotacionarArquivo = $rotacionar && imagesy($imagem) > imagesx($imagem);
+    if ($deveRotacionarArquivo && function_exists('imagerotate')) {
+        $rotacionada = imagerotate($imagem, -90, 0);
+        if ($rotacionada) {
+            imagedestroy($imagem);
+            $imagem = $rotacionada;
+        }
+    }
+
+    ob_start();
+    imagejpeg($imagem, null, 88);
+    $dados = ob_get_clean();
+    $largura = imagesx($imagem);
+    $altura = imagesy($imagem);
+    imagedestroy($imagem);
+
+    if (!$dados || $largura <= 0 || $altura <= 0) {
+        return null;
+    }
+
+    return [
+        'dados' => $dados,
+        'largura' => $largura,
+        'altura' => $altura,
+    ];
+}
+
 function enviarPdfDescontoCheques(array $paginas, string $arquivo): void
 {
-    $largura = 595;
-    $altura = 842;
     $objetos = [
         1 => "<< /Type /Catalog /Pages 2 0 R >>",
         2 => '',
@@ -159,11 +200,51 @@ function enviarPdfDescontoCheques(array $paginas, string $arquivo): void
     $idsPaginas = [];
     $proximoId = 5;
 
-    foreach ($paginas as $conteudo) {
+    foreach ($paginas as $pagina) {
+        if (is_array($pagina)) {
+            $conteudo = (string)($pagina['conteudo'] ?? '');
+            $largura = (float)($pagina['largura'] ?? 595);
+            $altura = (float)($pagina['altura'] ?? 842);
+            $xobjects = '';
+
+            foreach (($pagina['imagens'] ?? []) as $imagemPagina) {
+                $imagem = prepararImagemPdfDescontoCheques(
+                    (string)($imagemPagina['arquivo'] ?? ''),
+                    (bool)($imagemPagina['rotacionar'] ?? false)
+                );
+                if (!$imagem) {
+                    continue;
+                }
+
+                $imagemId = $proximoId++;
+                $nomeImagem = 'Im' . $imagemId;
+                $objetos[$imagemId] = "<< /Type /XObject /Subtype /Image /Width " . (int)$imagem['largura'] .
+                    " /Height " . (int)$imagem['altura'] . " /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length " .
+                    strlen($imagem['dados']) . " >>\nstream\n" . $imagem['dados'] . "\nendstream";
+                $xobjects .= " /{$nomeImagem} {$imagemId} 0 R";
+
+                $boxW = (float)($imagemPagina['w'] ?? 485);
+                $boxH = (float)($imagemPagina['h'] ?? 145);
+                $escala = min($boxW / max(1, (float)$imagem['largura']), $boxH / max(1, (float)$imagem['altura']));
+                $drawW = (float)$imagem['largura'] * $escala;
+                $drawH = (float)$imagem['altura'] * $escala;
+                $x = (float)($imagemPagina['x'] ?? 55) + (($boxW - $drawW) / 2);
+                $y = (float)($imagemPagina['y'] ?? 80) + (($boxH - $drawH) / 2);
+                $conteudo .= "q\n" . number_format($drawW, 2, '.', '') . " 0 0 " . number_format($drawH, 2, '.', '') . ' ' .
+                    number_format($x, 2, '.', '') . ' ' . number_format($y, 2, '.', '') . " cm\n/{$nomeImagem} Do\nQ\n";
+            }
+        } else {
+            $conteudo = (string)$pagina;
+            $largura = 595;
+            $altura = 842;
+            $xobjects = '';
+        }
+
         $conteudoId = $proximoId++;
         $paginaId = $proximoId++;
         $objetos[$conteudoId] = "<< /Length " . strlen($conteudo) . " >>\nstream\n{$conteudo}endstream";
-        $objetos[$paginaId] = "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 {$largura} {$altura}] /Resources << /Font << /F1 3 0 R /F2 4 0 R >> >> /Contents {$conteudoId} 0 R >>";
+        $recursoXObject = $xobjects !== '' ? " /XObject <<{$xobjects} >>" : '';
+        $objetos[$paginaId] = "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 {$largura} {$altura}] /Resources << /Font << /F1 3 0 R /F2 4 0 R >>{$recursoXObject} >> /Contents {$conteudoId} 0 R >>";
         $idsPaginas[] = $paginaId;
     }
 
@@ -194,7 +275,7 @@ function enviarPdfDescontoCheques(array $paginas, string $arquivo): void
     exit;
 }
 
-function gerarPdfArquivoDescontoCheques(array $operacao, array $documentos, float $valorLiquidoTitulos, int $operacaoId, string $nomeArquivo): void
+function gerarPdfArquivoDescontoCheques(array $operacao, array $documentos, array $anexosCheques, string $basePublicDir, float $valorLiquidoTitulos, int $operacaoId, string $nomeArquivo): void
 {
     $largura = 595;
     $altura = 842;
@@ -301,16 +382,50 @@ function gerarPdfArquivoDescontoCheques(array $operacao, array $documentos, floa
         }
     }
 
-    $y -= 18;
-    if (!empty($documentos)) {
-        $linhaTexto($margem, $y, 8, 'Observacao: para visualizar as fotos dos cheques, abra a operacao no sistema.', false);
-    }
     $salvarPagina();
+
+    $anexosImagens = array_values(array_filter($anexosCheques, static function (array $anexo): bool {
+        return !empty($anexo['existe']) && !empty($anexo['imagem']);
+    }));
+    foreach (array_chunk($anexosImagens, 3) as $grupoAnexos) {
+        $conteudoAnexo = '';
+        $conteudoAnexo .= corPdfDescontoCheques(0.08, 0.18, 0.40);
+        $conteudoAnexo .= retanguloPdfDescontoCheques(0, $altura - 58, $largura, 58);
+        $conteudoAnexo .= "1 1 1 rg\n";
+        $conteudoAnexo .= comandoTextoPdfDescontoCheques($margem, $altura - 30, 15, textoPdfDescontoCheques('ANEXOS DOS CHEQUES'), true);
+        $conteudoAnexo .= "0 0 0 rg\n";
+
+        $imagens = [];
+        $posicoesY = [570, 325, 80];
+        foreach ($grupoAnexos as $indice => $anexo) {
+            $cardY = $posicoesY[$indice] ?? 80;
+            $conteudoAnexo .= corPdfDescontoCheques(1, 1, 1);
+            $conteudoAnexo .= retanguloPdfDescontoCheques($margem, $cardY, $largura - ($margem * 2), 210);
+            $conteudoAnexo .= "0 0 0 rg\n";
+            $conteudoAnexo .= comandoTextoPdfDescontoCheques($margem + 8, $cardY + 194, 9, textoPdfDescontoCheques('Cheque ' . (($anexo['documento'] ?? '') ?: '-') . ' - ' . ($anexo['lado'] ?? '')), true);
+            $imagens[] = [
+                'arquivo' => $basePublicDir . '/' . ltrim((string)$anexo['caminho'], '/\\'),
+                'rotacionar' => !empty($anexo['rotacionar']),
+                'x' => $margem + 18,
+                'y' => $cardY + 12,
+                'w' => $largura - ($margem * 2) - 36,
+                'h' => 170,
+            ];
+        }
+
+        $paginas[] = [
+            'largura' => $largura,
+            'altura' => $altura,
+            'conteudo' => $conteudoAnexo,
+            'imagens' => $imagens,
+        ];
+    }
+
     enviarPdfDescontoCheques($paginas, $nomeArquivo);
 }
 
 if (($_GET['download'] ?? '') === '1') {
-    gerarPdfArquivoDescontoCheques($operacao, $documentos, $valorLiquidoTitulos, $operacaoId, $nomeArquivo);
+    gerarPdfArquivoDescontoCheques($operacao, $documentos, $anexosCheques, $basePublicDir, $valorLiquidoTitulos, $operacaoId, $nomeArquivo);
 }
 ?>
 <!DOCTYPE html>
