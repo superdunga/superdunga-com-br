@@ -568,7 +568,7 @@ $stmt = $pdo_master->prepare("
     FROM energia_operacoes o
     INNER JOIN energia_contas c ON c.id = o.conta_id AND c.empresa_id = o.empresa_id
     WHERE " . implode(' AND ', $where) . "
-    ORDER BY o.id DESC
+    ORDER BY COALESCE(c.vencimento, '9999-12-31') ASC, o.id DESC
     LIMIT 250
 ");
 $stmt->execute($params);
@@ -867,6 +867,7 @@ require '../../layout/header.php';
                     <tr>
                         <th>ID</th>
                         <th>Referencia</th>
+                        <th>Vencimento</th>
                         <th>Endereco</th>
                         <th class="text-end">kW injetado</th>
                         <th class="text-end">% desconto</th>
@@ -881,6 +882,7 @@ require '../../layout/header.php';
                         <tr>
                             <td><?= (int)$op['id'] ?></td>
                             <td><?= htmlspecialchars((string)$op['referencia']) ?></td>
+                            <td><?= !empty($op['vencimento']) ? date('d/m/Y', strtotime((string)$op['vencimento'])) : '-' ?></td>
                             <td><?= htmlspecialchars((string)$op['logradouro_complemento']) ?></td>
                             <td class="text-end"><?= qtdEnergiaOperacao((float)$op['quantidade_kw_injetada']) ?></td>
                             <td class="text-end"><?= number_format((float)$op['percentual_desconto_venda'], 4, ',', '.') ?>%</td>
@@ -897,7 +899,7 @@ require '../../layout/header.php';
                     <?php endforeach; ?>
                     <?php if (empty($operacoes)): ?>
                         <tr>
-                            <td colspan="9" class="text-center text-muted py-4">Nenhuma operacao de energia encontrada.</td>
+                            <td colspan="10" class="text-center text-muted py-4">Nenhuma operacao de energia encontrada.</td>
                         </tr>
                     <?php endif; ?>
                 </tbody>
