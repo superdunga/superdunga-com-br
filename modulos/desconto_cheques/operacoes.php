@@ -860,7 +860,9 @@ require '../../layout/header.php';
         align-items: center;
         display: flex;
         justify-content: center;
+        height: 56px;
         min-width: 64px;
+        overflow: hidden;
     }
 
     .dc-doc-summary-thumb img {
@@ -868,6 +870,13 @@ require '../../layout/header.php';
         border-radius: 6px;
         height: 56px;
         object-fit: cover;
+        width: 56px;
+    }
+
+    .dc-doc-summary-thumb img.dc-img-horizontalizada {
+        height: 56px;
+        object-fit: cover;
+        transform: rotate(-90deg);
         width: 56px;
     }
 
@@ -1382,7 +1391,7 @@ require '../../layout/header.php';
                                 <?php else: ?>
                                     <a href="operacoes.php?renovar=<?= (int)$operacao['id'] ?>" class="btn btn-sm btn-outline-success">Renovar</a>
                                 <?php endif; ?>
-                                <a href="operacao_pdf.php?id=<?= (int)$operacao['id'] ?>" target="_blank" class="btn btn-sm btn-outline-danger">PDF</a>
+                                <a href="operacao_pdf.php?id=<?= (int)$operacao['id'] ?>&download=1" class="btn btn-sm btn-outline-danger">PDF</a>
                             </td>
                         </tr>
                     <?php endforeach; ?>
@@ -1511,7 +1520,7 @@ document.addEventListener('DOMContentLoaded', function () {
             if (!href) {
                 anexoResumo.textContent = 'Sem anexo';
             } else if (/\.(png|jpe?g|gif|webp|bmp)$/i.test(arquivoCaminho)) {
-                anexoResumo.innerHTML = '<a href="' + escapeHtml(href) + '" target="_blank" title="' + escapeHtml(arquivoNome) + '"><img src="' + escapeHtml(href) + '" alt="Anexo"></a>';
+                anexoResumo.innerHTML = '<a href="' + escapeHtml(href) + '" target="_blank" title="' + escapeHtml(arquivoNome) + '"><img src="' + escapeHtml(href) + '" alt="Anexo" onload="horizontalizarImagemDocumentoDC(this)"></a>';
             } else {
                 anexoResumo.innerHTML = '<a href="' + escapeHtml(href) + '" target="_blank" class="btn btn-sm btn-outline-secondary">Anexo</a>';
             }
@@ -1525,6 +1534,12 @@ document.addEventListener('DOMContentLoaded', function () {
             atualizarResumoLinha(linha, indice + 1);
         });
     }
+
+    window.horizontalizarImagemDocumentoDC = function (img) {
+        if (img && img.naturalHeight > img.naturalWidth) {
+            img.classList.add('dc-img-horizontalizada');
+        }
+    };
 
     function atualizarBotoes() {
         const linhas = container.querySelectorAll('.documento-row');
