@@ -84,12 +84,29 @@ foreach ($documentos as $doc) {
             'caminho' => $anexo['caminho'],
             'existe' => is_file($arquivoAbs),
             'imagem' => in_array($ext, ['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp'], true),
-            'rotacionar' => $alturaImagem > $larguraImagem,
+            'rotacionar' => imagemChequePrecisaRotacionarDC($arquivoAbs, $larguraImagem, $alturaImagem),
         ];
     }
 }
 
 $nomeArquivo = 'desconto_cheques_operacao_' . $operacaoId . '.pdf';
+
+function imagemChequePrecisaRotacionarDC(string $arquivoAbs, int $larguraImagem, int $alturaImagem): bool
+{
+    if ($larguraImagem <= 0 || $alturaImagem <= 0) {
+        return false;
+    }
+
+    if (function_exists('exif_read_data')) {
+        $exif = @exif_read_data($arquivoAbs);
+        $orientacao = (int)($exif['Orientation'] ?? 0);
+        if (in_array($orientacao, [5, 6, 7, 8], true)) {
+            return $larguraImagem > $alturaImagem;
+        }
+    }
+
+    return $alturaImagem > $larguraImagem;
+}
 
 function textoPdfDescontoCheques($valor, int $limite = 0): string
 {
