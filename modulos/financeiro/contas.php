@@ -1045,7 +1045,7 @@ require '../../layout/header.php';
             <div class="col-12 col-lg-9 d-flex flex-wrap gap-2 justify-content-lg-end contas-filter-actions">
                 <a href="contas.php" class="btn btn-outline-secondary">Limpar</a>
                 <a href="contas.php?<?= htmlspecialchars(queryContasBanco(['visao' => 'sintetico'])) ?>" class="btn <?= $visao === 'sintetico' ? 'btn-success' : 'btn-outline-success' ?>">Sintetico</a>
-                <a href="contas.php?<?= htmlspecialchars(queryContasBanco(['visao' => 'extrato'])) ?>" class="btn <?= $visao === 'extrato' ? 'btn-primary' : 'btn-outline-primary' ?>">Extrato</a>
+                <a href="contas.php?<?= htmlspecialchars(queryContasBanco(['visao' => 'extrato'])) ?>" class="btn <?= $visao === 'extrato' ? 'btn-primary' : 'btn-outline-primary' ?>">Analitico</a>
                 <a href="contas.php?<?= htmlspecialchars(queryContasBanco(['exportar' => 'csv'])) ?>" class="btn btn-outline-success">Exportar CSV</a>
                 <button type="submit" class="btn btn-primary">Filtrar</button>
             </div>
