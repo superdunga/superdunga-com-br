@@ -1413,6 +1413,78 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['acao'] ?? '') === 'concili
     }
 }
 
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['acao'] ?? '') === 'desfazer_match_bnc001') {
+    $extratoIdDesfazer = (int)($_POST['extrato_id'] ?? 0);
+
+    try {
+        if (!$usuarioMaster) {
+            throw new RuntimeException('Somente usuario MASTER pode desfazer match bancario.');
+        }
+        if ($extratoIdDesfazer <= 0) {
+            throw new RuntimeException('Informe um extrato valido para desfazer o match.');
+        }
+
+        $pdo_master->beginTransaction();
+
+        $stmtExtratoDesfazer = $pdo_master->prepare("
+            SELECT id, empresa_id, cbcontador, bnc001_empresa, bnc001_movcontador, conciliado
+            FROM financeiro_extrato_bancario
+            WHERE id = ?
+              AND empresa_id = ?
+            FOR UPDATE
+        ");
+        $stmtExtratoDesfazer->execute([$extratoIdDesfazer, $empresaExtratoId]);
+        $extratoDesfazer = $stmtExtratoDesfazer->fetch(PDO::FETCH_ASSOC);
+
+        if (!$extratoDesfazer || ($extratoDesfazer['conciliado'] ?? 'N') !== 'S' || empty($extratoDesfazer['bnc001_movcontador'])) {
+            throw new RuntimeException('Este extrato nao possui match bancario com BNC001.');
+        }
+        if ((int)($extratoDesfazer['bnc001_empresa'] ?? 0) !== $empresaId) {
+            throw new RuntimeException('Este match pertence a outra empresa do sistema.');
+        }
+
+        $movcontadorDesfeito = (int)$extratoDesfazer['bnc001_movcontador'];
+
+        $stmtLimparMatch = $pdo_master->prepare("
+            UPDATE financeiro_extrato_bancario
+            SET conciliado = 'N',
+                bnc001_empresa = NULL,
+                bnc001_movcontador = NULL
+            WHERE id = ?
+              AND empresa_id = ?
+              AND conciliado = 'S'
+              AND bnc001_empresa = ?
+              AND bnc001_movcontador = ?
+        ");
+        $stmtLimparMatch->execute([$extratoIdDesfazer, $empresaExtratoId, $empresaId, $movcontadorDesfeito]);
+
+        if ($stmtLimparMatch->rowCount() <= 0) {
+            throw new RuntimeException('Nao foi possivel desfazer o match bancario.');
+        }
+
+        $stmtLogDesfazer = $pdo_master->prepare("
+            INSERT INTO financeiro_extrato_conciliacoes_log
+                (empresa_id, cbcontador, extrato_id, movcontador, tipo_match, usuario_id)
+            VALUES (?, ?, ?, ?, ?, ?)
+        ");
+        $stmtLogDesfazer->execute([$empresaId, (int)$extratoDesfazer['cbcontador'], $extratoIdDesfazer, $movcontadorDesfeito, 'desfazer_bnc001', $usuarioId]);
+
+        $pdo_master->commit();
+
+        header('Location: conciliacao_extratos.php?' . queryConciliacaoExtratos([
+            'ok_match_desfeito' => '1',
+            'extrato_desfeito' => $extratoIdDesfazer,
+            'mov_desfeito' => $movcontadorDesfeito,
+        ]));
+        exit;
+    } catch (Throwable $e) {
+        if ($pdo_master->inTransaction()) {
+            $pdo_master->rollBack();
+        }
+        $mensagemErro = $e->getMessage();
+    }
+}
+
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['acao'] ?? '') === 'gerar_recebiveis_banco') {
     $extratosSelecionados = $_POST['extratos_recebiveis'] ?? [];
     $cmRecebivel = (int)($_POST['cm_recebivel'] ?? 12);
@@ -2249,6 +2321,10 @@ if (($_GET['ok_match'] ?? '') === 'manual') {
     $mensagemOk = 'Conciliacao prioritaria concluida. Registros conciliados: ' . (int)($_GET['qtd_auto'] ?? 0) . '.';
 } elseif (($_GET['ok_match'] ?? '') === 'fila') {
     $mensagemOk = 'Conciliacao por fila concluida. Registros conciliados: ' . (int)($_GET['qtd_auto'] ?? 0) . '.';
+}
+
+if (($_GET['ok_match_desfeito'] ?? '') === '1') {
+    $mensagemOk = 'Match bancario desfeito. Extrato #' . (int)($_GET['extrato_desfeito'] ?? 0) . ' / MOV ' . (int)($_GET['mov_desfeito'] ?? 0) . '.';
 }
 
 if (($_GET['ok_recebiveis'] ?? '') === '1') {
@@ -3700,6 +3776,16 @@ document.addEventListener('DOMContentLoaded', function () {
                                                 </div>
                                                 <div class="small text-muted"><?= dataHoraExtratoBanco($item['data_sistema'] ?? null) ?></div>
                                                 <div class="small"><?= htmlspecialchars(mb_substr((string)($item['historico_sistema'] ?? ''), 0, 70) ?: '-') ?></div>
+                                                <?php if ($usuarioMaster && ($item['conciliado'] ?? 'N') === 'S' && (int)($item['bnc001_empresa'] ?? 0) === $empresaId): ?>
+                                                    <button
+                                                        type="submit"
+                                                        form="form-desfazer-match-bnc001-<?= (int)$item['id'] ?>"
+                                                        class="btn btn-outline-danger btn-sm py-0 mt-1"
+                                                        onclick="return confirm('Desfazer o match bancario do extrato #<?= (int)$item['id'] ?> com o MOV <?= (int)$item['bnc001_movcontador'] ?>?');"
+                                                    >
+                                                        Desfazer match
+                                                    </button>
+                                                <?php endif; ?>
                                             <?php endif; ?>
 
                                             <?php if (!empty($item['recebimento_id'])): ?>
@@ -3737,6 +3823,12 @@ document.addEventListener('DOMContentLoaded', function () {
                                     <input type="hidden" name="acao" value="desfazer_recebivel_extrato">
                                     <input type="hidden" name="extrato_id" value="<?= (int)$itemFormDesfazer['id'] ?>">
                                     <input type="hidden" name="recebimento_id" value="<?= (int)$itemFormDesfazer['recebimento_id'] ?>">
+                                </form>
+                            <?php endif; ?>
+                            <?php if (!empty($itemFormDesfazer['bnc001_movcontador']) && ($itemFormDesfazer['conciliado'] ?? 'N') === 'S' && (int)($itemFormDesfazer['bnc001_empresa'] ?? 0) === $empresaId): ?>
+                                <form method="POST" id="form-desfazer-match-bnc001-<?= (int)$itemFormDesfazer['id'] ?>" class="d-none">
+                                    <input type="hidden" name="acao" value="desfazer_match_bnc001">
+                                    <input type="hidden" name="extrato_id" value="<?= (int)$itemFormDesfazer['id'] ?>">
                                 </form>
                             <?php endif; ?>
                         <?php endforeach; ?>
