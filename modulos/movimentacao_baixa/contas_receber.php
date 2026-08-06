@@ -882,6 +882,117 @@ function crbExcluirBaixaTitulo(PDO $pdo, $empresaId, $usuarioId, $movcontador)
     }
 }
 
+function crbRegistrarChequeDevolvido(PDO $pdo, $empresaId, $usuarioId, array $dados)
+{
+    $crOrigem = (int)($dados['crcontador'] ?? 0);
+    $dataDevolucao = (string)($dados['data_devolucao'] ?? '');
+    $novoVencimento = (string)($dados['novo_vencimento'] ?? '');
+    $valor = crbFloat($dados['valor_devolucao'] ?? '');
+    $observacaoExtra = trim((string)($dados['observacao_devolucao'] ?? ''));
+
+    if ($crOrigem <= 0) {
+        throw new RuntimeException('Informe o titulo quitado que teve o cheque devolvido.');
+    }
+    if ($dataDevolucao === '') {
+        throw new RuntimeException('Informe a data da devolucao.');
+    }
+    if ($novoVencimento === '') {
+        throw new RuntimeException('Informe o novo vencimento.');
+    }
+    if ($valor <= 0) {
+        throw new RuntimeException('Informe um valor valido para a devolucao.');
+    }
+
+    $stmt = $pdo->prepare("
+        SELECT cp.*,
+               COALESCE(NULLIF(c.APELIDO, ''), c.NOME, CONCAT('Cliente ', cp.CLICONTADOR)) AS cliente_nome
+        FROM armazem_cr001 cp
+        LEFT JOIN armazem_cr002 c
+          ON c.EMPRESA = cp.EMPRESA
+         AND c.CLICONTADOR = cp.CLICONTADOR
+        WHERE cp.EMPRESA = ?
+          AND cp.CRCONTADOR = ?
+          AND COALESCE(cp.excluido_firebird, 'N') <> 'S'
+        LIMIT 1
+    ");
+    $stmt->execute([$empresaId, $crOrigem]);
+    $titulo = $stmt->fetch(PDO::FETCH_ASSOC);
+
+    if (!$titulo) {
+        throw new RuntimeException('Titulo original nao encontrado.');
+    }
+    if (($titulo['STATUS'] ?? '') !== 'QT') {
+        throw new RuntimeException('Somente titulo quitado pode ser marcado como cheque devolvido.');
+    }
+
+    $stmtDuplicado = $pdo->prepare("
+        SELECT CRCONTADOR
+        FROM armazem_cr001
+        WHERE EMPRESA = ?
+          AND TIPODOCORIGEM = 'SUPERDUNGA'
+          AND CONTROLE = 'CHEQUE_DEVOLVIDO'
+          AND NUMDOCORIGEM = ?
+          AND COALESCE(STATUS, 'AB') <> 'QT'
+          AND COALESCE(excluido_firebird, 'N') <> 'S'
+        LIMIT 1
+    ");
+    $stmtDuplicado->execute([$empresaId, (string)$crOrigem]);
+    $crAbertoExistente = $stmtDuplicado->fetchColumn();
+    if ($crAbertoExistente) {
+        throw new RuntimeException('Ja existe cheque devolvido em aberto para este titulo: CR #' . (int)$crAbertoExistente . '.');
+    }
+
+    $documentoOriginal = trim((string)($titulo['TITULO'] ?: ($titulo['NOTAFISCAL'] ?: $crOrigem)));
+    $tituloNovo = trim('DEVOLUCAO CHEQUE CR ' . $crOrigem . ' - ' . $documentoOriginal);
+    $observacao = trim('Cheque devolvido referente ao CR #' . $crOrigem . '. ' . $observacaoExtra);
+    $novoCr = crbProximoCrcontador($pdo, $empresaId);
+    $chave = 'MOVBAIXA-CHEQUE-DEVOLVIDO-' . $empresaId . '-' . $crOrigem . '-' . $novoCr;
+
+    $stmtInsert = $pdo->prepare("
+        INSERT INTO armazem_cr001 (
+            EMPRESA, CRCONTADOR, DTVENDA, NUMPARCELA, TITULO, VALORVENDA,
+            CLICONTADOR, OBSERVACAO, DTEMISSAO, VLRPARCELA, PARCELA, DTVENC,
+            VLRRESTANTE, VLRPAGO, STATUS, TIPODOCORIGEM, NUMDOCORIGEM, CONTROLE,
+            TIPOCR, TIPOES, NOTAFISCAL, REGSTAMP, USERLANC, DTLANC,
+            USERALT, DTALT, CHAVEINTEGRACAO, financeiro_verificado, excluido_firebird
+        ) VALUES (
+            ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, '1/1', ?,
+            ?, 0, 'AB', 'SUPERDUNGA', ?, 'CHEQUE_DEVOLVIDO',
+            'CR', ?, ?, NOW(), ?, NOW(), ?, NOW(), ?, 'N', 'N'
+        )
+    ");
+    $stmtInsert->execute([
+        $empresaId,
+        $novoCr,
+        $dataDevolucao,
+        $tituloNovo,
+        $valor,
+        (int)$titulo['CLICONTADOR'],
+        $observacao,
+        $dataDevolucao,
+        $valor,
+        $novoVencimento,
+        $valor,
+        (string)$crOrigem,
+        !empty($titulo['TIPOES']) ? (int)$titulo['TIPOES'] : null,
+        $titulo['NOTAFISCAL'] ?? null,
+        $usuarioId ?: null,
+        $usuarioId ?: null,
+        $chave,
+    ]);
+
+    $pdo->prepare("
+        UPDATE armazem_cr001
+        SET USERALT = ?,
+            DTALT = NOW(),
+            REGSTAMP = NOW()
+        WHERE EMPRESA = ?
+          AND CRCONTADOR = ?
+    ")->execute([$usuarioId ?: null, $empresaId, $crOrigem]);
+
+    return [$crOrigem, $novoCr];
+}
+
 $mensagem = '';
 $erro = '';
 $titulosBaixa = [];
@@ -935,6 +1046,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $movcontadorExcluir = (int)($_POST['movcontador'] ?? 0);
             list($crcontadorReaberto, $movcontadorExcluido) = crbExcluirBaixaTitulo($pdo, $empresaId, $usuarioId, $movcontadorExcluir);
             $mensagem = 'Baixa MOV #' . $movcontadorExcluido . ' excluida e titulo CR #' . $crcontadorReaberto . ' reaberto.';
+        } catch (Throwable $e) {
+            $erro = $e->getMessage();
+        }
+    } elseif ($acao === 'cheque_devolvido') {
+        try {
+            list($crOriginal, $novoCr) = crbRegistrarChequeDevolvido($pdo, $empresaId, $usuarioId, $_POST);
+            $mensagem = 'Cheque devolvido registrado no CR #' . $crOriginal . '. Novo titulo aberto: CR #' . $novoCr . '.';
         } catch (Throwable $e) {
             $erro = $e->getMessage();
         }
@@ -1044,7 +1162,7 @@ $params = [$empresaId];
 
 if ($fOrigem === 'movimentacao_baixa') {
     $where[] = "cp.TIPODOCORIGEM = 'SUPERDUNGA'";
-    $where[] = "cp.CONTROLE = 'MOVIMENTACAO_BAIXA'";
+    $where[] = "cp.CONTROLE IN ('MOVIMENTACAO_BAIXA', 'CHEQUE_DEVOLVIDO')";
 } elseif ($fOrigem === 'superdunga') {
     $where[] = "cp.TIPODOCORIGEM = 'SUPERDUNGA'";
 } elseif ($fOrigem === 'firebird') {
@@ -1106,6 +1224,7 @@ $stmtLista = $pdo->prepare("
            t.DESCES AS tipoes_desc,
            CASE
                WHEN cp.TIPODOCORIGEM = 'SUPERDUNGA' AND cp.CONTROLE = 'MOVIMENTACAO_BAIXA' THEN 'Mov/Baixa'
+               WHEN cp.TIPODOCORIGEM = 'SUPERDUNGA' AND cp.CONTROLE = 'CHEQUE_DEVOLVIDO' THEN 'Cheque devolvido'
                WHEN cp.TIPODOCORIGEM = 'SUPERDUNGA' AND cp.CONTROLE = 'MOV_BAIXA_CONTRAPARTIDA' THEN 'Contrapartida Mov/Baixa'
                WHEN cp.TIPODOCORIGEM = 'SUPERDUNGA' THEN 'SuperDunga'
                ELSE 'Firebird'
@@ -1688,6 +1807,9 @@ require '../../layout/header.php';
                                         <button type="button" class="crb-btn light crb-toggle-baixa" data-target="detalhe-baixa-<?= $crIdLinha ?>">
                                             Baixa
                                         </button>
+                                        <button type="button" class="crb-btn secondary crb-toggle-baixa" data-target="cheque-devolvido-<?= $crIdLinha ?>">
+                                            Cheque devolvido
+                                        </button>
                                     <?php endif; ?>
                                     <?php if ($agrupadosLinha): ?>
                                         <button type="button" class="crb-btn light crb-toggle-baixa" data-target="detalhe-agrupamento-<?= $crIdLinha ?>">
@@ -1748,6 +1870,38 @@ require '../../layout/header.php';
                                                 </tbody>
                                             </table>
                                         </div>
+                                    </td>
+                                </tr>
+                            <?php endif; ?>
+                            <?php if ($statusLinha === 'QT'): ?>
+                                <tr id="cheque-devolvido-<?= $crIdLinha ?>" class="crb-detalhe-baixa" style="display:none;">
+                                    <td colspan="12">
+                                        <form method="post" class="row g-2 align-items-end" onsubmit="return confirm('Registrar cheque devolvido e criar novo titulo em aberto para este cliente?');">
+                                            <input type="hidden" name="acao" value="cheque_devolvido">
+                                            <input type="hidden" name="crcontador" value="<?= $crIdLinha ?>">
+                                            <div class="col-md-2">
+                                                <label class="form-label mb-1">Data devolucao</label>
+                                                <input type="date" name="data_devolucao" value="<?= date('Y-m-d') ?>" class="form-control form-control-sm" required>
+                                            </div>
+                                            <div class="col-md-2">
+                                                <label class="form-label mb-1">Novo vencimento</label>
+                                                <input type="date" name="novo_vencimento" value="<?= date('Y-m-d') ?>" class="form-control form-control-sm" required>
+                                            </div>
+                                            <div class="col-md-2">
+                                                <label class="form-label mb-1">Valor</label>
+                                                <input type="text" name="valor_devolucao" value="<?= crbH(number_format((float)($titulo['VLRPAGO'] ?: $titulo['VLRPARCELA']), 2, ',', '.')) ?>" class="form-control form-control-sm" inputmode="decimal" required>
+                                            </div>
+                                            <div class="col-md-4">
+                                                <label class="form-label mb-1">Observacao</label>
+                                                <input type="text" name="observacao_devolucao" value="" class="form-control form-control-sm" placeholder="Opcional">
+                                            </div>
+                                            <div class="col-md-2">
+                                                <button type="submit" class="crb-btn secondary w-100">Registrar</button>
+                                            </div>
+                                            <div class="col-12 text-muted small">
+                                                A baixa original sera mantida. O sistema criara um novo CR aberto vinculado ao CR #<?= $crIdLinha ?>.
+                                            </div>
+                                        </form>
                                     </td>
                                 </tr>
                             <?php endif; ?>
