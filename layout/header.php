@@ -92,7 +92,36 @@ if (isset($pdo_master) && function_exists('grupoPermitido') && function_exists('
     $mostrarEmpresasTopbar = $nivelUsuario === 'MASTER' && moduloPermitido($pdo_master, $empresaIdSessao, 'empresas', $nivelUsuario);
 }
 
-$homeUrlJson = htmlspecialchars(json_encode($homeUrl), ENT_QUOTES, 'UTF-8');
+$scriptNameTopbar = str_replace('\\', '/', $_SERVER['SCRIPT_NAME'] ?? '');
+$backTopUrl = $homeUrl;
+$topbarModuleMenus = [
+    '/modulos/tesouraria/' => $tesourariaUrl,
+    '/modulos/fechamentodecaixa/' => $fechamentoUrl,
+    '/modulos/financeiro/' => $financeiroUrl,
+    '/modulos/estoque/' => $estoqueUrl,
+    '/modulos/gestao/' => $gestaoUrl,
+    '/modulos/rotinas_operacionais/' => $rotinasOperacionaisUrl,
+    '/modulos/colaboradores/' => $colaboradoresUrl,
+    '/modulos/unimed/' => $unimedUrl,
+    '/modulos/energia/' => $energiaUrl,
+    '/modulos/desconto_cheques/' => $descontoChequesUrl,
+    '/modulos/vale_compras/' => $valeComprasUrl,
+    '/modulos/movimentacao_baixa/' => $movimentacaoBaixaUrl,
+    '/modulos/whatsapp/' => $whatsappUrl,
+    '/modulos/usuarios/' => $usuariosUrl,
+    '/modulos/empresas/' => $empresasUrl,
+];
+
+foreach ($topbarModuleMenus as $modulePath => $menuUrl) {
+    if (strpos($scriptNameTopbar, $modulePath) === false) {
+        continue;
+    }
+
+    $menuPath = str_replace('\\', '/', (string)parse_url($menuUrl, PHP_URL_PATH));
+    $backTopUrl = $scriptNameTopbar === $menuPath ? $homeUrl : $menuUrl;
+    break;
+}
+
 $bootstrapCssUrl = ($appBaseUrl ?: '') . '/assets/bootstrap/bootstrap.min.css';
 ?>
 <!DOCTYPE html>
@@ -520,13 +549,12 @@ $bootstrapCssUrl = ($appBaseUrl ?: '') . '/assets/bootstrap/bootstrap.min.css';
 
 <nav class="navbar navbar-expand-lg navbar-dark app-topbar">
     <div class="container-fluid px-3 px-lg-4">
-        <button
-            type="button"
+        <a
+            href="<?= htmlspecialchars($backTopUrl) ?>"
             class="btn btn-sm btn-outline-light btn-back-top me-2"
-            onclick="if (window.history.length > 1) { window.history.back(); } else { window.location.href=<?= $homeUrlJson ?>; }"
         >
             &larr; Voltar
-        </button>
+        </a>
 
         <a class="navbar-brand d-flex align-items-center gap-2" href="<?= htmlspecialchars($homeUrl) ?>">
             <span class="d-inline-flex align-items-center justify-content-center bg-warning text-dark rounded-1 fw-bold" style="width:32px;height:32px;">SD</span>

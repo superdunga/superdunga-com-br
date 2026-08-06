@@ -36,6 +36,7 @@ function garantirTabelasConciliacaoExtratos(PDO $pdo): void
             importacao_id INT NULL,
             data_movimento DATETIME NOT NULL,
             historico VARCHAR(500) NULL,
+            HIST1 VARCHAR(80) NULL,
             documento VARCHAR(120) NULL,
             tipo CHAR(1) NOT NULL,
             valor DECIMAL(15,4) NOT NULL,
@@ -65,6 +66,20 @@ function garantirTabelasConciliacaoExtratos(PDO $pdo): void
             ALTER TABLE financeiro_extrato_bancario
             ADD COLUMN recebimento_id INT NULL AFTER bnc001_movcontador,
             ADD INDEX idx_fin_ext_recebimento (recebimento_id)
+        ");
+    }
+
+    $stmtColunaHist1 = $pdo->query("
+        SELECT COUNT(*)
+        FROM information_schema.columns
+        WHERE table_schema = DATABASE()
+          AND table_name = 'financeiro_extrato_bancario'
+          AND column_name = 'HIST1'
+    ");
+    if ((int)$stmtColunaHist1->fetchColumn() === 0) {
+        $pdo->exec("
+            ALTER TABLE financeiro_extrato_bancario
+            ADD COLUMN HIST1 VARCHAR(80) NULL AFTER historico
         ");
     }
 
