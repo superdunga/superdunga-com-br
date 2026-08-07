@@ -41,15 +41,9 @@ function tabelaExisteHistoricoFolha(PDO $pdo, string $tabela): bool
 }
 
 $referencia = trim((string)($_GET['referencia'] ?? ''));
-$status = trim((string)($_GET['status'] ?? 'todos'));
-$versao = trim((string)($_GET['versao'] ?? ''));
 
 if ($referencia !== '' && !preg_match('/^\d{4}-\d{2}$/', $referencia)) {
     $referencia = '';
-}
-
-if (!in_array($status, ['todos', 'ATUAL', 'HISTORICO'], true)) {
-    $status = 'todos';
 }
 
 $temTabelas = tabelaExisteHistoricoFolha($pdo_master, 'colaboradores_folha_versoes')
@@ -65,15 +59,7 @@ if ($temTabelas) {
         $params[] = $referencia;
     }
 
-    if ($status !== 'todos') {
-        $where[] = 'v.status = ?';
-        $params[] = $status;
-    }
-
-    if ($versao !== '' && ctype_digit($versao)) {
-        $where[] = 'v.versao = ?';
-        $params[] = (int)$versao;
-    }
+    $where[] = "v.status = 'ATUAL'";
 
     $sql = "
         SELECT
@@ -83,7 +69,7 @@ if ($temTabelas) {
         LEFT JOIN colaboradores_folha_itens i ON i.folha_versao_id = v.id
         WHERE " . implode(' AND ', $where) . "
         GROUP BY v.id
-        ORDER BY v.referencia DESC, v.versao DESC
+        ORDER BY v.referencia DESC
         LIMIT 300
     ";
     $stmt = $pdo_master->prepare($sql);
@@ -97,8 +83,8 @@ if ($temTabelas) {
         <div class="row align-items-center g-3">
             <div class="col-lg-8">
                 <span class="badge text-bg-primary mb-3">Colaboradores</span>
-                <h1 class="h3 fw-bold mb-2">Historico de Folhas</h1>
-                <p class="text-muted mb-0">Consulte as versoes atuais e historicas das folhas geradas no SuperDunga.</p>
+                <h1 class="h3 fw-bold mb-2">Folhas Salvas</h1>
+                <p class="text-muted mb-0">Consulte as folhas de pagamento salvas por competencia no SuperDunga.</p>
             </div>
             <div class="col-lg-4 text-lg-end">
                 <div class="d-flex flex-wrap justify-content-lg-end gap-2">
@@ -117,19 +103,7 @@ if ($temTabelas) {
                 <label class="form-label">Referencia</label>
                 <input type="month" name="referencia" value="<?= htmlspecialchars($referencia) ?>" class="form-control">
             </div>
-            <div class="col-md-3">
-                <label class="form-label">Status</label>
-                <select name="status" class="form-select">
-                    <option value="todos" <?= $status === 'todos' ? 'selected' : '' ?>>Todos</option>
-                    <option value="ATUAL" <?= $status === 'ATUAL' ? 'selected' : '' ?>>Atual</option>
-                    <option value="HISTORICO" <?= $status === 'HISTORICO' ? 'selected' : '' ?>>Historico</option>
-                </select>
-            </div>
-            <div class="col-md-2">
-                <label class="form-label">Versao</label>
-                <input type="number" min="1" name="versao" value="<?= htmlspecialchars($versao) ?>" class="form-control">
-            </div>
-            <div class="col-md-4 d-flex gap-2">
+            <div class="col-md-9 d-flex gap-2">
                 <button type="submit" class="btn btn-primary">Filtrar</button>
                 <a href="historico_folhas.php" class="btn btn-outline-secondary">Limpar</a>
             </div>
@@ -140,8 +114,8 @@ if ($temTabelas) {
 <section class="card shadow-sm">
     <div class="card-header d-flex justify-content-between align-items-center gap-3">
         <div>
-            <h2 class="h6 fw-bold mb-0">Versoes geradas</h2>
-            <small class="text-muted">A versao atual e a que fica ativa para consulta normal da folha.</small>
+            <h2 class="h6 fw-bold mb-0">Folhas geradas</h2>
+            <small class="text-muted">Cada competencia possui uma unica folha salva.</small>
         </div>
         <span class="badge text-bg-light"><?= count($folhas) ?> registro(s)</span>
     </div>
@@ -149,15 +123,13 @@ if ($temTabelas) {
         <?php if (!$temTabelas): ?>
             <div class="alert alert-info m-3">Nenhuma folha foi gerada ainda.</div>
         <?php elseif (empty($folhas)): ?>
-            <div class="alert alert-info m-3">Nenhuma versao encontrada para os filtros informados.</div>
+            <div class="alert alert-info m-3">Nenhuma folha encontrada para os filtros informados.</div>
         <?php else: ?>
             <div class="table-responsive">
                 <table class="table table-sm table-hover align-middle mb-0">
                     <thead class="table-dark">
                         <tr>
                             <th>Referencia</th>
-                            <th>Versao</th>
-                            <th>Status</th>
                             <th>Pagamento</th>
                             <th class="text-end">Recibos</th>
                             <th class="text-end">Vencimentos</th>
@@ -171,18 +143,10 @@ if ($temTabelas) {
                         <?php foreach ($folhas as $folha): ?>
                             <?php
                                 $ref = (string)$folha['referencia'];
-                                $versaoFolha = (int)$folha['versao'];
-                                $linkVersao = 'folha_pagamento.php?referencia=' . urlencode($ref) . '&versao=' . $versaoFolha;
                                 $linkAtual = 'folha_pagamento.php?referencia=' . urlencode($ref);
                             ?>
                             <tr>
                                 <td class="fw-semibold"><?= htmlspecialchars($ref) ?></td>
-                                <td><?= $versaoFolha ?></td>
-                                <td>
-                                    <span class="badge <?= $folha['status'] === 'ATUAL' ? 'text-bg-success' : 'text-bg-secondary' ?>">
-                                        <?= htmlspecialchars((string)$folha['status']) ?>
-                                    </span>
-                                </td>
                                 <td><?= dataHistoricoFolha($folha['data_pagamento'] ?? '') ?></td>
                                 <td class="text-end"><?= (int)($folha['itens_salvos'] ?? $folha['total_recibos'] ?? 0) ?></td>
                                 <td class="text-end"><?= moedaHistoricoFolha($folha['total_vencimentos'] ?? 0) ?></td>
@@ -191,10 +155,7 @@ if ($temTabelas) {
                                 <td><?= dataHoraHistoricoFolha($folha['criado_em'] ?? '') ?></td>
                                 <td class="text-end">
                                     <div class="btn-group btn-group-sm">
-                                        <a href="<?= htmlspecialchars($linkVersao) ?>" class="btn btn-outline-primary">Abrir versao</a>
-                                        <?php if ($folha['status'] !== 'ATUAL'): ?>
-                                            <a href="<?= htmlspecialchars($linkAtual) ?>" class="btn btn-outline-secondary">Atual</a>
-                                        <?php endif; ?>
+                                        <a href="<?= htmlspecialchars($linkAtual) ?>" class="btn btn-outline-primary">Abrir folha</a>
                                     </div>
                                 </td>
                             </tr>

@@ -79,6 +79,14 @@ function linhaCompraRodape(array $linhas): string
     return implode(' | ', $partes);
 }
 
+function linhasCompraPorTipoFolha(array $linhas, string $tipo): array
+{
+    $tipo = strtoupper($tipo);
+    return array_values(array_filter($linhas, static function ($linha) use ($tipo) {
+        return strtoupper((string)($linha['TIPODOCORIGEM'] ?? '')) === $tipo;
+    }));
+}
+
 function garantirTabelaParametrosFolha(PDO $pdo): void
 {
     $pdo->exec("
@@ -265,7 +273,6 @@ $recibosSalvos = [];
 $valoresSalvosFolha = [];
 $folhaCarregadaSalva = false;
 $folhaVersaoAtual = null;
-$versaoSolicitada = isset($_GET['versao']) ? max(0, (int)$_GET['versao']) : 0;
 $visualizandoVersaoHistorica = false;
 
 $sqlVersaoFolha = "
@@ -273,24 +280,20 @@ $sqlVersaoFolha = "
     FROM colaboradores_folha_versoes
     WHERE empresa_id = ?
       AND referencia = ?
+      AND status = 'ATUAL'
+    ORDER BY id DESC
+    LIMIT 1
 ";
-$paramsVersaoFolha = [$empresaId, $referencia];
-if ($versaoSolicitada > 0) {
-    $sqlVersaoFolha .= " AND versao = ? ORDER BY versao DESC LIMIT 1";
-    $paramsVersaoFolha[] = $versaoSolicitada;
-} else {
-    $sqlVersaoFolha .= " AND status = 'ATUAL' ORDER BY versao DESC LIMIT 1";
-}
 $stmtVersaoAtual = $pdo_master->prepare($sqlVersaoFolha);
-$stmtVersaoAtual->execute($paramsVersaoFolha);
+$stmtVersaoAtual->execute([$empresaId, $referencia]);
 $folhaVersaoAtual = $stmtVersaoAtual->fetch(PDO::FETCH_ASSOC) ?: null;
-$visualizandoVersaoHistorica = $versaoSolicitada > 0 && $folhaVersaoAtual && (string)($folhaVersaoAtual['status'] ?? '') !== 'ATUAL';
+$visualizandoVersaoHistorica = false;
 
 if ($folhaVersaoAtual && !empty($folhaVersaoAtual['data_pagamento']) && !$gerarRecibos && !$dataPagamentoInformada) {
     $dataPagamento = (string)$folhaVersaoAtual['data_pagamento'];
 }
 
-if (!$folhaVersaoAtual && $versaoSolicitada === 0) {
+if (!$folhaVersaoAtual) {
     $stmtVersaoLegada = $pdo_master->prepare("
         SELECT MAX(versao)
         FROM colaboradores_folha_itens
@@ -344,33 +347,7 @@ if (!$gerarRecibos) {
     }
 }
 
-if ($salvarRecibos && $folhaVersaoAtual && ($_POST['confirmar_nova_versao'] ?? '') !== '1') {
-    $errosFolha[] = 'Esta folha ja possui uma versao salva. Marque a confirmacao para gerar uma nova versao.';
-    if (!empty($recibosSalvos)) {
-        $recibos = $recibosSalvos;
-        $folhaCarregadaSalva = true;
-    }
-}
-
 if ($gerarRecibos && empty($errosFolha)) {
-    if ($salvarRecibos) {
-        $stmtSalvarParametro = $pdo_master->prepare("
-            INSERT INTO colaboradores_folha_parametros (
-                empresa_id, referencia, data_pagamento, atualizado_por, atualizado_em
-            ) VALUES (?, ?, ?, ?, NOW())
-            ON DUPLICATE KEY UPDATE
-                data_pagamento = VALUES(data_pagamento),
-                atualizado_por = VALUES(atualizado_por),
-                atualizado_em = NOW()
-        ");
-        $stmtSalvarParametro->execute([
-            $empresaId,
-            $referencia,
-            $dataPagamento,
-            (int)($_SESSION['usuario_id'] ?? $_SESSION['user_id'] ?? 0) ?: null,
-        ]);
-    }
-
     $stmtVales = $pdo_master->prepare("
         SELECT VALECONTADOR, DATA, DTLANC, MESCOMPETENCIA, EVENTO, HISTORICO, VALOR, DEBCRED
         FROM armazem_FUNC001
@@ -402,18 +379,26 @@ if ($gerarRecibos && empty($errosFolha)) {
     ");
 
     $stmtComprasPagas = $pdo_master->prepare("
-        SELECT CRCONTADOR, DTEMISSAO, DTVENC, DTPAGTO, STATUS, VLRPARCELA, VLRPAGO
+        SELECT CRCONTADOR, DTEMISSAO, DTVENC, DTPAGTO, STATUS, TIPODOCORIGEM, VLRPARCELA, VLRPAGO
         FROM armazem_cr001
         WHERE EMPRESA = ?
           AND CLICONTADOR = ?
           AND TIPODOCORIGEM = 'CRAP'
           AND DATE(DTPAGTO) = ?
           AND COALESCE(excluido_firebird, 'N') <> 'S'
+          AND EXISTS (
+              SELECT 1
+              FROM armazem_bnc001 b
+              WHERE b.EMPRESA = armazem_cr001.EMPRESA
+                AND b.TIPODOCORIGEM = 'RECEB'
+                AND b.NUMDOCORIGEM = CAST(armazem_cr001.CRCONTADOR AS CHAR)
+                AND COALESCE(b.deletado, 'N') <> 'S'
+          )
         ORDER BY DTEMISSAO, CRCONTADOR
     ");
 
     $stmtComprasPagasVenda = $pdo_master->prepare("
-        SELECT CRCONTADOR, DTEMISSAO, DTVENC, DTPAGTO, STATUS, VLRPARCELA, VLRPAGO
+        SELECT CRCONTADOR, DTEMISSAO, DTVENC, DTPAGTO, STATUS, TIPODOCORIGEM, VLRPARCELA, VLRPAGO
         FROM armazem_cr001
         WHERE EMPRESA = ?
           AND CLICONTADOR = ?
@@ -423,59 +408,8 @@ if ($gerarRecibos && empty($errosFolha)) {
         ORDER BY DTEMISSAO, CRCONTADOR
     ");
 
-    $novaVersao = (int)($folhaVersaoAtual['versao'] ?? 0);
     $folhaVersaoId = null;
-    $versoesAtuaisAntes = [];
-    if ($salvarRecibos) {
-        $stmtProximaVersao = $pdo_master->prepare("
-            SELECT COALESCE(MAX(versao), 0) + 1
-            FROM (
-                SELECT versao
-                FROM colaboradores_folha_versoes
-                WHERE empresa_id = ?
-                  AND referencia = ?
-                UNION ALL
-                SELECT versao
-                FROM colaboradores_folha_itens
-                WHERE empresa_id = ?
-                  AND referencia = ?
-            ) v
-        ");
-        $stmtProximaVersao->execute([$empresaId, $referencia, $empresaId, $referencia]);
-        $novaVersao = max(1, (int)$stmtProximaVersao->fetchColumn());
-
-        $stmtVersoesAtuaisAntes = $pdo_master->prepare("
-            SELECT id
-            FROM colaboradores_folha_versoes
-            WHERE empresa_id = ?
-              AND referencia = ?
-              AND status = 'ATUAL'
-        ");
-        $stmtVersoesAtuaisAntes->execute([$empresaId, $referencia]);
-        $versoesAtuaisAntes = array_map('intval', $stmtVersoesAtuaisAntes->fetchAll(PDO::FETCH_COLUMN));
-
-        $pdo_master->prepare("
-            UPDATE colaboradores_folha_versoes
-            SET status = 'HISTORICO'
-            WHERE empresa_id = ?
-              AND referencia = ?
-              AND status = 'ATUAL'
-        ")->execute([$empresaId, $referencia]);
-
-        $stmtCriarVersao = $pdo_master->prepare("
-            INSERT INTO colaboradores_folha_versoes (
-                empresa_id, referencia, versao, data_pagamento, status, criado_por, criado_em
-            ) VALUES (?, ?, ?, ?, 'ATUAL', ?, NOW())
-        ");
-        $stmtCriarVersao->execute([
-            $empresaId,
-            $referencia,
-            $novaVersao,
-            $dataPagamento,
-            (int)($_SESSION['usuario_id'] ?? $_SESSION['user_id'] ?? 0) ?: null,
-        ]);
-        $folhaVersaoId = (int)$pdo_master->lastInsertId();
-    }
+    $itensParaSalvar = [];
 
     $stmtSalvarItem = $pdo_master->prepare("
         INSERT INTO colaboradores_folha_itens (
@@ -628,9 +562,7 @@ if ($gerarRecibos && empty($errosFolha)) {
         $recibos[] = $recibo;
 
         if ($salvarRecibos) {
-            $stmtSalvarItem->execute([
-                $folhaVersaoId,
-                $novaVersao,
+            $itensParaSalvar[] = [
                 $empresaId,
                 $referencia,
                 $funcId,
@@ -647,41 +579,77 @@ if ($gerarRecibos && empty($errosFolha)) {
                 $totalVencimentos - $totalDescontos,
                 json_encode($recibo, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
                 (int)($_SESSION['usuario_id'] ?? $_SESSION['user_id'] ?? 0) ?: null,
-            ]);
+            ];
         }
     }
 
     if (count($recibos) === 0) {
-        if ($salvarRecibos && $folhaVersaoId) {
-            $pdo_master->prepare("DELETE FROM colaboradores_folha_versoes WHERE id = ?")->execute([$folhaVersaoId]);
-        }
-        if ($salvarRecibos && !empty($versoesAtuaisAntes)) {
-            $placeholders = implode(',', array_fill(0, count($versoesAtuaisAntes), '?'));
-            $pdo_master->prepare("UPDATE colaboradores_folha_versoes SET status = 'ATUAL' WHERE id IN ($placeholders)")
-                ->execute($versoesAtuaisAntes);
-        }
         $folhaVersaoAtual = null;
         $errosFolha[] = 'Nenhum recibo foi gerado porque nao ha valores informados nem descontos do Firebird para os funcionarios listados.';
     } else {
         if ($salvarRecibos) {
-            $pdo_master->prepare("
-                UPDATE colaboradores_folha_versoes
-                SET total_recibos = ?,
-                    total_vencimentos = ?,
-                    total_descontos = ?,
-                    total_liquido = ?
-                WHERE id = ?
-            ")->execute([
-                count($recibos),
-                array_sum(array_column($recibos, 'total_vencimentos')),
-                array_sum(array_column($recibos, 'total_descontos')),
-                array_sum(array_column($recibos, 'valor_receber')),
-                $folhaVersaoId,
-            ]);
+            $pdo_master->beginTransaction();
+            try {
+                $stmtSalvarParametro = $pdo_master->prepare("
+                    INSERT INTO colaboradores_folha_parametros (
+                        empresa_id, referencia, data_pagamento, atualizado_por, atualizado_em
+                    ) VALUES (?, ?, ?, ?, NOW())
+                    ON DUPLICATE KEY UPDATE
+                        data_pagamento = VALUES(data_pagamento),
+                        atualizado_por = VALUES(atualizado_por),
+                        atualizado_em = NOW()
+                ");
+                $stmtSalvarParametro->execute([
+                    $empresaId,
+                    $referencia,
+                    $dataPagamento,
+                    (int)($_SESSION['usuario_id'] ?? $_SESSION['user_id'] ?? 0) ?: null,
+                ]);
+
+                $pdo_master->prepare("
+                    DELETE FROM colaboradores_folha_itens
+                    WHERE empresa_id = ?
+                      AND referencia = ?
+                ")->execute([$empresaId, $referencia]);
+
+                $pdo_master->prepare("
+                    DELETE FROM colaboradores_folha_versoes
+                    WHERE empresa_id = ?
+                      AND referencia = ?
+                ")->execute([$empresaId, $referencia]);
+
+                $stmtCriarVersao = $pdo_master->prepare("
+                    INSERT INTO colaboradores_folha_versoes (
+                        empresa_id, referencia, versao, data_pagamento, status,
+                        total_recibos, total_vencimentos, total_descontos, total_liquido,
+                        criado_por, criado_em
+                    ) VALUES (?, ?, 1, ?, 'ATUAL', ?, ?, ?, ?, ?, NOW())
+                ");
+                $stmtCriarVersao->execute([
+                    $empresaId,
+                    $referencia,
+                    $dataPagamento,
+                    count($recibos),
+                    array_sum(array_column($recibos, 'total_vencimentos')),
+                    array_sum(array_column($recibos, 'total_descontos')),
+                    array_sum(array_column($recibos, 'valor_receber')),
+                    (int)($_SESSION['usuario_id'] ?? $_SESSION['user_id'] ?? 0) ?: null,
+                ]);
+                $folhaVersaoId = (int)$pdo_master->lastInsertId();
+
+                foreach ($itensParaSalvar as $itemParaSalvar) {
+                    $stmtSalvarItem->execute(array_merge([$folhaVersaoId, 1], $itemParaSalvar));
+                }
+
+                $pdo_master->commit();
+            } catch (Throwable $e) {
+                $pdo_master->rollBack();
+                throw $e;
+            }
 
             $folhaVersaoAtual = [
                 'id' => $folhaVersaoId,
-                'versao' => $novaVersao,
+                'versao' => 1,
                 'status' => 'ATUAL',
                 'data_pagamento' => $dataPagamento,
             ];
@@ -868,8 +836,14 @@ if ($gerarRecibos && empty($errosFolha)) {
         font-size: .58rem;
         border-top: 1px solid #dbe3ef;
         line-height: 1.22;
-        max-height: 45mm;
-        overflow: hidden;
+    }
+
+    .recibo-rodape-titulo {
+        color: #143873;
+        font-size: .64rem;
+        font-weight: 800;
+        margin-bottom: .22rem;
+        text-transform: uppercase;
     }
 
     .recibo-assinatura {
@@ -943,11 +917,13 @@ if ($gerarRecibos && empty($errosFolha)) {
 
         .recibo-folha {
             width: 100%;
-            max-height: 279mm;
-            overflow: hidden;
+            max-height: none;
+            overflow: visible;
             margin: 0;
             border-radius: 0;
             box-shadow: none;
+            page-break-inside: auto;
+            break-inside: auto;
             page-break-after: always;
             break-after: page;
         }
@@ -996,7 +972,7 @@ if ($gerarRecibos && empty($errosFolha)) {
             </div>
             <div class="col-lg-4 text-lg-end">
                 <div class="d-flex flex-wrap justify-content-lg-end gap-2">
-                    <a href="historico_folhas.php" class="btn btn-outline-primary">Historico</a>
+                    <a href="historico_folhas.php" class="btn btn-outline-primary">Folhas salvas</a>
                     <a href="menu_colaboradores.php" class="btn btn-outline-secondary">Voltar</a>
                 </div>
             </div>
@@ -1005,11 +981,10 @@ if ($gerarRecibos && empty($errosFolha)) {
 </section>
 
 <?php if ($folhaCarregadaSalva): ?>
-    <section class="alert <?= $visualizandoVersaoHistorica ? 'alert-warning' : 'alert-info' ?> no-print">
+    <section class="alert alert-info no-print">
         Esta folha ja possui <?= count($recibos) ?> recibo(s) salvo(s) no SuperDunga
-        na versao <?= (int)($folhaVersaoAtual['versao'] ?? 1) ?>
-        <?= $visualizandoVersaoHistorica ? '(historico)' : '(atual)' ?>.
-        Os recibos abaixo estao sendo exibidos pelo snapshot salvo, mesmo que o Firebird tenha mudado depois.
+        para esta competencia.
+        Os recibos abaixo estao sendo exibidos pelo snapshot salvo. Gere novamente para recalcular com os dados atuais.
     </section>
 <?php endif; ?>
 
@@ -1051,18 +1026,9 @@ if ($gerarRecibos && empty($errosFolha)) {
                 <div class="alert alert-warning m-3 mb-0"><?= htmlspecialchars($errosFolha[0]) ?></div>
             <?php endif; ?>
             <?php if ($folhaVersaoAtual): ?>
-                <div class="alert alert-danger m-3 mb-0">
+                <div class="alert alert-warning m-3 mb-0">
                     <div class="fw-semibold mb-1">Atencao: esta referencia ja possui folha salva.</div>
-                    <div class="small mb-2">
-                        Ao confirmar e salvar novamente, o sistema cria uma nova versao e preserva a versao
-                        <?= (int)($folhaVersaoAtual['versao'] ?? 1) ?> no historico.
-                    </div>
-                    <div class="form-check">
-                        <input class="form-check-input" type="checkbox" value="1" name="confirmar_nova_versao" id="confirmar_nova_versao">
-                        <label class="form-check-label fw-semibold" for="confirmar_nova_versao">
-                            Confirmo que quero gerar uma nova versao desta folha
-                        </label>
-                    </div>
+                    <div class="small">Ao confirmar e salvar novamente, o sistema substitui a folha salva desta competencia.</div>
                 </div>
             <?php endif; ?>
             <div class="table-responsive">
@@ -1151,9 +1117,9 @@ if ($gerarRecibos && empty($errosFolha)) {
     <section class="d-flex justify-content-between align-items-center gap-3 mb-3 no-print">
         <div class="fw-semibold">
             <?php if ($folhaCarregadaSalva): ?>
-                <?= count($recibos) ?> recibo(s) salvo(s) - versao <?= (int)($folhaVersaoAtual['versao'] ?? 1) ?>.
+                <?= count($recibos) ?> recibo(s) salvo(s) para esta competencia.
             <?php elseif ($salvarRecibos): ?>
-                <?= count($recibos) ?> recibo(s) confirmado(s) e salvo(s) - versao <?= (int)($folhaVersaoAtual['versao'] ?? 1) ?>.
+                <?= count($recibos) ?> recibo(s) confirmado(s) e salvo(s) para esta competencia.
             <?php else: ?>
                 <?= count($recibos) ?> recibo(s) gerado(s) para conferencia. Nada foi salvo ainda.
             <?php endif; ?>
@@ -1263,8 +1229,11 @@ if ($gerarRecibos && empty($errosFolha)) {
             </div>
 
             <div class="recibo-rodape">
-                <strong>Compras em aberto:</strong> <?= htmlspecialchars(linhaCompraRodape($recibo['compras_aberto'])) ?><br>
-                <strong>Compras pagas na data do pagamento:</strong> <?= htmlspecialchars(linhaCompraRodape($recibo['compras_pagas_venda'])) ?><br>
+                <div class="recibo-rodape-titulo">Informacoes do Recibo</div>
+                <strong>Compras em aberto - VENDA:</strong> <?= htmlspecialchars(linhaCompraRodape(linhasCompraPorTipoFolha($recibo['compras_aberto'], 'VENDA'))) ?><br>
+                <strong>Compras em aberto - CRAP:</strong> <?= htmlspecialchars(linhaCompraRodape(linhasCompraPorTipoFolha($recibo['compras_aberto'], 'CRAP'))) ?><br>
+                <strong>Compras pagas na data do pagamento - VENDA:</strong> <?= htmlspecialchars(linhaCompraRodape($recibo['compras_pagas_venda'])) ?><br>
+                <strong>Compras pagas na data do pagamento - CRAP:</strong> <?= htmlspecialchars(linhaCompraRodape($recibo['compras_pagas'])) ?><br>
                 <strong>Vales FUNC001 da referencia:</strong>
                 <?php if (empty($recibo['vales'])): ?>
                     Sem lancamentos.
