@@ -197,7 +197,16 @@ $salvarRecibos = $acaoFolha === 'salvar';
 $salariosInformados = $_POST['salario_liquido'] ?? [];
 $premiacoesInformadas = $_POST['premiacao'] ?? [];
 $outrosValoresInformados = $_POST['outros_valores'] ?? [];
+$criteriosCrAbertoInformados = $_POST['criterio_cr_aberto'] ?? [];
 $errosFolha = [];
+$criteriosCrAbertoLabels = [
+    'competencia' => 'Somente ate o ultimo dia da competencia',
+    'todos' => 'Todos os CR001 abertos',
+];
+$normalizarCriterioCrAberto = static function ($valor) use ($criteriosCrAbertoLabels): string {
+    $valor = (string)$valor;
+    return array_key_exists($valor, $criteriosCrAbertoLabels) ? $valor : 'competencia';
+};
 
 if (!preg_match('/^\d{4}-\d{2}$/', $referencia)) {
     $referencia = date('Y-m');
@@ -314,6 +323,9 @@ foreach ($itensSalvos as $itemSalvo) {
 
     $reciboSalvo = json_decode((string)$itemSalvo['recibo_json'], true);
     if (is_array($reciboSalvo)) {
+        if (isset($reciboSalvo['criterio_cr_aberto'])) {
+            $criteriosCrAbertoInformados[$funcIdSalvo] = $normalizarCriterioCrAberto($reciboSalvo['criterio_cr_aberto']);
+        }
         $recibosSalvos[] = $reciboSalvo;
     }
 }
@@ -367,12 +379,22 @@ if ($gerarRecibos && empty($errosFolha)) {
         ORDER BY COALESCE(DATA, DTLANC), VALECONTADOR
     ");
 
-    $stmtComprasAberto = $pdo_master->prepare("
+    $stmtComprasAbertoCompetencia = $pdo_master->prepare("
         SELECT CRCONTADOR, DTEMISSAO, DTVENC, DTPAGTO, STATUS, TIPODOCORIGEM, CMCONTADOR, VLRPARCELA, VLRRESTANTE
         FROM armazem_cr001
         WHERE EMPRESA = ?
           AND CLICONTADOR = ?
           AND DATE(DTEMISSAO) <= ?
+          AND STATUS <> 'QT'
+          AND COALESCE(excluido_firebird, 'N') <> 'S'
+        ORDER BY DTEMISSAO, CRCONTADOR
+    ");
+
+    $stmtComprasAbertoTodos = $pdo_master->prepare("
+        SELECT CRCONTADOR, DTEMISSAO, DTVENC, DTPAGTO, STATUS, TIPODOCORIGEM, CMCONTADOR, VLRPARCELA, VLRRESTANTE
+        FROM armazem_cr001
+        WHERE EMPRESA = ?
+          AND CLICONTADOR = ?
           AND STATUS <> 'QT'
           AND COALESCE(excluido_firebird, 'N') <> 'S'
         ORDER BY DTEMISSAO, CRCONTADOR
@@ -486,6 +508,7 @@ if ($gerarRecibos && empty($errosFolha)) {
         $salarioLiquido = valorBrFolha($salariosInformados[$funcId] ?? 0);
         $premiacao = valorBrFolha($premiacoesInformadas[$funcId] ?? 0);
         $outrosValores = valorBrFolha($outrosValoresInformados[$funcId] ?? 0);
+        $criterioCrAberto = $normalizarCriterioCrAberto($criteriosCrAbertoInformados[$funcId] ?? 'competencia');
 
         $stmtVales->execute([$empresaId, $funcId, $referenciaBr]);
         $vales = $stmtVales->fetchAll(PDO::FETCH_ASSOC);
@@ -494,8 +517,13 @@ if ($gerarRecibos && empty($errosFolha)) {
         $comprasPagas = [];
         $comprasPagasVenda = [];
         if ((int)($funcionario['DEPARTAMENTO'] ?? 0) > 0) {
-            $stmtComprasAberto->execute([$empresaId, (int)$funcionario['DEPARTAMENTO'], $fimMes]);
-            $comprasAberto = $stmtComprasAberto->fetchAll(PDO::FETCH_ASSOC);
+            if ($criterioCrAberto === 'todos') {
+                $stmtComprasAbertoTodos->execute([$empresaId, (int)$funcionario['DEPARTAMENTO']]);
+                $comprasAberto = $stmtComprasAbertoTodos->fetchAll(PDO::FETCH_ASSOC);
+            } else {
+                $stmtComprasAbertoCompetencia->execute([$empresaId, (int)$funcionario['DEPARTAMENTO'], $fimMes]);
+                $comprasAberto = $stmtComprasAbertoCompetencia->fetchAll(PDO::FETCH_ASSOC);
+            }
 
             $stmtComprasPagas->execute([$empresaId, (int)$funcionario['DEPARTAMENTO'], $dataPagamento]);
             $comprasPagas = $stmtComprasPagas->fetchAll(PDO::FETCH_ASSOC);
@@ -590,6 +618,8 @@ if ($gerarRecibos && empty($errosFolha)) {
             'compras_aberto' => $comprasAberto,
             'compras_pagas' => $comprasPagas,
             'compras_pagas_venda' => $comprasPagasVenda,
+            'criterio_cr_aberto' => $criterioCrAberto,
+            'criterio_cr_aberto_label' => $criteriosCrAbertoLabels[$criterioCrAberto],
             'total_vencimentos' => $totalVencimentos,
             'total_descontos' => $totalDescontos,
             'valor_receber' => $totalVencimentos - $totalDescontos,
@@ -668,7 +698,7 @@ if ($gerarRecibos && empty($errosFolha)) {
     }
 
     .salary-table {
-        min-width: 760px;
+        min-width: 980px;
     }
 
     .salary-input {
@@ -1045,12 +1075,13 @@ if ($gerarRecibos && empty($errosFolha)) {
                             <th class="text-end">Salario liquido da folha</th>
                             <th class="text-end">Valor da premiacao</th>
                             <th class="text-end">Outros valores</th>
+                            <th>CR001 em aberto</th>
                         </tr>
                     </thead>
                     <tbody>
                         <?php if (empty($funcionarios)): ?>
                             <tr>
-                                <td colspan="7" class="text-center text-muted py-4">Nenhum funcionario encontrado para esta referencia.</td>
+                                <td colspan="8" class="text-center text-muted py-4">Nenhum funcionario encontrado para esta referencia.</td>
                             </tr>
                         <?php endif; ?>
 
@@ -1060,6 +1091,7 @@ if ($gerarRecibos && empty($errosFolha)) {
                                 $valorAtual = $salariosInformados[$funcId] ?? '';
                                 $premiacaoAtual = $premiacoesInformadas[$funcId] ?? '';
                                 $outrosValoresAtual = $outrosValoresInformados[$funcId] ?? '';
+                                $criterioCrAbertoAtual = $normalizarCriterioCrAberto($criteriosCrAbertoInformados[$funcId] ?? 'competencia');
                             ?>
                             <tr>
                                 <td class="fw-semibold"><?= $funcId ?></td>
@@ -1095,6 +1127,15 @@ if ($gerarRecibos && empty($errosFolha)) {
                                         placeholder="0,00"
                                         inputmode="decimal"
                                     >
+                                </td>
+                                <td>
+                                    <select name="criterio_cr_aberto[<?= $funcId ?>]" class="form-select form-select-sm">
+                                        <?php foreach ($criteriosCrAbertoLabels as $valorCriterio => $labelCriterio): ?>
+                                            <option value="<?= htmlspecialchars($valorCriterio) ?>" <?= $criterioCrAbertoAtual === $valorCriterio ? 'selected' : '' ?>>
+                                                <?= htmlspecialchars($labelCriterio) ?>
+                                            </option>
+                                        <?php endforeach; ?>
+                                    </select>
                                 </td>
                             </tr>
                         <?php endforeach; ?>
