@@ -221,6 +221,7 @@ $stmtParametro = $pdo_master->prepare("
 ");
 $stmtParametro->execute([$empresaId, $referencia]);
 $dataPagamentoSalva = (string)($stmtParametro->fetchColumn() ?: '');
+$dataPagamentoInformada = isset($_REQUEST['data_pagamento']) && trim((string)$_REQUEST['data_pagamento']) !== '';
 $dataPagamento = $_REQUEST['data_pagamento'] ?? ($dataPagamentoSalva !== '' ? $dataPagamentoSalva : date('Y-m-d'));
 
 if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $dataPagamento)) {
@@ -285,7 +286,7 @@ $stmtVersaoAtual->execute($paramsVersaoFolha);
 $folhaVersaoAtual = $stmtVersaoAtual->fetch(PDO::FETCH_ASSOC) ?: null;
 $visualizandoVersaoHistorica = $versaoSolicitada > 0 && $folhaVersaoAtual && (string)($folhaVersaoAtual['status'] ?? '') !== 'ATUAL';
 
-if ($folhaVersaoAtual && !empty($folhaVersaoAtual['data_pagamento']) && !$gerarRecibos) {
+if ($folhaVersaoAtual && !empty($folhaVersaoAtual['data_pagamento']) && !$gerarRecibos && !$dataPagamentoInformada) {
     $dataPagamento = (string)$folhaVersaoAtual['data_pagamento'];
 }
 
