@@ -385,6 +385,12 @@ if ($gerarRecibos && empty($errosFolha)) {
         WHERE EMPRESA = ?
           AND CLICONTADOR = ?
           AND DATE(DTEMISSAO) <= ?
+          AND (
+                DTVENC IS NULL
+             OR DTVENC = '0000-00-00'
+             OR DTVENC = '0000-00-00 00:00:00'
+             OR DATE(DTVENC) <= ?
+          )
           AND STATUS <> 'QT'
           AND COALESCE(excluido_firebird, 'N') <> 'S'
         ORDER BY DTEMISSAO, CRCONTADOR
@@ -521,7 +527,7 @@ if ($gerarRecibos && empty($errosFolha)) {
                 $stmtComprasAbertoTodos->execute([$empresaId, (int)$funcionario['DEPARTAMENTO']]);
                 $comprasAberto = $stmtComprasAbertoTodos->fetchAll(PDO::FETCH_ASSOC);
             } else {
-                $stmtComprasAbertoCompetencia->execute([$empresaId, (int)$funcionario['DEPARTAMENTO'], $fimMes]);
+                $stmtComprasAbertoCompetencia->execute([$empresaId, (int)$funcionario['DEPARTAMENTO'], $fimMes, $fimMes]);
                 $comprasAberto = $stmtComprasAbertoCompetencia->fetchAll(PDO::FETCH_ASSOC);
             }
 
