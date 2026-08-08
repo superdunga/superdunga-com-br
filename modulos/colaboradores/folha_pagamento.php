@@ -653,6 +653,12 @@ if ($gerarRecibos && empty($errosFolha)) {
                 'status' => 'ATUAL',
                 'data_pagamento' => $dataPagamento,
             ];
+
+            $destinoFolhasSalvas = 'historico_folhas.php?referencia=' . rawurlencode($referencia);
+            echo '<script>window.location.replace(' . json_encode($destinoFolhasSalvas) . ');</script>';
+            echo '<noscript><meta http-equiv="refresh" content="0;url=' . htmlspecialchars($destinoFolhasSalvas, ENT_QUOTES, 'UTF-8') . '"></noscript>';
+            require '../../layout/footer.php';
+            exit;
         }
     }
 }
