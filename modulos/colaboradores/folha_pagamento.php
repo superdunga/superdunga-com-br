@@ -1,7 +1,6 @@
 <?php
 require '../../config/auth.php';
 require '../../config/conexao.php';
-require '../../layout/header.php';
 
 $empresaId = (int)($_SESSION['empresa_id'] ?? 0);
 $stmtEmpresaFolha = $pdo_master->prepare("
@@ -85,6 +84,237 @@ function linhasCompraPorTipoFolha(array $linhas, string $tipo): array
     return array_values(array_filter($linhas, static function ($linha) use ($tipo) {
         return strtoupper((string)($linha['TIPODOCORIGEM'] ?? '')) === $tipo;
     }));
+}
+
+function nomeArquivoFolha(string $base, int $empresaId, string $referencia, string $extensao, int $funcionarioId = 0): string
+{
+    $partes = [$base, 'empresa_' . $empresaId, $referencia];
+    if ($funcionarioId > 0) {
+        $partes[] = 'funcionario_' . $funcionarioId;
+    }
+    return preg_replace('/[^a-zA-Z0-9_.-]+/', '_', implode('_', $partes)) . '.' . $extensao;
+}
+
+function textoPdfFolha($valor, int $limite = 0): string
+{
+    $texto = preg_replace('/\s+/', ' ', trim((string)$valor));
+    if ($limite > 0 && strlen($texto) > $limite) {
+        $texto = substr($texto, 0, max(0, $limite - 3)) . '...';
+    }
+    $convertido = iconv('UTF-8', 'ISO-8859-1//TRANSLIT', $texto);
+    return $convertido === false ? $texto : $convertido;
+}
+
+function escapePdfFolha(string $texto): string
+{
+    return str_replace(['\\', '(', ')'], ['\\\\', '\\(', '\\)'], $texto);
+}
+
+function textoCmdPdfFolha(float $x, float $y, int $tamanho, string $texto, bool $negrito = false): string
+{
+    $fonte = $negrito ? 'F2' : 'F1';
+    return "BT /{$fonte} {$tamanho} Tf 1 0 0 1 " . number_format($x, 2, '.', '') . ' ' . number_format($y, 2, '.', '') . ' Tm (' . escapePdfFolha($texto) . ") Tj ET\n";
+}
+
+function retanguloPdfFolha(float $x, float $y, float $w, float $h): string
+{
+    return number_format($x, 2, '.', '') . ' ' . number_format($y, 2, '.', '') . ' ' . number_format($w, 2, '.', '') . ' ' . number_format($h, 2, '.', '') . " re f\n";
+}
+
+function quebrarTextoFolha(string $texto, int $limite = 118): array
+{
+    $texto = preg_replace('/\s+/', ' ', trim($texto));
+    if ($texto === '') {
+        return [''];
+    }
+    $linhas = [];
+    $linha = '';
+    foreach (explode(' ', $texto) as $palavra) {
+        if ($linha !== '' && strlen($linha . ' ' . $palavra) > $limite) {
+            $linhas[] = $linha;
+            $linha = $palavra;
+        } else {
+            $linha = $linha === '' ? $palavra : $linha . ' ' . $palavra;
+        }
+    }
+    if ($linha !== '') {
+        $linhas[] = $linha;
+    }
+    return $linhas;
+}
+
+function enviarPdfFolha(array $paginas, string $arquivo): void
+{
+    $objetos = [
+        1 => "<< /Type /Catalog /Pages 2 0 R >>",
+        2 => '',
+        3 => "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>",
+        4 => "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>",
+    ];
+    $idsPaginas = [];
+    $proximoId = 5;
+
+    foreach ($paginas as $pagina) {
+        $conteudo = (string)$pagina['conteudo'];
+        $conteudoId = $proximoId++;
+        $paginaId = $proximoId++;
+        $objetos[$conteudoId] = "<< /Length " . strlen($conteudo) . " >>\nstream\n{$conteudo}endstream";
+        $objetos[$paginaId] = "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 3 0 R /F2 4 0 R >> >> /Contents {$conteudoId} 0 R >>";
+        $idsPaginas[] = $paginaId;
+    }
+
+    $objetos[2] = "<< /Type /Pages /Kids [" . implode(' ', array_map(static function ($id) {
+        return "{$id} 0 R";
+    }, $idsPaginas)) . "] /Count " . count($idsPaginas) . " >>";
+    ksort($objetos);
+
+    $pdf = "%PDF-1.4\n";
+    $offsets = [0 => 0];
+    foreach ($objetos as $id => $objeto) {
+        $offsets[$id] = strlen($pdf);
+        $pdf .= "{$id} 0 obj\n{$objeto}\nendobj\n";
+    }
+
+    $xref = strlen($pdf);
+    $pdf .= "xref\n0 " . (count($objetos) + 1) . "\n0000000000 65535 f \n";
+    for ($i = 1; $i <= count($objetos); $i++) {
+        $pdf .= str_pad((string)$offsets[$i], 10, '0', STR_PAD_LEFT) . " 00000 n \n";
+    }
+    $pdf .= "trailer\n<< /Size " . (count($objetos) + 1) . " /Root 1 0 R >>\nstartxref\n{$xref}\n%%EOF";
+
+    header('Content-Type: application/pdf');
+    header('Content-Disposition: attachment; filename="' . $arquivo . '"');
+    header('Content-Length: ' . strlen($pdf));
+    echo $pdf;
+    exit;
+}
+
+function gerarPdfFolhaPagamento(array $recibos, string $referencia, string $dataPagamento, string $empresaNome, string $empresaRazao, string $empresaCnpj, int $empresaId, int $funcionarioFiltroId = 0): void
+{
+    if ($funcionarioFiltroId > 0) {
+        $recibos = array_values(array_filter($recibos, static function (array $recibo) use ($funcionarioFiltroId): bool {
+            return (int)($recibo['funcionario']['FUNCCONTADOR'] ?? 0) === $funcionarioFiltroId;
+        }));
+    }
+    if (empty($recibos)) {
+        http_response_code(404);
+        exit('Nenhum recibo encontrado para exportacao.');
+    }
+
+    $paginas = [];
+    $conteudo = '';
+    $y = 0.0;
+    $margem = 26.0;
+    $altura = 842.0;
+    $largura = 595.0;
+
+    $novaPagina = static function () use (&$conteudo, &$y, $margem, $altura, $largura, $referencia, $dataPagamento, $empresaNome, $empresaRazao, $empresaCnpj): void {
+        $conteudo = "0.07 0.20 0.42 rg\n";
+        $conteudo .= retanguloPdfFolha(0, $altura - 58, $largura, 58);
+        $conteudo .= "1 1 1 rg\n";
+        $conteudo .= textoCmdPdfFolha($margem, $altura - 21, 13, textoPdfFolha($empresaNome, 45), true);
+        if ($empresaRazao !== '' && $empresaRazao !== $empresaNome) {
+            $conteudo .= textoCmdPdfFolha($margem, $altura - 35, 8, textoPdfFolha($empresaRazao, 60));
+        }
+        if ($empresaCnpj !== '') {
+            $conteudo .= textoCmdPdfFolha($margem, $altura - 48, 8, textoPdfFolha('CNPJ: ' . $empresaCnpj, 60));
+        }
+        $conteudo .= textoCmdPdfFolha(386, $altura - 24, 12, textoPdfFolha('Recibo de Pagamento'), true);
+        $conteudo .= textoCmdPdfFolha(386, $altura - 39, 9, textoPdfFolha('Folha Mensal - ' . mesPorExtensoFolha($referencia)));
+        $conteudo .= textoCmdPdfFolha(386, $altura - 52, 8, textoPdfFolha('Pagamento: ' . dataFolha($dataPagamento)));
+        $conteudo .= "0 0 0 rg\n";
+        $y = $altura - 82;
+    };
+
+    $salvarPagina = static function () use (&$paginas, &$conteudo): void {
+        if ($conteudo !== '') {
+            $paginas[] = ['conteudo' => $conteudo];
+        }
+    };
+
+    $linha = static function (string $texto, int $tamanho = 7, bool $negrito = false) use (&$conteudo, &$y, $margem, $novaPagina, $salvarPagina): void {
+        if ($y < 44) {
+            $salvarPagina();
+            $novaPagina();
+        }
+        $conteudo .= textoCmdPdfFolha($margem, $y, $tamanho, textoPdfFolha($texto, 128), $negrito);
+        $y -= $tamanho + 5;
+    };
+
+    $novaPagina();
+    foreach ($recibos as $idx => $recibo) {
+        if ($idx > 0) {
+            $salvarPagina();
+            $novaPagina();
+        }
+
+        $funcionario = $recibo['funcionario'];
+        $linha('Funcionario: ' . (int)$funcionario['FUNCCONTADOR'] . ' - ' . (string)$funcionario['NOMEFUNC'], 10, true);
+        $linha('Admissao: ' . dataFolha($funcionario['DTADMISSAO'] ?? '') . ' | Cargo: ' . (string)($funcionario['CARGO'] ?? '') . ' | Cliente CR: ' . (string)($funcionario['DEPARTAMENTO'] ?? ''), 7);
+        $linha('VENCIMENTOS', 8, true);
+        foreach ($recibo['vencimentos'] as $item) {
+            $linha((string)$item['codigo'] . ' | ' . (string)$item['descricao'] . ' | ' . (string)$item['referencia'] . ' | ' . moedaFolha($item['valor']), 7);
+        }
+        $linha('DESCONTOS', 8, true);
+        foreach ($recibo['descontos'] as $item) {
+            $linha((string)$item['codigo'] . ' | ' . (string)$item['descricao'] . ' | ' . (string)$item['referencia'] . ' | ' . moedaFolha($item['valor']), 7);
+        }
+        $linha('Total de Vencimentos: ' . moedaFolha($recibo['total_vencimentos']) . ' | Total de Descontos: ' . moedaFolha($recibo['total_descontos']) . ' | Valor a Receber: ' . moedaFolha($recibo['valor_receber']), 8, true);
+        $linha('INFORMACOES DO RECIBO', 8, true);
+        $rodapes = [
+            'Compras em aberto - VENDA: ' . linhaCompraRodape(linhasCompraPorTipoFolha($recibo['compras_aberto'], 'VENDA')),
+            'Compras em aberto - CRAP: ' . linhaCompraRodape(linhasCompraPorTipoFolha($recibo['compras_aberto'], 'CRAP')),
+            'Compras pagas na data do pagamento - VENDA: ' . linhaCompraRodape($recibo['compras_pagas_venda']),
+            'Compras pagas na data do pagamento - CRAP: ' . linhaCompraRodape($recibo['compras_pagas']),
+        ];
+        foreach ($rodapes as $rodape) {
+            foreach (quebrarTextoFolha($rodape, 126) as $parte) {
+                $linha($parte, 6);
+            }
+        }
+        if (!empty($recibo['vales'])) {
+            $valesPartes = [];
+            $totalVales = 0.0;
+            foreach ($recibo['vales'] as $vale) {
+                $dcVale = strtoupper((string)($vale['DEBCRED'] ?? 'D'));
+                $valorVale = (float)($vale['VALOR'] ?? 0);
+                $totalVales += $dcVale === 'C' ? -$valorVale : $valorVale;
+                $valesPartes[] = '#' . (int)($vale['VALECONTADOR'] ?? 0) . ' ' . dataFolha($vale['DATA'] ?? $vale['DTLANC'] ?? '') . ' ' . ($dcVale === 'C' ? '-' : '') . moedaFolha($valorVale);
+            }
+            foreach (quebrarTextoFolha('Vales FUNC001 da referencia: ' . implode(' | ', $valesPartes) . ' | Total = ' . moedaFolha($totalVales), 126) as $parte) {
+                $linha($parte, 6);
+            }
+        } else {
+            $linha('Vales FUNC001 da referencia: Sem lancamentos.', 6);
+        }
+    }
+
+    $salvarPagina();
+    enviarPdfFolha($paginas, nomeArquivoFolha('folha_pagamento', $empresaId, $referencia, 'pdf', $funcionarioFiltroId));
+}
+
+function exportarCsvFolhaPagamento(array $recibos, string $referencia, string $dataPagamento, int $empresaId): void
+{
+    $arquivo = nomeArquivoFolha('folha_pagamento', $empresaId, $referencia, 'csv');
+    header('Content-Type: text/csv; charset=UTF-8');
+    header('Content-Disposition: attachment; filename="' . $arquivo . '"');
+    $out = fopen('php://output', 'w');
+    fputcsv($out, ['Empresa', 'Referencia', 'Data Pagamento', 'Funcionario', 'Nome', 'Vencimentos', 'Descontos', 'Valor Receber', 'Criterio CR Aberto'], ';');
+    foreach ($recibos as $recibo) {
+        fputcsv($out, [
+            $empresaId,
+            $referencia,
+            $dataPagamento,
+            (int)($recibo['funcionario']['FUNCCONTADOR'] ?? 0),
+            (string)($recibo['funcionario']['NOMEFUNC'] ?? ''),
+            number_format((float)$recibo['total_vencimentos'], 2, ',', ''),
+            number_format((float)$recibo['total_descontos'], 2, ',', ''),
+            number_format((float)$recibo['valor_receber'], 2, ',', ''),
+            (string)($recibo['criterio_cr_aberto_label'] ?? ''),
+        ], ';');
+    }
+    fclose($out);
+    exit;
 }
 
 function garantirTabelaParametrosFolha(PDO $pdo): void
@@ -199,7 +429,9 @@ function colunaExisteFolha(PDO $pdo, string $tabela, string $coluna): bool
 garantirTabelaParametrosFolha($pdo_master);
 
 $referencia = $_REQUEST['referencia'] ?? date('Y-m');
-$acaoFolha = $_SERVER['REQUEST_METHOD'] === 'POST' ? (string)($_POST['acao'] ?? '') : '';
+$exportarFolha = strtolower((string)($_GET['exportar'] ?? ''));
+$funcionarioExportarFolha = (int)($_GET['funcionario'] ?? 0);
+$acaoFolha = ($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST' ? (string)($_POST['acao'] ?? '') : '';
 $gerarRecibos = in_array($acaoFolha, ['gerar', 'salvar'], true);
 $salvarRecibos = $acaoFolha === 'salvar';
 $salariosInformados = $_POST['salario_liquido'] ?? [];
@@ -655,13 +887,24 @@ if ($gerarRecibos && empty($errosFolha)) {
             ];
 
             $destinoFolhasSalvas = 'historico_folhas.php?referencia=' . rawurlencode($referencia);
-            echo '<script>window.location.replace(' . json_encode($destinoFolhasSalvas) . ');</script>';
-            echo '<noscript><meta http-equiv="refresh" content="0;url=' . htmlspecialchars($destinoFolhasSalvas, ENT_QUOTES, 'UTF-8') . '"></noscript>';
-            require '../../layout/footer.php';
+            header('Location: ' . $destinoFolhasSalvas);
             exit;
         }
     }
 }
+
+if (in_array($exportarFolha, ['pdf', 'csv'], true)) {
+    if (empty($recibos)) {
+        http_response_code(404);
+        exit('Nenhuma folha salva encontrada para exportacao nesta competencia.');
+    }
+    if ($exportarFolha === 'csv') {
+        exportarCsvFolhaPagamento($recibos, $referencia, $dataPagamento, $empresaId);
+    }
+    gerarPdfFolhaPagamento($recibos, $referencia, $dataPagamento, $empresaNomeFolha, $empresaRazaoFolha, $empresaCnpjFolha, $empresaId, $funcionarioExportarFolha);
+}
+
+require '../../layout/header.php';
 ?>
 
 <style>
@@ -1130,7 +1373,14 @@ if ($gerarRecibos && empty($errosFolha)) {
                 <?= count($recibos) ?> recibo(s) gerado(s) para conferencia. Nada foi salvo ainda.
             <?php endif; ?>
         </div>
-        <button type="button" class="btn btn-outline-primary" onclick="imprimirTodosRecibosFolha()">Imprimir todos</button>
+        <div class="d-flex flex-wrap gap-2">
+            <?php if ($folhaCarregadaSalva || $salvarRecibos): ?>
+                <a href="folha_pagamento.php?referencia=<?= urlencode($referencia) ?>&exportar=pdf" class="btn btn-outline-danger">Baixar PDF</a>
+                <a href="folha_pagamento.php?referencia=<?= urlencode($referencia) ?>&exportar=csv" class="btn btn-outline-success">Baixar CSV</a>
+            <?php else: ?>
+                <button type="button" class="btn btn-outline-primary" onclick="imprimirTodosRecibosFolha()">Imprimir todos</button>
+            <?php endif; ?>
+        </div>
     </section>
 
     <?php foreach ($recibos as $indiceRecibo => $recibo): ?>
@@ -1138,13 +1388,22 @@ if ($gerarRecibos && empty($errosFolha)) {
         <?php $reciboHtmlId = 'recibo-folha-' . (int)$funcionario['FUNCCONTADOR'] . '-' . (int)$indiceRecibo; ?>
         <article class="recibo-folha" id="<?= htmlspecialchars($reciboHtmlId) ?>">
             <div class="recibo-acoes no-print">
-                <button
-                    type="button"
-                    class="btn btn-sm btn-outline-primary"
-                    onclick="imprimirReciboFuncionario('<?= htmlspecialchars($reciboHtmlId) ?>')"
-                >
-                    Imprimir este recibo
-                </button>
+                <?php if ($folhaCarregadaSalva || $salvarRecibos): ?>
+                    <a
+                        class="btn btn-sm btn-outline-danger"
+                        href="folha_pagamento.php?referencia=<?= urlencode($referencia) ?>&exportar=pdf&funcionario=<?= (int)$funcionario['FUNCCONTADOR'] ?>"
+                    >
+                        Baixar PDF deste recibo
+                    </a>
+                <?php else: ?>
+                    <button
+                        type="button"
+                        class="btn btn-sm btn-outline-primary"
+                        onclick="imprimirReciboFuncionario('<?= htmlspecialchars($reciboHtmlId) ?>')"
+                    >
+                        Imprimir este recibo
+                    </button>
+                <?php endif; ?>
             </div>
             <div class="recibo-topo">
                 <div>

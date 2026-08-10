@@ -101,6 +101,151 @@ function nomeEmpresaVales(PDO $pdo, int $empresaId): string
     return (string)($stmt->fetchColumn() ?: ('Empresa ' . $empresaId));
 }
 
+function nomeArquivoReciboVales(string $tipo, int $empresaId, array $acerto): string
+{
+    $nome = 'vales_diarios_' . $tipo . '_empresa_' . $empresaId . '_referencia_' . (string)$acerto['referencia'] . '_acerto_' . (int)$acerto['id'];
+    return preg_replace('/[^a-zA-Z0-9_.-]+/', '_', $nome) . '.pdf';
+}
+
+function textoPdfVales($valor, int $limite = 0): string
+{
+    $texto = preg_replace('/\s+/', ' ', trim((string)$valor));
+    if ($limite > 0 && strlen($texto) > $limite) {
+        $texto = substr($texto, 0, max(0, $limite - 3)) . '...';
+    }
+    $convertido = iconv('UTF-8', 'ISO-8859-1//TRANSLIT', $texto);
+    return $convertido === false ? $texto : $convertido;
+}
+
+function escapePdfVales(string $texto): string
+{
+    return str_replace(['\\', '(', ')'], ['\\\\', '\\(', '\\)'], $texto);
+}
+
+function textoCmdPdfVales(float $x, float $y, int $tamanho, string $texto, bool $negrito = false): string
+{
+    $fonte = $negrito ? 'F2' : 'F1';
+    return "BT /{$fonte} {$tamanho} Tf 1 0 0 1 " . number_format($x, 2, '.', '') . ' ' . number_format($y, 2, '.', '') . ' Tm (' . escapePdfVales($texto) . ") Tj ET\n";
+}
+
+function retanguloPdfVales(float $x, float $y, float $w, float $h): string
+{
+    return number_format($x, 2, '.', '') . ' ' . number_format($y, 2, '.', '') . ' ' . number_format($w, 2, '.', '') . ' ' . number_format($h, 2, '.', '') . " re f\n";
+}
+
+function enviarPdfVales(array $paginas, string $arquivo): void
+{
+    $objetos = [
+        1 => "<< /Type /Catalog /Pages 2 0 R >>",
+        2 => '',
+        3 => "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>",
+        4 => "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>",
+    ];
+    $idsPaginas = [];
+    $proximoId = 5;
+
+    foreach ($paginas as $pagina) {
+        $conteudo = (string)$pagina['conteudo'];
+        $conteudoId = $proximoId++;
+        $paginaId = $proximoId++;
+        $objetos[$conteudoId] = "<< /Length " . strlen($conteudo) . " >>\nstream\n{$conteudo}endstream";
+        $objetos[$paginaId] = "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 3 0 R /F2 4 0 R >> >> /Contents {$conteudoId} 0 R >>";
+        $idsPaginas[] = $paginaId;
+    }
+
+    $objetos[2] = "<< /Type /Pages /Kids [" . implode(' ', array_map(static function ($id) {
+        return "{$id} 0 R";
+    }, $idsPaginas)) . "] /Count " . count($idsPaginas) . " >>";
+    ksort($objetos);
+
+    $pdf = "%PDF-1.4\n";
+    $offsets = [0 => 0];
+    foreach ($objetos as $id => $objeto) {
+        $offsets[$id] = strlen($pdf);
+        $pdf .= "{$id} 0 obj\n{$objeto}\nendobj\n";
+    }
+
+    $xref = strlen($pdf);
+    $pdf .= "xref\n0 " . (count($objetos) + 1) . "\n0000000000 65535 f \n";
+    for ($i = 1; $i <= count($objetos); $i++) {
+        $pdf .= str_pad((string)$offsets[$i], 10, '0', STR_PAD_LEFT) . " 00000 n \n";
+    }
+    $pdf .= "trailer\n<< /Size " . (count($objetos) + 1) . " /Root 1 0 R >>\nstartxref\n{$xref}\n%%EOF";
+
+    header('Content-Type: application/pdf');
+    header('Content-Disposition: attachment; filename="' . $arquivo . '"');
+    header('Content-Length: ' . strlen($pdf));
+    echo $pdf;
+    exit;
+}
+
+function gerarPdfRecibosVales(string $tipo, array $acerto, array $itens, array $totais, string $nomeEmpresa, int $empresaId): void
+{
+    $referencia = (string)$acerto['referencia'];
+    $periodo = dataVales($acerto['data_ini']) . ' a ' . dataVales($acerto['data_fim']);
+    $paginas = [];
+    $conteudo = '';
+    $y = 0.0;
+    $margem = 28.0;
+    $altura = 842.0;
+    $largura = 595.0;
+
+    $novaPagina = static function (string $titulo) use (&$conteudo, &$y, $margem, $altura, $largura, $nomeEmpresa, $referencia, $periodo, $acerto): void {
+        $conteudo = "0.07 0.20 0.42 rg\n";
+        $conteudo .= retanguloPdfVales(0, $altura - 58, $largura, 58);
+        $conteudo .= "1 1 1 rg\n";
+        $conteudo .= textoCmdPdfVales($margem, $altura - 21, 13, textoPdfVales($nomeEmpresa, 55), true);
+        $conteudo .= textoCmdPdfVales($margem, $altura - 38, 9, textoPdfVales($titulo, 70), true);
+        $conteudo .= textoCmdPdfVales(360, $altura - 24, 9, textoPdfVales('Acerto #' . (int)$acerto['id']));
+        $conteudo .= textoCmdPdfVales(360, $altura - 39, 8, textoPdfVales('Referencia: ' . $referencia . ' | ' . $periodo));
+        $conteudo .= "0 0 0 rg\n";
+        $y = $altura - 86;
+    };
+
+    $salvarPagina = static function () use (&$paginas, &$conteudo): void {
+        if ($conteudo !== '') {
+            $paginas[] = ['conteudo' => $conteudo];
+        }
+    };
+
+    $linha = static function (string $texto, int $tamanho = 8, bool $negrito = false) use (&$conteudo, &$y, $margem, $novaPagina, $salvarPagina): void {
+        if ($y < 46) {
+            $salvarPagina();
+            $novaPagina('Recibos de vales diarios');
+        }
+        $conteudo .= textoCmdPdfVales($margem, $y, $tamanho, textoPdfVales($texto, 118), $negrito);
+        $y -= $tamanho + 5;
+    };
+
+    if ($tipo === 'empresa') {
+        $novaPagina('Recibo consolidado de vales diarios');
+        $linha('Competencia: ' . $referencia . ' | Periodo: ' . $periodo . ' | Status: ' . (string)$acerto['status'], 9);
+        $linha('Colaboradores: ' . count($itens) . ' | Dias VA: ' . (int)$totais['dias_va'] . ' | VTs: ' . (int)$totais['qtd_vt'], 9);
+        $linha('Total VT: ' . moedaVales($totais['vt']) . ' | Total VA: ' . moedaVales($totais['va']) . ' | Total geral: ' . moedaVales($totais['geral']), 10, true);
+        $linha('Declaramos que a empresa realizou o pagamento de vales diarios referente ao acerto #' . (int)$acerto['id'] . ', no valor total de ' . moedaVales($totais['geral']) . '.', 8);
+        $linha('Assinaturas: Responsavel pela empresa / Conferencia financeira', 8);
+        $salvarPagina();
+        enviarPdfVales($paginas, nomeArquivoReciboVales($tipo, $empresaId, $acerto));
+    }
+
+    foreach ($itens as $idx => $item) {
+        if ($idx > 0) {
+            $salvarPagina();
+        }
+        $novaPagina('Recibo individual de vales diarios');
+        $linha('Colaborador: ' . (int)$item['funcionario_id'] . ' - ' . (string)$item['nome_funcionario'], 10, true);
+        $linha('Competencia: ' . $referencia . ' | Periodo: ' . $periodo . ' | Gerado em: ' . agoraVales(), 8);
+        $linha('Recebi de ' . $nomeEmpresa . ' os valores referentes ao pagamento antecipado de vales diarios do periodo ' . $periodo . '.', 8);
+        $linha('Vale transporte: ' . (int)$item['qtd_vt'] . ' unidade(s) | Unitario ' . moedaVales($item['valor_vt']) . ' | Total ' . moedaVales($item['total_vt']), 8);
+        $linha('Vale alimentacao: ' . (int)$item['dias_va'] . ' dia(s) | Unitario ' . moedaVales($item['valor_va']) . ' | Total ' . moedaVales($item['total_va']), 8);
+        $linha('Total recebido: ' . moedaVales($item['total_geral']), 10, true);
+        $linha('Assinatura do colaborador: ________________________________________________', 8);
+    }
+
+    $salvarPagina();
+    enviarPdfVales($paginas, nomeArquivoReciboVales($tipo, $empresaId, $acerto));
+}
+
 function imprimirRecibosVales(string $tipo, array $acerto, array $itens, array $totais, string $nomeEmpresa): void
 {
     $referencia = (string)$acerto['referencia'];
@@ -829,7 +974,11 @@ if ($acertoAtual && in_array(($_GET['recibo'] ?? ''), ['empresa', 'colaboradores
         http_response_code(403);
         exit('Somente usuarios MASTER ou GERENTE podem emitir recibos detalhados por colaborador.');
     }
-    imprimirRecibosVales($tipoRecibo, $acertoAtual, $itens, $totais, nomeEmpresaVales($pdo_master, $empresaId));
+    $nomeEmpresaRecibo = nomeEmpresaVales($pdo_master, $empresaId);
+    if (($_GET['preview'] ?? '') === '1') {
+        imprimirRecibosVales($tipoRecibo, $acertoAtual, $itens, $totais, $nomeEmpresaRecibo);
+    }
+    gerarPdfRecibosVales($tipoRecibo, $acertoAtual, $itens, $totais, $nomeEmpresaRecibo, $empresaId);
 }
 
 require '../../layout/header.php';
@@ -968,9 +1117,9 @@ require '../../layout/header.php';
                 <div class="text-muted small">Emita o recibo consolidado da empresa e os recibos individuais dos colaboradores.</div>
             </div>
             <div class="d-flex flex-wrap gap-2">
-                <a target="_blank" class="btn btn-outline-danger" href="vales_diarios.php?referencia=<?= urlencode($referencia) ?>&acerto_id=<?= (int)$acertoAtual['id'] ?>&recibo=empresa">Recibo empresa</a>
+                <a class="btn btn-outline-danger" href="vales_diarios.php?referencia=<?= urlencode($referencia) ?>&acerto_id=<?= (int)$acertoAtual['id'] ?>&recibo=empresa">Recibo empresa PDF</a>
                 <?php if ($podeVerDetalhesBeneficios): ?>
-                    <a target="_blank" class="btn btn-danger" href="vales_diarios.php?referencia=<?= urlencode($referencia) ?>&acerto_id=<?= (int)$acertoAtual['id'] ?>&recibo=colaboradores">Recibos colaboradores</a>
+                    <a class="btn btn-danger" href="vales_diarios.php?referencia=<?= urlencode($referencia) ?>&acerto_id=<?= (int)$acertoAtual['id'] ?>&recibo=colaboradores">Recibos colaboradores PDF</a>
                 <?php endif; ?>
             </div>
         </div>

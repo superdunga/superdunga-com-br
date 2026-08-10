@@ -156,6 +156,8 @@ if ($temTabelas) {
                                 <td class="text-end">
                                     <div class="btn-group btn-group-sm">
                                         <a href="<?= htmlspecialchars($linkAtual) ?>" class="btn btn-outline-primary">Abrir folha</a>
+                                        <a href="<?= htmlspecialchars($linkAtual) ?>&exportar=pdf" class="btn btn-outline-danger">PDF</a>
+                                        <a href="<?= htmlspecialchars($linkAtual) ?>&exportar=csv" class="btn btn-outline-success">CSV</a>
                                     </div>
                                 </td>
                             </tr>
