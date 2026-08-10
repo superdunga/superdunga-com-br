@@ -489,9 +489,18 @@ function extrairTextoPdfUnimed(string $arquivoPdf): string
         throw new RuntimeException('Nao foi possivel criar script temporario para conversao do PDF.');
     }
 
-    $pythonCodigo = "import sys\n"
-        . "from pypdf import PdfReader\n\n"
-        . "reader = PdfReader(sys.argv[1])\n"
+    $pythonCodigo = "import sys\n\n"
+        . "arquivo = sys.argv[1]\n\n"
+        . "try:\n"
+        . "    import pdfplumber\n"
+        . "    with pdfplumber.open(arquivo) as pdf:\n"
+        . "        for page in pdf.pages:\n"
+        . "            print(page.extract_text(x_tolerance=1, y_tolerance=3) or \"\")\n"
+        . "    sys.exit(0)\n"
+        . "except Exception:\n"
+        . "    pass\n\n"
+        . "from pypdf import PdfReader\n"
+        . "reader = PdfReader(arquivo)\n"
         . "for page in reader.pages:\n"
         . "    print(page.extract_text() or \"\")\n";
     file_put_contents($pythonScript, $pythonCodigo);
@@ -559,6 +568,45 @@ function parseValorTotalUnimed(array $linhas): float
     return round($total, 2);
 }
 
+function extrairValoresMensalidadeUnimed(string $texto): ?array
+{
+    $texto = preg_replace('/\s+/', '', $texto);
+    if ($texto === null || $texto === '') {
+        return null;
+    }
+
+    if (preg_match('/(?P<quantidade>\d+,\d{5})(?P<mensalidade>\d+,\d{2})(?P<bonificacao>\d+,\d{2})(?P<total>\d+,\d{2})$/', $texto, $mValoresColados)) {
+        return [
+            'quantidade' => $mValoresColados['quantidade'],
+            'mensalidade' => $mValoresColados['mensalidade'],
+            'bonificacao' => $mValoresColados['bonificacao'],
+            'total' => $mValoresColados['total'],
+        ];
+    }
+
+    $valores = [];
+    $restante = $texto;
+    for ($i = 0; $i < 3; $i++) {
+        if (!preg_match('/(\d+,\d{2})\D*$/', $restante, $m, PREG_OFFSET_CAPTURE)) {
+            return null;
+        }
+        array_unshift($valores, $m[1][0]);
+        $restante = substr($restante, 0, $m[1][1]);
+    }
+
+    $quantidade = '1,00000';
+    if (preg_match('/(\d+,\d{5})\D*$/', $restante, $mQuantidade)) {
+        $quantidade = $mQuantidade[1];
+    }
+
+    return [
+        'quantidade' => $quantidade,
+        'mensalidade' => $valores[0],
+        'bonificacao' => $valores[1],
+        'total' => $valores[2],
+    ];
+}
+
 function parseMensalidadeFallbackUnimed(string $texto): array
 {
     $linhas = array_values(array_filter(array_map(
@@ -573,6 +621,45 @@ function parseMensalidadeFallbackUnimed(string $texto): array
     $itens = [];
     $total = count($linhas);
     for ($i = 0; $i < $total; $i++) {
+        if (preg_match('/^(?P<codigo>\d{4}\.\d{4}\.\d{6}-\d{2})\s+(?P<resto>.+)$/', $linhas[$i], $mLinhaCodigo)) {
+            $registro = $linhas[$i];
+            for ($j = $i + 1; $j < $total; $j++) {
+                if (preg_match('/^\d{4}\.\d{4}\.\d{6}-\d{2}\b/', $linhas[$j])) {
+                    break;
+                }
+                if (stripos($linhas[$j], 'FATURA') !== false || stripos($linhas[$j], 'Dobra') !== false) {
+                    break;
+                }
+                $registro .= ' ' . $linhas[$j];
+            }
+
+            if (preg_match('/^(?P<codigo>\d{4}\.\d{4}\.\d{6}-\d{2})\s+(?P<nome>.+?)\s*MENSALIDADE\s*(?P<dados>.+)$/i', $registro, $mRegistro)) {
+                $valoresRegistro = extrairValoresMensalidadeUnimed($mRegistro['dados']);
+                if ($valoresRegistro) {
+                    [$unidade, $contrato, $familia, $dependente] = partesCodigoUnimed($mRegistro['codigo']);
+                    $itens[] = [
+                        'codigo_completo' => $mRegistro['codigo'],
+                        'unidade_unimed' => $unidade,
+                        'contrato_unimed' => $contrato,
+                        'familia' => $familia,
+                        'dependente' => $dependente,
+                        'tipo' => $dependente === '00' ? 'TITULAR' : 'DEPENDENTE',
+                        'nome' => textoLimpoUnimed($mRegistro['nome']),
+                        'lancamento' => 'MENSALIDADE',
+                        'quantidade' => valorDecimalUnimed($valoresRegistro['quantidade']),
+                        'valor_mensalidade' => valorDecimalUnimed($valoresRegistro['mensalidade']),
+                        'valor_utilizacao' => 0.0,
+                        'valor_total' => valorDecimalUnimed($valoresRegistro['total']),
+                        'bonificacao' => valorDecimalUnimed($valoresRegistro['bonificacao']),
+                        'centro_custo' => null,
+                        'filial' => null,
+                        'status_operacao' => 'A',
+                    ];
+                    continue;
+                }
+            }
+        }
+
         if (!preg_match('/^\d{4}\.\d{4}\.\d{6}-\d{2}$/', $linhas[$i])) {
             continue;
         }
@@ -714,6 +801,16 @@ function parseFaturaMensalidadeUnimed(string $texto): array
     if (!$numeroFatura || !$competencia) {
         $linhasCabecalho = preg_split('/\R/', $texto);
         foreach ($linhasCabecalho as $i => $linha) {
+            if (stripos($linha, 'FATURA') !== false && stripos($linha, 'COMPET') !== false) {
+                for ($j = $i + 1; $j <= min($i + 4, count($linhasCabecalho) - 1); $j++) {
+                    if (preg_match('/\b(?P<fatura>\d{6,})\s+\d{2}\/\d{2}\/\d{4}\s+(?P<competencia>20\d{4})\b/', $linhasCabecalho[$j], $mLinhaFatura)) {
+                        $numeroFatura = $numeroFatura ?: $mLinhaFatura['fatura'];
+                        $competencia = $competencia ?: $mLinhaFatura['competencia'];
+                        break 2;
+                    }
+                }
+            }
+
             if (stripos($linha, 'COMPET') === false) {
                 continue;
             }
