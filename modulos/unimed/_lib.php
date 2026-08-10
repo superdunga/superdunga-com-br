@@ -1018,7 +1018,13 @@ function parseFaturaUtilizacaoUnimed(string $texto): array
 {
     $linhasTexto = preg_split('/\R/', $texto);
     $numeroFatura = null;
+    if (preg_match('/ANAL[^\n]*SERVI[^\n]*FATURA\s+(\d{6,})/i', $texto, $mFaturaLinha)) {
+        $numeroFatura = $mFaturaLinha[1];
+    }
     foreach ($linhasTexto as $i => $linha) {
+        if ($numeroFatura) {
+            break;
+        }
         if (stripos($linha, 'ANAL') !== false && stripos($linha, 'SERVI') !== false) {
             for ($j = $i + 1; $j <= min($i + 5, count($linhasTexto) - 1); $j++) {
                 if (preg_match('/^\s*(\d{6,})\s*$/', $linhasTexto[$j], $m)) {
@@ -1071,6 +1077,42 @@ function parseFaturaUtilizacaoUnimed(string $texto): array
         if ($familiaAtual && preg_match('/^\s*(?P<dependente>\d{2})-(?P<nome>.+?)\s*$/', $linha, $mDep)) {
             $dependenteAtual = $mDep['dependente'];
             $nomeDependenteAtual = textoLimpoUnimed($mDep['nome']);
+            continue;
+        }
+
+        if (
+            $familiaAtual
+            && $dependenteAtual
+            && preg_match('/^\s*(?P<tipo>\d+)\s+(?P<documento>\d+)\s+\d+\s+(?P<prestador>.+?)\s+(?P<data>\d\s*\d\s*\/\s*\d\s*\d\s*\/\s*\d\s*\d\s*\d\s*\d|\d{1,2}\s*\/\s*\d{2}\s*\/\s*\d{4})(?P<resto>.*?)(?P<valor>\d+,\d{2})\s*$/', $linha, $mLinhaDetalhe)
+        ) {
+            $dataTexto = preg_replace('/\s+/', '', $mLinhaDetalhe['data']);
+            $dataAtendimento = DateTime::createFromFormat('d/m/Y', $dataTexto);
+            if (!$dataAtendimento) {
+                continue;
+            }
+
+            $quantidade = 1.0;
+            $restoNumerico = preg_replace('/[^0-9,]/', '', $mLinhaDetalhe['resto']);
+            if (preg_match('/(\d+,\d{5})/', (string)$restoNumerico, $mQuantidadeLinha)) {
+                $quantidade = valorDecimalUnimed($mQuantidadeLinha[1]);
+            }
+
+            $codigo = codigoUnimed($unidadeAtual, $contratoAtual, $familiaAtual, $dependenteAtual);
+            $itens[] = [
+                'codigo_completo' => $codigo,
+                'unidade_unimed' => $unidadeAtual,
+                'contrato_unimed' => $contratoAtual,
+                'familia' => $familiaAtual,
+                'dependente' => $dependenteAtual,
+                'tipo' => $dependenteAtual === '00' ? 'TITULAR' : 'DEPENDENTE',
+                'nome' => $nomeDependenteAtual ?: $codigo,
+                'data_atendimento' => $dataAtendimento->format('Y-m-d'),
+                'prestador' => textoLimpoUnimed($mLinhaDetalhe['prestador']),
+                'tipo_documento' => $mLinhaDetalhe['tipo'],
+                'documento' => $mLinhaDetalhe['documento'],
+                'quantidade' => $quantidade,
+                'valor_total' => valorDecimalUnimed($mLinhaDetalhe['valor']),
+            ];
             continue;
         }
 
