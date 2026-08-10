@@ -1130,7 +1130,7 @@ if ($gerarRecibos && empty($errosFolha)) {
                 <?= count($recibos) ?> recibo(s) gerado(s) para conferencia. Nada foi salvo ainda.
             <?php endif; ?>
         </div>
-        <button type="button" class="btn btn-outline-primary" onclick="imprimirTodosRecibosFolha()">Imprimir todos / Salvar PDF</button>
+        <button type="button" class="btn btn-outline-primary" onclick="imprimirTodosRecibosFolha()">Imprimir todos</button>
     </section>
 
     <?php foreach ($recibos as $indiceRecibo => $recibo): ?>

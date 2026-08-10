@@ -424,7 +424,7 @@ function gerarPdfArquivoDescontoCheques(array $operacao, array $documentos, arra
     enviarPdfDescontoCheques($paginas, $nomeArquivo);
 }
 
-if (($_GET['download'] ?? '') === '1') {
+if (($_GET['preview'] ?? '') !== '1') {
     gerarPdfArquivoDescontoCheques($operacao, $documentos, $anexosCheques, $basePublicDir, $valorLiquidoTitulos, $operacaoId, $nomeArquivo);
 }
 ?>
@@ -647,7 +647,7 @@ if (($_GET['download'] ?? '') === '1') {
 </head>
 <body>
 <div class="no-print">
-    <button onclick="window.print()">Salvar em PDF</button>
+    <a href="operacao_pdf.php?id=<?= (int)$operacaoId ?>">Baixar PDF</a>
 </div>
 
 <main class="page">

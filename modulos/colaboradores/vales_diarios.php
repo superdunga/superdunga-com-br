@@ -146,7 +146,7 @@ function imprimirRecibosVales(string $tipo, array $acerto, array $itens, array $
     </head>
     <body>
         <div class="toolbar">
-            <button class="btn" onclick="window.print()">Imprimir / salvar PDF</button>
+            <button class="btn" onclick="window.print()">Imprimir recibo</button>
             <a class="btn btn-sec" href="vales_diarios.php?referencia=<?= urlencode($referencia) ?>&acerto_id=<?= (int)$acerto['id'] ?>">Voltar</a>
         </div>
 

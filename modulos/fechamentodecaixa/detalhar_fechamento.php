@@ -463,7 +463,7 @@ if (($_GET['exportar_vendas'] ?? '') === 'pdf') {
             <div class="col-md-5 d-flex gap-2">
                 <button type="submit" class="btn btn-sm btn-outline-primary">Filtrar</button>
                 <a href="detalhar_fechamento.php?data=<?= urlencode($data) ?>&user=<?= urlencode($usuario) ?>&exportar_vendas=pdf" class="btn btn-sm btn-outline-secondary">Completo</a>
-                <button type="button" class="btn btn-sm btn-primary" onclick="window.print()">Salvar em PDF</button>
+                <a href="detalhar_fechamento.php?data=<?= urlencode($data) ?>&user=<?= urlencode($usuario) ?>&exportar_vendas=pdf<?= $vendaPdfIndividual > 0 ? '&venda=' . (int)$vendaPdfIndividual : '' ?><?= $produtoFiltro !== '' ? '&produto=' . urlencode($produtoFiltro) : '' ?>" class="btn btn-sm btn-primary">Baixar PDF</a>
             </div>
         </form>
         <a href="detalhar_fechamento.php?data=<?= urlencode($data) ?>&user=<?= urlencode($usuario) ?>" class="btn btn-sm btn-outline-secondary">Voltar</a>
@@ -524,11 +524,6 @@ if (($_GET['exportar_vendas'] ?? '') === 'pdf') {
     <?php endforeach; ?>
 </div>
 
-<script>
-    window.addEventListener('load', function () {
-        setTimeout(function () { window.print(); }, 350);
-    });
-</script>
 <?php
     exit;
 }

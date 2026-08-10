@@ -10,6 +10,163 @@ $empresaId = (int)($_SESSION['empresa_id'] ?? 0);
 $mensagemSucesso = '';
 $mensagemErro = '';
 
+function textoPdfRelatorioUnimed($valor, int $limite = 0): string
+{
+    $texto = preg_replace('/\s+/', ' ', trim((string)$valor));
+    if ($limite > 0 && strlen($texto) > $limite) {
+        $texto = substr($texto, 0, max(0, $limite - 3)) . '...';
+    }
+    $convertido = iconv('UTF-8', 'ISO-8859-1//TRANSLIT', $texto);
+    return $convertido === false ? $texto : $convertido;
+}
+
+function escapePdfRelatorioUnimed(string $texto): string
+{
+    return str_replace(['\\', '(', ')'], ['\\\\', '\\(', '\\)'], $texto);
+}
+
+function textoCmdPdfRelatorioUnimed(float $x, float $y, int $tamanho, string $texto, bool $negrito = false): string
+{
+    $fonte = $negrito ? 'F2' : 'F1';
+    return "BT /{$fonte} {$tamanho} Tf 1 0 0 1 " . number_format($x, 2, '.', '') . ' ' . number_format($y, 2, '.', '') . ' Tm (' . escapePdfRelatorioUnimed($texto) . ") Tj ET\n";
+}
+
+function retanguloPdfRelatorioUnimed(float $x, float $y, float $w, float $h): string
+{
+    return number_format($x, 2, '.', '') . ' ' . number_format($y, 2, '.', '') . ' ' . number_format($w, 2, '.', '') . ' ' . number_format($h, 2, '.', '') . " re f\n";
+}
+
+function enviarPdfRelatorioUnimed(array $paginas, string $arquivo): void
+{
+    $objetos = [
+        1 => "<< /Type /Catalog /Pages 2 0 R >>",
+        2 => '',
+        3 => "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>",
+        4 => "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>",
+    ];
+    $idsPaginas = [];
+    $proximoId = 5;
+
+    foreach ($paginas as $pagina) {
+        $conteudo = (string)$pagina['conteudo'];
+        $conteudoId = $proximoId++;
+        $paginaId = $proximoId++;
+        $objetos[$conteudoId] = "<< /Length " . strlen($conteudo) . " >>\nstream\n{$conteudo}endstream";
+        $objetos[$paginaId] = "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 3 0 R /F2 4 0 R >> >> /Contents {$conteudoId} 0 R >>";
+        $idsPaginas[] = $paginaId;
+    }
+
+    $objetos[2] = "<< /Type /Pages /Kids [" . implode(' ', array_map(static function ($id) {
+        return "{$id} 0 R";
+    }, $idsPaginas)) . "] /Count " . count($idsPaginas) . " >>";
+    ksort($objetos);
+
+    $pdf = "%PDF-1.4\n";
+    $offsets = [0 => 0];
+    foreach ($objetos as $id => $objeto) {
+        $offsets[$id] = strlen($pdf);
+        $pdf .= "{$id} 0 obj\n{$objeto}\nendobj\n";
+    }
+
+    $xref = strlen($pdf);
+    $pdf .= "xref\n0 " . (count($objetos) + 1) . "\n0000000000 65535 f \n";
+    for ($i = 1; $i <= count($objetos); $i++) {
+        $pdf .= str_pad((string)$offsets[$i], 10, '0', STR_PAD_LEFT) . " 00000 n \n";
+    }
+    $pdf .= "trailer\n<< /Size " . (count($objetos) + 1) . " /Root 1 0 R >>\nstartxref\n{$xref}\n%%EOF";
+
+    header('Content-Type: application/pdf');
+    header('Content-Disposition: attachment; filename="' . $arquivo . '.pdf"');
+    header('Content-Length: ' . strlen($pdf));
+    echo $pdf;
+    exit;
+}
+
+function gerarPdfResponsaveisUnimed(array $responsaveisRelatorio, array $faturaAtual, string $nomeArquivoRelatorio): void
+{
+    $paginas = [];
+    $conteudo = '';
+    $y = 0.0;
+    $margem = 28.0;
+    $largura = 595.0;
+    $altura = 842.0;
+
+    $novaPagina = static function () use (&$conteudo, &$y, $margem, $largura, $altura, $faturaAtual): void {
+        $conteudo = "0.07 0.20 0.42 rg\n";
+        $conteudo .= retanguloPdfRelatorioUnimed(0, $altura - 62, $largura, 62);
+        $conteudo .= "1 1 1 rg\n";
+        $conteudo .= textoCmdPdfRelatorioUnimed($margem, $altura - 25, 15, textoPdfRelatorioUnimed('DEMONSTRATIVO UNIMED POR RESPONSAVEL'), true);
+        $conteudo .= textoCmdPdfRelatorioUnimed($margem, $altura - 43, 9, textoPdfRelatorioUnimed('Fatura mensal: ' . ($faturaAtual['numero_fatura'] ?? '-') . ' - ' . competenciaUnimed($faturaAtual['competencia'] ?? '')));
+        $utilizacao = !empty($faturaAtual['numero_fatura_utilizacao']) ? (string)$faturaAtual['numero_fatura_utilizacao'] : '-';
+        $conteudo .= textoCmdPdfRelatorioUnimed(355, $altura - 43, 9, textoPdfRelatorioUnimed('Fatura utilizacao: ' . $utilizacao));
+        $conteudo .= "0 0 0 rg\n";
+        $y = $altura - 86;
+    };
+
+    $salvarPagina = static function () use (&$paginas, &$conteudo): void {
+        if ($conteudo !== '') {
+            $paginas[] = ['conteudo' => $conteudo];
+        }
+    };
+
+    $linha = static function (string $texto, int $tamanho = 8, bool $negrito = false) use (&$conteudo, &$y, $margem, $novaPagina, $salvarPagina): void {
+        if ($y < 42) {
+            $salvarPagina();
+            $novaPagina();
+        }
+        $conteudo .= textoCmdPdfRelatorioUnimed($margem, $y, $tamanho, textoPdfRelatorioUnimed($texto, 118), $negrito);
+        $y -= $tamanho + 5;
+    };
+
+    $novaPagina();
+
+    if (empty($responsaveisRelatorio)) {
+        $linha('Nenhum responsavel encontrado para esta fatura.', 10, true);
+        $salvarPagina();
+        enviarPdfRelatorioUnimed($paginas, $nomeArquivoRelatorio);
+    }
+
+    foreach ($responsaveisRelatorio as $responsavel) {
+        if ($y < 170) {
+            $salvarPagina();
+            $novaPagina();
+        }
+
+        $totalResponsavel = (float)$responsavel['mensalidade'] + (float)$responsavel['utilizacao'];
+        $linha('Responsavel: ' . $responsavel['nome'], 11, true);
+        $linha('Telefone: ' . (($responsavel['telefone'] ?? '') !== '' ? $responsavel['telefone'] : '-') . ' | Codigo: ' . (($responsavel['codigo'] ?? '') !== '' ? $responsavel['codigo'] : '-'), 8);
+        $linha('Mensalidade: ' . moedaUnimed($responsavel['mensalidade']) . ' | Utilizacao: ' . moedaUnimed($responsavel['utilizacao']) . ' | Total: ' . moedaUnimed($totalResponsavel), 9, true);
+
+        $beneficiariosResp = $responsavel['beneficiarios'];
+        uasort($beneficiariosResp, static function (array $a, array $b): int {
+            return strcasecmp($a['nome'], $b['nome']);
+        });
+
+        $linha('Resumo por beneficiario', 8, true);
+        foreach ($beneficiariosResp as $beneficiario) {
+            $linha($beneficiario['codigo'] . ' | ' . $beneficiario['nome'] . ' | Mens. ' . moedaUnimed($beneficiario['mensalidade']) . ' | Util. ' . moedaUnimed($beneficiario['utilizacao']) . ' | Total ' . moedaUnimed((float)$beneficiario['mensalidade'] + (float)$beneficiario['utilizacao']), 7);
+        }
+
+        $linha('Mensalidades', 8, true);
+        foreach ($responsavel['mensalidades'] as $mensalidade) {
+            $linha($mensalidade['codigo_completo'] . ' | ' . $mensalidade['nome'] . ' | ' . $mensalidade['lancamento'] . ' | ' . moedaUnimed($mensalidade['valor_mensalidade']), 7);
+        }
+
+        $linha('Utilizacoes', 8, true);
+        if (empty($responsavel['utilizacoes'])) {
+            $linha('Nenhuma utilizacao.', 7);
+        }
+        foreach ($responsavel['utilizacoes'] as $utilizacaoLinha) {
+            $dataAtendimento = !empty($utilizacaoLinha['data_atendimento']) ? date('d/m/Y', strtotime($utilizacaoLinha['data_atendimento'])) : '-';
+            $linha($dataAtendimento . ' | ' . $utilizacaoLinha['codigo_completo'] . ' | ' . $utilizacaoLinha['nome'] . ' | ' . $utilizacaoLinha['prestador'] . ' | Doc ' . $utilizacaoLinha['documento'] . ' | ' . moedaUnimed($utilizacaoLinha['valor_total']), 7);
+        }
+        $y -= 8;
+    }
+
+    $salvarPagina();
+    enviarPdfRelatorioUnimed($paginas, $nomeArquivoRelatorio);
+}
+
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $acao = (string)($_POST['acao'] ?? '');
 
@@ -304,6 +461,10 @@ if (($_GET['relatorio_responsaveis'] ?? '') === 'pdf' && $faturaAtual) {
         $nomeArquivoRelatorio = 'unimed' . preg_replace('/\D/', '', (string)$faturaAtual['competencia']) . $nomeResponsavelArquivo;
     }
 
+    if (($_GET['preview'] ?? '') !== '1') {
+        gerarPdfResponsaveisUnimed($responsaveisRelatorio, $faturaAtual, $nomeArquivoRelatorio);
+    }
+
     require '../../layout/header.php';
 ?>
 <style>
@@ -445,7 +606,7 @@ if (($_GET['relatorio_responsaveis'] ?? '') === 'pdf' && $faturaAtual) {
 
 <div class="unimed-relatorio">
     <div class="no-print d-flex gap-2 mb-3">
-        <button type="button" class="btn btn-primary" onclick="window.print()">Salvar em PDF</button>
+        <a href="faturas.php?fatura_id=<?= (int)$faturaId ?>&relatorio_responsaveis=pdf<?= $responsavelFiltroId > 0 ? '&responsavel_id=' . (int)$responsavelFiltroId : '' ?>" class="btn btn-primary">Baixar PDF</a>
         <a href="faturas.php?fatura_id=<?= (int)$faturaId ?>" class="btn btn-outline-secondary">Voltar</a>
     </div>
 
@@ -574,12 +735,6 @@ if (($_GET['relatorio_responsaveis'] ?? '') === 'pdf' && $faturaAtual) {
     <?php endforeach; ?>
 </div>
 
-<script>
-    document.title = <?= json_encode($nomeArquivoRelatorio, JSON_UNESCAPED_UNICODE) ?>;
-    window.addEventListener('load', function () {
-        setTimeout(function () { window.print(); }, 350);
-    });
-</script>
 <?php
     require '../../layout/footer.php';
     exit;
