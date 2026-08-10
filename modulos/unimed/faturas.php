@@ -644,9 +644,9 @@ require '../../layout/header.php';
                             </option>
                         <?php endforeach; ?>
                     </select>
-                    <label class="form-label">Arquivo PDF de utilizacoes</label>
-                    <input type="file" name="arquivo_utilizacao" accept="application/pdf,.pdf" class="form-control" required>
-                    <div class="form-text">Substitui as utilizacoes vinculadas a fatura mensal selecionada, evitando duplicidade.</div>
+                    <label class="form-label">Arquivo PDF ou CSV de utilizacoes</label>
+                    <input type="file" name="arquivo_utilizacao" accept="application/pdf,.pdf,text/csv,.csv" class="form-control" required>
+                    <div class="form-text">Use preferencialmente o CSV de servico da Unimed. O envio substitui as utilizacoes vinculadas a fatura mensal selecionada, evitando duplicidade.</div>
                 </div>
                 <div class="card-footer bg-white text-end">
                     <button type="submit" class="btn btn-primary">Enviar utilizacoes</button>
