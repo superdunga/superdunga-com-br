@@ -620,8 +620,8 @@ require '../../layout/header.php';
                 <div class="card-body">
                     <input type="hidden" name="acao" value="upload_mensalidade">
                     <label class="form-label">Arquivo PDF do Analitico de Taxa</label>
-                    <input type="file" name="arquivo_mensalidade" accept="application/pdf,.pdf" class="form-control" required>
-                    <div class="form-text">Use o arquivo que detalha as mensalidades por beneficiario. O recibo/boleto nao contem os usuarios.</div>
+                    <input type="file" name="arquivo_mensalidade" accept="application/pdf,.pdf,text/csv,.csv" class="form-control" required>
+                    <div class="form-text">Use preferencialmente o CSV de taxa da Unimed. O PDF continua aceito quando detalhar as mensalidades por beneficiario.</div>
                 </div>
                 <div class="card-footer bg-white text-end">
                     <button type="submit" class="btn btn-primary">Enviar Analitico de Taxa</button>

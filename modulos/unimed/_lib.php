@@ -233,13 +233,17 @@ function textoLimpoUnimed(string $texto): string
 function salvarUploadUnimed(array $arquivo, string $tipo): array
 {
     if (($arquivo['error'] ?? UPLOAD_ERR_NO_FILE) !== UPLOAD_ERR_OK || empty($arquivo['tmp_name']) || !is_uploaded_file($arquivo['tmp_name'])) {
-        throw new RuntimeException('Selecione um arquivo PDF valido.');
+        throw new RuntimeException('Selecione um arquivo valido.');
     }
 
     $nomeOriginal = (string)($arquivo['name'] ?? 'arquivo.pdf');
     $extensao = strtolower(pathinfo($nomeOriginal, PATHINFO_EXTENSION));
-    if ($extensao !== 'pdf') {
-        throw new RuntimeException('A importacao da Unimed aceita somente arquivos PDF.');
+    $extensoesPermitidas = $tipo === 'mensalidade' ? ['pdf', 'csv'] : ['pdf'];
+    if (!in_array($extensao, $extensoesPermitidas, true)) {
+        throw new RuntimeException($tipo === 'mensalidade'
+            ? 'A importacao de mensalidade da Unimed aceita arquivos PDF ou CSV.'
+            : 'A importacao de utilizacao da Unimed aceita somente arquivos PDF.'
+        );
     }
 
     $pasta = dirname(__DIR__, 2) . DIRECTORY_SEPARATOR . 'uploads' . DIRECTORY_SEPARATOR . 'unimed_faturas';
@@ -247,7 +251,7 @@ function salvarUploadUnimed(array $arquivo, string $tipo): array
         throw new RuntimeException('Nao foi possivel criar a pasta de uploads da Unimed.');
     }
 
-    $nomeSalvo = date('Ymd_His') . '_' . $tipo . '_' . bin2hex(random_bytes(4)) . '.pdf';
+    $nomeSalvo = date('Ymd_His') . '_' . $tipo . '_' . bin2hex(random_bytes(4)) . '.' . $extensao;
     $destino = $pasta . DIRECTORY_SEPARATOR . $nomeSalvo;
     if (!move_uploaded_file((string)$arquivo['tmp_name'], $destino)) {
         throw new RuntimeException('Nao foi possivel salvar o arquivo enviado.');
@@ -257,6 +261,7 @@ function salvarUploadUnimed(array $arquivo, string $tipo): array
         'original' => $nomeOriginal,
         'salvo' => 'uploads/unimed_faturas/' . $nomeSalvo,
         'absoluto' => $destino,
+        'extensao' => $extensao,
     ];
 }
 
@@ -894,6 +899,121 @@ function parseFaturaMensalidadeUnimed(string $texto): array
     ];
 }
 
+function parseFaturaMensalidadeCsvUnimed(string $arquivoCsv, string $nomeOriginal): array
+{
+    if (!is_file($arquivoCsv)) {
+        throw new RuntimeException('Arquivo CSV da Unimed nao encontrado.');
+    }
+
+    $handle = fopen($arquivoCsv, 'rb');
+    if (!$handle) {
+        throw new RuntimeException('Nao foi possivel abrir o CSV da Unimed.');
+    }
+
+    try {
+        $cabecalho = fgetcsv($handle, 0, ';');
+        if (!$cabecalho) {
+            throw new RuntimeException('CSV da Unimed vazio ou sem cabecalho.');
+        }
+
+        $cabecalho = array_map(static function ($coluna) {
+            $coluna = preg_replace('/^\xEF\xBB\xBF/', '', (string)$coluna);
+            return strtoupper(trim($coluna));
+        }, $cabecalho);
+
+        $indices = array_flip($cabecalho);
+        foreach (['COMPETENCIA', 'CARTAO_BENEFICIARIO', 'NOME_BENEFICIARIO', 'VALOR_FATURADO'] as $colunaObrigatoria) {
+            if (!array_key_exists($colunaObrigatoria, $indices)) {
+                throw new RuntimeException('CSV da Unimed sem a coluna obrigatoria ' . $colunaObrigatoria . '.');
+            }
+        }
+
+        $numeroFatura = null;
+        if (preg_match('/(?:^|_)(\d{6,})(?:\D|$)/', pathinfo($nomeOriginal, PATHINFO_FILENAME), $mFaturaCsv)) {
+            $numeroFatura = $mFaturaCsv[1];
+        }
+        if (!$numeroFatura) {
+            throw new RuntimeException('Nao foi possivel identificar o numero da fatura no nome do CSV. Mantenha o numero no nome do arquivo, exemplo planilha_taxa_41113351.csv.');
+        }
+
+        $itens = [];
+        $competencia = null;
+        while (($linha = fgetcsv($handle, 0, ';')) !== false) {
+            if (count(array_filter($linha, static function ($valor) {
+                return trim((string)$valor) !== '';
+            })) === 0) {
+                continue;
+            }
+
+            $get = static function (string $coluna) use ($indices, $linha): string {
+                $idx = $indices[$coluna] ?? null;
+                return $idx === null ? '' : trim((string)($linha[$idx] ?? ''));
+            };
+
+            $competenciaLinha = preg_replace('/\D/', '', $get('COMPETENCIA'));
+            $cartao = $get('CARTAO_BENEFICIARIO');
+            $nome = textoLimpoUnimed($get('NOME_BENEFICIARIO'));
+            $valor = valorDecimalUnimed($get('VALOR_FATURADO'));
+            if ($competenciaLinha === '' || $cartao === '' || $nome === '') {
+                continue;
+            }
+
+            if (!$competencia) {
+                $competencia = $competenciaLinha;
+            } elseif ($competencia !== $competenciaLinha) {
+                throw new RuntimeException('CSV da Unimed contem mais de uma competencia.');
+            }
+
+            if (!preg_match('/(?P<codigo>\d{4}\.\d{4}\.\d{6}-\d{2})/', $cartao, $mCodigo)) {
+                throw new RuntimeException('Cartao de beneficiario invalido no CSV: ' . $cartao);
+            }
+
+            [$unidade, $contrato, $familia, $dependente] = partesCodigoUnimed($mCodigo['codigo']);
+            $itens[] = [
+                'codigo_completo' => $mCodigo['codigo'],
+                'unidade_unimed' => $unidade,
+                'contrato_unimed' => $contrato,
+                'familia' => $familia,
+                'dependente' => $dependente,
+                'tipo' => $dependente === '00' ? 'TITULAR' : 'DEPENDENTE',
+                'nome' => $nome,
+                'lancamento' => 'MENSALIDADE',
+                'quantidade' => 1.0,
+                'valor_mensalidade' => $valor,
+                'valor_utilizacao' => 0.0,
+                'valor_total' => $valor,
+                'bonificacao' => 0.0,
+                'centro_custo' => null,
+                'filial' => null,
+                'status_operacao' => 'A',
+                'contrato_venda' => $get('CONTRATO_VENDA_NUMERO') ?: null,
+            ];
+        }
+    } finally {
+        fclose($handle);
+    }
+
+    if (!$competencia) {
+        throw new RuntimeException('Nao foi possivel identificar a competencia no CSV da Unimed.');
+    }
+    if (empty($itens)) {
+        throw new RuntimeException('Nenhum item de mensalidade foi encontrado no CSV da Unimed.');
+    }
+
+    return [
+        'numero_fatura' => $numeroFatura,
+        'competencia' => $competencia,
+        'cnpj' => null,
+        'cliente' => null,
+        'empresa_contratante_codigo' => $itens[0]['contrato_venda'] ?? null,
+        'empresa_contratante_nome' => null,
+        'unidade_unimed' => $itens[0]['unidade_unimed'],
+        'contrato_unimed' => $itens[0]['contrato_unimed'],
+        'itens' => $itens,
+        'total_mensalidade' => parseValorTotalUnimed($itens),
+    ];
+}
+
 function parseFaturaUtilizacaoUnimed(string $texto): array
 {
     $linhasTexto = preg_split('/\R/', $texto);
@@ -1105,9 +1225,14 @@ function atualizarResponsaveisPadraoUnimed(PDO $pdo, int $empresaId): void
     ")->execute([$empresaId]);
 }
 
-function importarFaturaMensalidadeUnimed(PDO $pdo, int $empresaId, string $arquivoPdf, string $nomeOriginal): array
+function importarFaturaMensalidadeUnimed(PDO $pdo, int $empresaId, string $arquivo, string $nomeOriginal): array
 {
-    $dados = parseFaturaMensalidadeUnimed(extrairTextoPdfUnimed($arquivoPdf));
+    $extensao = strtolower(pathinfo($nomeOriginal, PATHINFO_EXTENSION));
+    if ($extensao === 'csv') {
+        $dados = parseFaturaMensalidadeCsvUnimed($arquivo, $nomeOriginal);
+    } else {
+        $dados = parseFaturaMensalidadeUnimed(extrairTextoPdfUnimed($arquivo));
+    }
     $totalMensalidade = round((float)$dados['total_mensalidade'], 2);
 
     $pdo->beginTransaction();
