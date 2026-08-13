@@ -1128,7 +1128,7 @@ function inverterTipomovExtratoBanco(string $tipomov): string
     return strtoupper($tipomov) === 'D' ? 'C' : 'D';
 }
 
-function lancarExtratosSelecionadosNoBnc(PDO $pdo, int $empresaId, int $empresaExtratoId, int $usuarioId, array $extratoIds, int $cbcontador, int $tipoes): int
+function lancarExtratosSelecionadosNoBnc(PDO $pdo, int $empresaId, int $empresaExtratoId, int $usuarioId, array $extratoIds, int $cbcontador, int $tipoes, int $contrapCbcontadorInformado = 0): int
 {
     $extratoIds = array_values(array_unique(array_filter(array_map('intval', $extratoIds))));
     if (!$extratoIds) {
@@ -1175,11 +1175,14 @@ function lancarExtratosSelecionadosNoBnc(PDO $pdo, int $empresaId, int $empresaE
     $tipomov = strtoupper((string)$tipo['TIPOMOV']);
     $contrapTipoes = !empty($tipo['CONTRAP_TIPOES']) ? (int)$tipo['CONTRAP_TIPOES'] : 0;
     $contrapCbcontador = $contrapTipoes > 0 ? (int)($tipo['CONTRAP_CBCONTADOR'] ?? 0) : 0;
+    if ($contrapTipoes > 0 && $contrapCbcontador <= 0 && $contrapCbcontadorInformado > 0) {
+        $contrapCbcontador = $contrapCbcontadorInformado;
+    }
     $contrapTipomov = $contrapTipoes > 0 ? strtoupper((string)($tipo['CONTRAP_TIPOMOV'] ?: inverterTipomovExtratoBanco($tipomov))) : '';
 
     if ($contrapTipoes > 0) {
         if ($contrapCbcontador <= 0) {
-            throw new RuntimeException('O TIPOES exige contrapartida, mas nao possui conta de contrapartida configurada.');
+            throw new RuntimeException('O TIPOES exige contrapartida. Informe a conta da contrapartida para lancar.');
         }
         $stmtConta->execute([$empresaId, $contrapCbcontador]);
         if (!$stmtConta->fetchColumn()) {
@@ -1700,6 +1703,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['acao'] ?? '') === 'desfaze
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['acao'] ?? '') === 'lancar_extratos_bnc001') {
     $extratosSelecionadosBnc = $_POST['extratos_bnc001'] ?? [];
     $tipoesLancamentoBnc = (int)($_POST['tipoes_bnc001'] ?? 0);
+    $contrapCbcontadorBnc = (int)($_POST['contrap_cbcontador_bnc001'] ?? 0);
 
     try {
         if (!is_array($extratosSelecionadosBnc)) {
@@ -1713,7 +1717,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['acao'] ?? '') === 'lancar_
             $usuarioId,
             $extratosSelecionadosBnc,
             $cbcontador,
-            $tipoesLancamentoBnc
+            $tipoesLancamentoBnc,
+            $contrapCbcontadorBnc
         );
 
         header('Location: conciliacao_extratos.php?' . queryConciliacaoExtratos([
@@ -2595,6 +2600,7 @@ if ($cbcontador > 0) {
 }
 
 $tiposBncRapido = [];
+$contasContrapBncRapido = [];
 if ($empresaId === 2) {
     $stmtTiposBncRapido = $pdo_master->prepare("
         SELECT ESCONTADOR, DESCES, TIPOMOV
@@ -2606,6 +2612,17 @@ if ($empresaId === 2) {
     ");
     $stmtTiposBncRapido->execute([$empresaId]);
     $tiposBncRapido = $stmtTiposBncRapido->fetchAll(PDO::FETCH_ASSOC);
+
+    $stmtContasContrapBncRapido = $pdo_master->prepare("
+        SELECT CBCONTADOR, TRIM(COALESCE(NULLIF(TITULAR, ''), NULLIF(DESCABREV, ''), CONCAT('Conta ', CBCONTADOR))) AS nome_conta
+        FROM armazem_bnc002
+        WHERE EMPRESA = ?
+          AND COALESCE(excluido_firebird, 'N') <> 'S'
+          AND COALESCE(CONTABLOQUEADA, 'N') <> 'S'
+        ORDER BY nome_conta ASC, CBCONTADOR ASC
+    ");
+    $stmtContasContrapBncRapido->execute([$empresaId]);
+    $contasContrapBncRapido = $stmtContasContrapBncRapido->fetchAll(PDO::FETCH_ASSOC);
 }
 
 $paramsExtrato = [$empresaExtratoId];
@@ -3979,7 +3996,7 @@ document.addEventListener('DOMContentLoaded', function () {
                             <input type="hidden" name="acao" value="lancar_extratos_bnc001">
                             <input type="hidden" name="cbcontador" value="<?= (int)$cbcontador ?>">
                             <div class="row g-2 align-items-end">
-                                <div class="col-md-7">
+                                <div class="col-md-5">
                                     <label class="form-label small fw-semibold mb-1">TIPOES para lancamento no BNC001</label>
                                     <select name="tipoes_bnc001" class="form-select form-select-sm" required>
                                         <option value="">Selecione...</option>
@@ -3994,14 +4011,27 @@ document.addEventListener('DOMContentLoaded', function () {
                                         <?php endforeach; ?>
                                     </select>
                                 </div>
-                                <div class="col-md-5 d-grid">
+                                <div class="col-md-4">
+                                    <label class="form-label small fw-semibold mb-1">Conta contrapartida</label>
+                                    <select name="contrap_cbcontador_bnc001" class="form-select form-select-sm">
+                                        <option value="">Somente se o TIPOES pedir</option>
+                                        <?php foreach ($contasContrapBncRapido as $contaContrapRapida): ?>
+                                            <option value="<?= (int)$contaContrapRapida['CBCONTADOR'] ?>">
+                                                <?= (int)$contaContrapRapida['CBCONTADOR'] ?>
+                                                -
+                                                <?= htmlspecialchars((string)$contaContrapRapida['nome_conta']) ?>
+                                            </option>
+                                        <?php endforeach; ?>
+                                    </select>
+                                </div>
+                                <div class="col-md-3 d-grid">
                                     <button type="submit" class="btn btn-sm btn-primary" <?= $cbcontador <= 0 || empty($tiposBncRapido) ? 'disabled' : '' ?>>
                                         Lancar selecionados no BNC001
                                     </button>
                                 </div>
                             </div>
                             <div class="small text-muted mt-1">
-                                Use a selecao BNC na tabela. Extrato D exige TIPOES D; extrato C exige TIPOES C.
+                                Use a selecao BNC na tabela. Extrato D exige TIPOES D; extrato C exige TIPOES C. Se o TIPOES tiver contrapartida sem conta fixa, informe a conta da contrapartida aqui.
                             </div>
                         </form>
                     <?php endif; ?>
