@@ -3271,8 +3271,61 @@ require '../../layout/header.php';
     white-space: normal;
 }
 
+.sistema-bnc-quadro {
+    overflow-x: visible;
+}
+
+.sistema-bnc-quadro table {
+    table-layout: fixed;
+    width: 100%;
+    font-size: 12px;
+}
+
+.sistema-bnc-quadro th,
+.sistema-bnc-quadro td {
+    white-space: normal;
+    overflow-wrap: break-word;
+    word-break: normal;
+    vertical-align: middle;
+}
+
+.sistema-bnc-quadro th:nth-child(1),
+.sistema-bnc-quadro td:nth-child(1) {
+    width: 58px;
+}
+
+.sistema-bnc-quadro th:nth-child(2),
+.sistema-bnc-quadro td:nth-child(2) {
+    width: 112px;
+}
+
+.sistema-bnc-quadro th:nth-child(3),
+.sistema-bnc-quadro td:nth-child(3) {
+    width: 78px;
+}
+
+.sistema-bnc-quadro th:nth-child(5),
+.sistema-bnc-quadro td:nth-child(5) {
+    width: 38px;
+    text-align: center;
+}
+
+.sistema-bnc-quadro th:nth-child(6),
+.sistema-bnc-quadro td:nth-child(6) {
+    width: 82px;
+    white-space: nowrap;
+    text-align: right;
+}
+
+.conta-sistema-bnc,
+.historico-sistema-bnc {
+    min-width: 0;
+    overflow-wrap: break-word;
+}
+
 @media (max-width: 768px) {
-    .extrato-bancario-quadro {
+    .extrato-bancario-quadro,
+    .sistema-bnc-quadro {
         overflow-x: auto;
     }
 }
@@ -4230,7 +4283,7 @@ function validarLancamentoBnc001Extrato() {
                         </div>
                     </div>
                 </div>
-                <div class="table-responsive">
+                <div class="table-responsive sistema-bnc-quadro">
                     <table class="table table-sm table-hover align-middle mb-0">
                         <thead class="table-primary">
                             <tr>
@@ -4246,9 +4299,15 @@ function validarLancamentoBnc001Extrato() {
                             <?php foreach ($sistemaPendentes as $item): ?>
                                 <tr>
                                     <td><?= (int)$item['MOVCONTADOR'] ?></td>
-                                    <td><?= (int)$item['CBCONTADOR'] ?> - <?= htmlspecialchars($item['nome_conta'] ?: 'Conta') ?></td>
-                                    <td><?= dataHoraExtratoBanco($item['DTMOV']) ?></td>
-                                    <td><?= htmlspecialchars($item['HISTMOV'] ?: '-') ?></td>
+                                    <td class="conta-sistema-bnc">
+                                        <div class="fw-semibold"><?= (int)$item['CBCONTADOR'] ?></div>
+                                        <div><?= htmlspecialchars($item['nome_conta'] ?: 'Conta') ?></div>
+                                    </td>
+                                    <td>
+                                        <div><?= date('d/m/Y', strtotime((string)$item['DTMOV'])) ?></div>
+                                        <div class="small text-muted"><?= date('H:i', strtotime((string)$item['DTMOV'])) ?></div>
+                                    </td>
+                                    <td class="historico-sistema-bnc"><?= htmlspecialchars($item['HISTMOV'] ?: '-') ?></td>
                                     <td><?= htmlspecialchars($item['TIPOMOV']) ?></td>
                                     <td class="text-end"><?= moedaExtratoBanco($item['VALORMOV']) ?></td>
                                 </tr>
