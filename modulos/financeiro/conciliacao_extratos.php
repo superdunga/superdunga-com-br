@@ -1117,6 +1117,203 @@ function conciliarExtratoComMovimento(PDO $pdo, int $empresaId, int $empresaExtr
     return 1;
 }
 
+function proximoMovcontadorExtratoBanco(PDO $pdo): int
+{
+    $stmt = $pdo->query("SELECT COALESCE(MAX(MOVCONTADOR), 0) + 1 FROM armazem_bnc001");
+    return (int)$stmt->fetchColumn();
+}
+
+function inverterTipomovExtratoBanco(string $tipomov): string
+{
+    return strtoupper($tipomov) === 'D' ? 'C' : 'D';
+}
+
+function lancarExtratosSelecionadosNoBnc(PDO $pdo, int $empresaId, int $empresaExtratoId, int $usuarioId, array $extratoIds, int $cbcontador, int $tipoes): int
+{
+    $extratoIds = array_values(array_unique(array_filter(array_map('intval', $extratoIds))));
+    if (!$extratoIds) {
+        throw new RuntimeException('Selecione ao menos um lancamento do extrato.');
+    }
+    if ($empresaId !== 2) {
+        throw new RuntimeException('Lancamento rapido no BNC001 disponivel somente para a empresa 2.');
+    }
+    if ($cbcontador <= 0) {
+        throw new RuntimeException('Informe a conta para lancar no BNC001.');
+    }
+    if ($tipoes <= 0) {
+        throw new RuntimeException('Informe o TIPOES para lancar no BNC001.');
+    }
+
+    $stmtConta = $pdo->prepare("
+        SELECT CBCONTADOR
+        FROM armazem_bnc002
+        WHERE EMPRESA = ?
+          AND CBCONTADOR = ?
+          AND COALESCE(excluido_firebird, 'N') <> 'S'
+          AND COALESCE(CONTABLOQUEADA, 'N') <> 'S'
+        LIMIT 1
+    ");
+    $stmtConta->execute([$empresaId, $cbcontador]);
+    if (!$stmtConta->fetchColumn()) {
+        throw new RuntimeException('Conta BNC002 invalida para a empresa 2.');
+    }
+
+    $stmtTipo = $pdo->prepare("
+        SELECT ESCONTADOR, DESCES, TIPOMOV, CONTRAP_TIPOES, CONTRAP_TIPOMOV, CONTRAP_CBCONTADOR
+        FROM armazem_bnc005
+        WHERE EMPRESA = ?
+          AND ESCONTADOR = ?
+          AND COALESCE(REGDISAB, 'N') <> 'S'
+        LIMIT 1
+    ");
+    $stmtTipo->execute([$empresaId, $tipoes]);
+    $tipo = $stmtTipo->fetch(PDO::FETCH_ASSOC);
+    if (!$tipo || !in_array(strtoupper((string)$tipo['TIPOMOV']), ['D', 'C'], true)) {
+        throw new RuntimeException('TIPOES invalido ou sem D/C configurado.');
+    }
+
+    $tipomov = strtoupper((string)$tipo['TIPOMOV']);
+    $contrapTipoes = !empty($tipo['CONTRAP_TIPOES']) ? (int)$tipo['CONTRAP_TIPOES'] : 0;
+    $contrapCbcontador = $contrapTipoes > 0 ? (int)($tipo['CONTRAP_CBCONTADOR'] ?? 0) : 0;
+    $contrapTipomov = $contrapTipoes > 0 ? strtoupper((string)($tipo['CONTRAP_TIPOMOV'] ?: inverterTipomovExtratoBanco($tipomov))) : '';
+
+    if ($contrapTipoes > 0) {
+        if ($contrapCbcontador <= 0) {
+            throw new RuntimeException('O TIPOES exige contrapartida, mas nao possui conta de contrapartida configurada.');
+        }
+        $stmtConta->execute([$empresaId, $contrapCbcontador]);
+        if (!$stmtConta->fetchColumn()) {
+            throw new RuntimeException('Conta de contrapartida invalida para o TIPOES informado.');
+        }
+        $stmtTipo->execute([$empresaId, $contrapTipoes]);
+        if (!$stmtTipo->fetch(PDO::FETCH_ASSOC)) {
+            throw new RuntimeException('TIPOES de contrapartida nao encontrado.');
+        }
+    }
+
+    $placeholders = implode(',', array_fill(0, count($extratoIds), '?'));
+    $stmtExtratos = $pdo->prepare("
+        SELECT id, empresa_id, cbcontador, data_movimento, historico, documento, tipo, valor, recebimento_id, conciliado, bnc001_movcontador
+        FROM financeiro_extrato_bancario
+        WHERE empresa_id = ?
+          AND id IN ($placeholders)
+        FOR UPDATE
+    ");
+
+    $pdo->beginTransaction();
+    try {
+        $stmtExtratos->execute(array_merge([$empresaExtratoId], $extratoIds));
+        $extratos = $stmtExtratos->fetchAll(PDO::FETCH_ASSOC);
+        if (count($extratos) !== count($extratoIds)) {
+            throw new RuntimeException('Um ou mais lancamentos do extrato nao foram encontrados.');
+        }
+
+        $criados = 0;
+        $stmtBnc = $pdo->prepare("
+            INSERT INTO armazem_bnc001 (
+                EMPRESA, MOVCONTADOR, DTMOV, NUMDOC, CBCONTADOR, TIPOES, TIPOMOV,
+                HISTMOV, VALORMOV, TIPODOCORIGEM, NUMDOCORIGEM, CONTRAPARTIDA, ORIGEMCPART,
+                USERBNCLANC, DTLANC, DTPROCESSADO, REGSTAMP, deletado
+            ) VALUES (
+                ?, ?, ?, ?, ?, ?, ?, ?, ?, 'EXTRATO_BANCARIO', ?, ?, ?, ?, NOW(), NOW(), NOW(), 'N'
+            )
+        ");
+        $stmtVincular = $pdo->prepare("
+            UPDATE financeiro_extrato_bancario
+            SET conciliado = 'S',
+                bnc001_empresa = ?,
+                bnc001_movcontador = ?
+            WHERE id = ?
+              AND empresa_id = ?
+              AND conciliado = 'N'
+              AND bnc001_movcontador IS NULL
+        ");
+        $stmtLog = $pdo->prepare("
+            INSERT INTO financeiro_extrato_conciliacoes_log
+                (empresa_id, cbcontador, extrato_id, movcontador, tipo_match, usuario_id)
+            VALUES (?, ?, ?, ?, ?, ?)
+        ");
+
+        foreach ($extratos as $extrato) {
+            if (($extrato['conciliado'] ?? 'N') === 'S' || !empty($extrato['bnc001_movcontador'])) {
+                throw new RuntimeException('Extrato #' . (int)$extrato['id'] . ' ja esta conciliado.');
+            }
+            if (!empty($extrato['recebimento_id'])) {
+                throw new RuntimeException('Extrato #' . (int)$extrato['id'] . ' ja possui recebivel gerado.');
+            }
+            if ((int)$extrato['cbcontador'] !== $cbcontador) {
+                throw new RuntimeException('Extrato #' . (int)$extrato['id'] . ' pertence a outra conta.');
+            }
+            if (!in_array((string)$extrato['tipo'], ['D', 'C'], true)) {
+                throw new RuntimeException('Extrato #' . (int)$extrato['id'] . ' nao possui D/C valido.');
+            }
+            if ((string)$extrato['tipo'] !== $tipomov) {
+                throw new RuntimeException('Extrato #' . (int)$extrato['id'] . ' e ' . (string)$extrato['tipo'] . ', mas o TIPOES informado e ' . $tipomov . '.');
+            }
+
+            $valor = abs((float)$extrato['valor']);
+            if ($valor <= 0) {
+                throw new RuntimeException('Extrato #' . (int)$extrato['id'] . ' possui valor invalido.');
+            }
+
+            $movcontador = proximoMovcontadorExtratoBanco($pdo);
+            $documento = trim((string)($extrato['documento'] ?? ''));
+            $historico = trim((string)($extrato['historico'] ?? ''));
+            if ($historico === '') {
+                $historico = 'LANCAMENTO GERADO PELO EXTRATO #' . (int)$extrato['id'];
+            }
+
+            $stmtBnc->execute([
+                $empresaId,
+                $movcontador,
+                $extrato['data_movimento'],
+                $documento !== '' ? mb_substr($documento, 0, 255) : (string)$extrato['id'],
+                $cbcontador,
+                $tipoes,
+                $tipomov,
+                $historico,
+                $valor,
+                (string)$extrato['id'],
+                $contrapTipoes > 0 ? 'S' : 'N',
+                0,
+                $usuarioId ?: null,
+            ]);
+
+            if ($contrapTipoes > 0) {
+                $movcontadorContrap = proximoMovcontadorExtratoBanco($pdo);
+                $stmtBnc->execute([
+                    $empresaId,
+                    $movcontadorContrap,
+                    $extrato['data_movimento'],
+                    $documento !== '' ? mb_substr($documento, 0, 255) : (string)$extrato['id'],
+                    $contrapCbcontador,
+                    $contrapTipoes,
+                    $contrapTipomov,
+                    'CONTRAPARTIDA - ' . $historico,
+                    $valor,
+                    (string)$extrato['id'],
+                    'N',
+                    $movcontador,
+                    $usuarioId ?: null,
+                ]);
+            }
+
+            $stmtVincular->execute([$empresaId, $movcontador, (int)$extrato['id'], $empresaExtratoId]);
+            if ($stmtVincular->rowCount() !== 1) {
+                throw new RuntimeException('Nao foi possivel vincular o extrato #' . (int)$extrato['id'] . '.');
+            }
+            $stmtLog->execute([$empresaId, $cbcontador, (int)$extrato['id'], $movcontador, 'gerado_bnc001', $usuarioId]);
+            $criados++;
+        }
+
+        $pdo->commit();
+        return $criados;
+    } catch (Throwable $e) {
+        $pdo->rollBack();
+        throw $e;
+    }
+}
+
 $stmtContas = $pdo_master->prepare("
     SELECT
         CBCONTADOR,
@@ -1497,6 +1694,35 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['acao'] ?? '') === 'desfaze
             $pdo_master->rollBack();
         }
         $mensagemErro = $e->getMessage();
+    }
+}
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['acao'] ?? '') === 'lancar_extratos_bnc001') {
+    $extratosSelecionadosBnc = $_POST['extratos_bnc001'] ?? [];
+    $tipoesLancamentoBnc = (int)($_POST['tipoes_bnc001'] ?? 0);
+
+    try {
+        if (!is_array($extratosSelecionadosBnc)) {
+            $extratosSelecionadosBnc = [];
+        }
+
+        $qtdBnc001 = lancarExtratosSelecionadosNoBnc(
+            $pdo_master,
+            $empresaId,
+            $empresaExtratoId,
+            $usuarioId,
+            $extratosSelecionadosBnc,
+            $cbcontador,
+            $tipoesLancamentoBnc
+        );
+
+        header('Location: conciliacao_extratos.php?' . queryConciliacaoExtratos([
+            'ok_lancar_bnc001' => '1',
+            'qtd_bnc001' => $qtdBnc001,
+        ]));
+        exit;
+    } catch (Throwable $e) {
+        $mensagemErro = 'Erro ao lancar extrato no BNC001: ' . $e->getMessage();
     }
 }
 
@@ -2350,6 +2576,10 @@ if (($_GET['ok_recebivel_desfeito'] ?? '') === '1') {
     $mensagemOk = 'Recebivel do extrato desfeito: #' . (int)($_GET['recebimento_desfeito'] ?? 0) . '.';
 }
 
+if (($_GET['ok_lancar_bnc001'] ?? '') === '1') {
+    $mensagemOk = 'Lancamentos BNC001 criados e conciliados: ' . (int)($_GET['qtd_bnc001'] ?? 0) . '.';
+}
+
 $empresasExtrato = $usuarioMaster ? empresasParaRegraExtrato($pdo_master) : [];
 $contasRegraExtrato = $usuarioMaster ? contasParaRegraExtrato($pdo_master) : [];
 $regrasContaSelecionada = $usuarioMaster && $cbcontador > 0 ? listarRegrasContaExtrato($pdo_master, $empresaId, $cbcontador) : [];
@@ -2362,6 +2592,20 @@ if ($cbcontador > 0) {
     } catch (Throwable $e) {
         $bloqueioImportacaoConta = $e->getMessage();
     }
+}
+
+$tiposBncRapido = [];
+if ($empresaId === 2) {
+    $stmtTiposBncRapido = $pdo_master->prepare("
+        SELECT ESCONTADOR, DESCES, TIPOMOV
+        FROM armazem_bnc005
+        WHERE EMPRESA = ?
+          AND TIPOMOV IN ('D', 'C')
+          AND COALESCE(REGDISAB, 'N') <> 'S'
+        ORDER BY TIPOMOV, DESCES, ESCONTADOR
+    ");
+    $stmtTiposBncRapido->execute([$empresaId]);
+    $tiposBncRapido = $stmtTiposBncRapido->fetchAll(PDO::FETCH_ASSOC);
 }
 
 $paramsExtrato = [$empresaExtratoId];
@@ -3730,6 +3974,37 @@ document.addEventListener('DOMContentLoaded', function () {
                             </button>
                         </div>
                     </div>
+                    <?php if ($empresaId === 2): ?>
+                        <form method="POST" id="form-lancar-bnc001" class="mt-3 border rounded-2 bg-white p-2" onsubmit="return confirm('Lancar os extratos selecionados no BNC001 e conciliar automaticamente?');">
+                            <input type="hidden" name="acao" value="lancar_extratos_bnc001">
+                            <input type="hidden" name="cbcontador" value="<?= (int)$cbcontador ?>">
+                            <div class="row g-2 align-items-end">
+                                <div class="col-md-7">
+                                    <label class="form-label small fw-semibold mb-1">TIPOES para lancamento no BNC001</label>
+                                    <select name="tipoes_bnc001" class="form-select form-select-sm" required>
+                                        <option value="">Selecione...</option>
+                                        <?php foreach ($tiposBncRapido as $tipoRapido): ?>
+                                            <option value="<?= (int)$tipoRapido['ESCONTADOR'] ?>">
+                                                <?= htmlspecialchars((string)$tipoRapido['TIPOMOV']) ?>
+                                                -
+                                                <?= (int)$tipoRapido['ESCONTADOR'] ?>
+                                                -
+                                                <?= htmlspecialchars((string)$tipoRapido['DESCES']) ?>
+                                            </option>
+                                        <?php endforeach; ?>
+                                    </select>
+                                </div>
+                                <div class="col-md-5 d-grid">
+                                    <button type="submit" class="btn btn-sm btn-primary" <?= $cbcontador <= 0 || empty($tiposBncRapido) ? 'disabled' : '' ?>>
+                                        Lancar selecionados no BNC001
+                                    </button>
+                                </div>
+                            </div>
+                            <div class="small text-muted mt-1">
+                                Use a selecao BNC na tabela. Extrato D exige TIPOES D; extrato C exige TIPOES C.
+                            </div>
+                        </form>
+                    <?php endif; ?>
                 </div>
                 <div class="table-responsive extrato-bancario-quadro">
                     <form method="POST" id="form-gerar-recebiveis">
@@ -3751,7 +4026,16 @@ document.addEventListener('DOMContentLoaded', function () {
                                     <tr>
                                         <td>
                                             <?php if (($item['conciliado'] ?? 'N') === 'N' && ($item['tipo'] ?? '') === 'C' && empty($item['recebimento_id'])): ?>
-                                                <input type="checkbox" name="extratos_recebiveis[]" value="<?= (int)$item['id'] ?>">
+                                                <label class="d-block small text-muted mb-1">
+                                                    <input type="checkbox" name="extratos_recebiveis[]" value="<?= (int)$item['id'] ?>">
+                                                    Rec
+                                                </label>
+                                            <?php endif; ?>
+                                            <?php if ($empresaId === 2 && ($item['conciliado'] ?? 'N') === 'N' && empty($item['recebimento_id']) && empty($item['bnc001_movcontador'])): ?>
+                                                <label class="d-block small text-muted mb-0">
+                                                    <input type="checkbox" name="extratos_bnc001[]" form="form-lancar-bnc001" value="<?= (int)$item['id'] ?>">
+                                                    BNC
+                                                </label>
                                             <?php endif; ?>
                                         </td>
                                         <td><?= (int)$item['id'] ?></td>

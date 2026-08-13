@@ -772,6 +772,19 @@ function crbExcluirTitulo(PDO $pdo, $empresaId, $usuarioId, $crcontador)
     $stmt->execute([$usuarioId ?: null, $empresaId, $crcontador]);
 }
 
+function crbMovimentoConciliadoExtrato(PDO $pdo, $empresaId, $movcontador)
+{
+    $stmt = $pdo->prepare("
+        SELECT COUNT(*)
+        FROM financeiro_extrato_bancario
+        WHERE bnc001_empresa = ?
+          AND bnc001_movcontador = ?
+          AND conciliado = 'S'
+    ");
+    $stmt->execute([$empresaId, $movcontador]);
+    return (int)$stmt->fetchColumn() > 0;
+}
+
 function crbExcluirBaixaTitulo(PDO $pdo, $empresaId, $usuarioId, $movcontador)
 {
     $stmt = $pdo->prepare("
@@ -827,6 +840,27 @@ function crbExcluirBaixaTitulo(PDO $pdo, $empresaId, $usuarioId, $movcontador)
     $stmtContrapAcerto->execute([$empresaId, $movcontador]);
     if ((int)$stmtContrapAcerto->fetchColumn() > 0) {
         throw new RuntimeException('Contrapartida vinculada a acerto ativo nao pode ser excluida.');
+    }
+
+    if (crbMovimentoConciliadoExtrato($pdo, $empresaId, $movcontador)) {
+        throw new RuntimeException('Baixa conciliada com extrato bancario nao pode ser excluida. Desfaca a conciliacao bancaria antes de excluir.');
+    }
+
+    $stmtContrapConciliada = $pdo->prepare("
+        SELECT b.MOVCONTADOR
+        FROM armazem_bnc001 b
+        INNER JOIN financeiro_extrato_bancario e
+            ON e.bnc001_empresa = b.EMPRESA
+           AND e.bnc001_movcontador = b.MOVCONTADOR
+           AND e.conciliado = 'S'
+        WHERE b.EMPRESA = ?
+          AND b.ORIGEMCPART = ?
+          AND COALESCE(b.deletado, 'N') <> 'S'
+        LIMIT 1
+    ");
+    $stmtContrapConciliada->execute([$empresaId, $movcontador]);
+    if ($stmtContrapConciliada->fetchColumn()) {
+        throw new RuntimeException('Contrapartida conciliada com extrato bancario nao pode ser excluida. Desfaca a conciliacao bancaria antes de excluir.');
     }
 
     $crcontador = (int)$baixa['CRCONTADOR'];
