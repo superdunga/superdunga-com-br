@@ -158,6 +158,9 @@ $bootstrapCssUrl = ($appBaseUrl ?: '') . '/assets/bootstrap/bootstrap.min.css';
         .app-topbar {
             background: linear-gradient(90deg, var(--sd-primary-dark), var(--sd-primary));
             box-shadow: 0 10px 30px rgba(15, 45, 104, .18);
+            position: sticky;
+            top: 0;
+            z-index: 1030;
         }
 
         .app-topbar .nav-link {
@@ -541,6 +544,12 @@ $bootstrapCssUrl = ($appBaseUrl ?: '') . '/assets/bootstrap/bootstrap.min.css';
         @media (max-width: 380px) {
             .app-topbar .navbar-brand span:last-child {
                 display: none;
+            }
+        }
+
+        @media print {
+            .app-topbar {
+                position: static !important;
             }
         }
     </style>
