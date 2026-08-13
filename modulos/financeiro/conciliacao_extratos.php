@@ -3944,11 +3944,51 @@ document.addEventListener('DOMContentLoaded', function () {
     </section>
 <?php endif; ?>
 
+<script>
+function validarLancamentoBnc001Extrato() {
+    var form = document.getElementById('form-lancar-bnc001');
+    if (!form) {
+        return true;
+    }
+
+    var tipoes = form.querySelector('select[name="tipoes_bnc001"]');
+    var tipoesSelecionado = tipoes && tipoes.options[tipoes.selectedIndex] ? tipoes.options[tipoes.selectedIndex] : null;
+    var tipoMov = tipoesSelecionado ? (tipoesSelecionado.getAttribute('data-tipomov') || '').toUpperCase() : '';
+    var selecionados = document.querySelectorAll('input[name="extratos_bnc001[]"][form="form-lancar-bnc001"]:checked');
+
+    if (!tipoes || !tipoes.value) {
+        alert('Selecione o TIPOES para lancar no BNC001.');
+        return false;
+    }
+    if (!selecionados.length) {
+        alert('Marque ao menos um lancamento na selecao BNC.');
+        return false;
+    }
+    if (tipoMov !== 'D' && tipoMov !== 'C') {
+        alert('O TIPOES selecionado nao possui D/C valido.');
+        return false;
+    }
+
+    for (var i = 0; i < selecionados.length; i++) {
+        var tipoExtrato = (selecionados[i].getAttribute('data-tipo') || '').toUpperCase();
+        if (tipoExtrato !== tipoMov) {
+            alert('Extrato ' + tipoExtrato + ' nao pode ser lancado com TIPOES ' + tipoMov + '. Selecione apenas extratos do mesmo D/C do TIPOES.');
+            return false;
+        }
+    }
+
+    return confirm('Lancar os extratos selecionados no BNC001 e conciliar automaticamente?');
+}
+</script>
+
 <section class="mb-4">
     <div class="row g-3">
         <div class="col-xl-6">
             <div class="bg-white border rounded-2 shadow-sm overflow-hidden">
                 <div class="p-3 border-bottom bg-light">
+                    <form method="POST" id="form-gerar-recebiveis" class="d-none">
+                        <input type="hidden" name="acao" value="gerar_recebiveis_banco">
+                    </form>
                     <div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-center gap-2">
                         <div>
                             <h2 class="h6 fw-bold mb-1">
@@ -3992,7 +4032,7 @@ document.addEventListener('DOMContentLoaded', function () {
                         </div>
                     </div>
                     <?php if ($empresaId === 2): ?>
-                        <form method="POST" id="form-lancar-bnc001" class="mt-3 border rounded-2 bg-white p-2" onsubmit="return confirm('Lancar os extratos selecionados no BNC001 e conciliar automaticamente?');">
+                        <form method="POST" id="form-lancar-bnc001" class="mt-3 border rounded-2 bg-white p-2" onsubmit="return validarLancamentoBnc001Extrato();">
                             <input type="hidden" name="acao" value="lancar_extratos_bnc001">
                             <input type="hidden" name="cbcontador" value="<?= (int)$cbcontador ?>">
                             <div class="row g-2 align-items-end">
@@ -4001,7 +4041,7 @@ document.addEventListener('DOMContentLoaded', function () {
                                     <select name="tipoes_bnc001" class="form-select form-select-sm" required>
                                         <option value="">Selecione...</option>
                                         <?php foreach ($tiposBncRapido as $tipoRapido): ?>
-                                            <option value="<?= (int)$tipoRapido['ESCONTADOR'] ?>">
+                                            <option value="<?= (int)$tipoRapido['ESCONTADOR'] ?>" data-tipomov="<?= htmlspecialchars((string)$tipoRapido['TIPOMOV']) ?>">
                                                 <?= htmlspecialchars((string)$tipoRapido['TIPOMOV']) ?>
                                                 -
                                                 <?= (int)$tipoRapido['ESCONTADOR'] ?>
@@ -4037,51 +4077,46 @@ document.addEventListener('DOMContentLoaded', function () {
                     <?php endif; ?>
                 </div>
                 <div class="table-responsive extrato-bancario-quadro">
-                    <form method="POST" id="form-gerar-recebiveis">
-                        <input type="hidden" name="acao" value="gerar_recebiveis_banco">
-                        <table class="table table-sm table-hover align-middle mb-0">
-                            <thead class="table-primary">
+                    <table class="table table-sm table-hover align-middle mb-0">
+                        <thead class="table-primary">
+                            <tr>
+                                <th class="text-center" style="width: 45px;">Rec</th>
+                                <th class="text-center" style="width: 45px;">BNC</th>
+                                <th>ID</th>
+                                <th>Conta / Data</th>
+                                <th>Historico</th>
+                                <th>D/C</th>
+                                <th class="text-end">Valor</th>
+                                <th>Status / Vinculos</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <?php foreach ($extratosPendentes as $item): ?>
                                 <tr>
-                                    <th style="width: 34px;"></th>
-                                    <th>ID</th>
-                                    <th>Conta / Data</th>
-                                    <th>Historico</th>
-                                    <th>D/C</th>
-                                    <th class="text-end">Valor</th>
-                                    <th>Status / Vinculos</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                <?php foreach ($extratosPendentes as $item): ?>
-                                    <tr>
-                                        <td>
-                                            <?php if (($item['conciliado'] ?? 'N') === 'N' && ($item['tipo'] ?? '') === 'C' && empty($item['recebimento_id'])): ?>
-                                                <label class="d-block small text-muted mb-1">
-                                                    <input type="checkbox" name="extratos_recebiveis[]" value="<?= (int)$item['id'] ?>">
-                                                    Rec
-                                                </label>
-                                            <?php endif; ?>
-                                            <?php if ($empresaId === 2 && ($item['conciliado'] ?? 'N') === 'N' && empty($item['recebimento_id']) && empty($item['bnc001_movcontador'])): ?>
-                                                <label class="d-block small text-muted mb-0">
-                                                    <input type="checkbox" name="extratos_bnc001[]" form="form-lancar-bnc001" value="<?= (int)$item['id'] ?>">
-                                                    BNC
-                                                </label>
-                                            <?php endif; ?>
-                                        </td>
-                                        <td><?= (int)$item['id'] ?></td>
-                                        <td>
-                                            <div class="fw-semibold"><?= (int)$item['cbcontador'] ?> - <?= htmlspecialchars($item['nome_conta'] ?: 'Conta') ?></div>
-                                            <div class="small text-muted"><?= dataHoraExtratoBanco($item['data_movimento']) ?></div>
-                                        </td>
-                                        <td class="historico-extrato">
-                                            <div><?= htmlspecialchars($item['historico'] ?: '-') ?></div>
-                                            <?php if (!empty($item['documento'])): ?>
-                                                <div class="small text-muted">Doc: <?= htmlspecialchars($item['documento']) ?></div>
-                                            <?php endif; ?>
-                                        </td>
-                                        <td><?= htmlspecialchars($item['tipo']) ?></td>
-                                        <td class="text-end"><?= moedaExtratoBanco($item['valor']) ?></td>
-                                        <td>
+                                    <td class="text-center">
+                                        <?php if (($item['conciliado'] ?? 'N') === 'N' && ($item['tipo'] ?? '') === 'C' && empty($item['recebimento_id'])): ?>
+                                            <input type="checkbox" name="extratos_recebiveis[]" form="form-gerar-recebiveis" value="<?= (int)$item['id'] ?>" title="Gerar recebivel">
+                                        <?php endif; ?>
+                                    </td>
+                                    <td class="text-center">
+                                        <?php if ($empresaId === 2 && ($item['conciliado'] ?? 'N') === 'N' && empty($item['recebimento_id']) && empty($item['bnc001_movcontador'])): ?>
+                                            <input type="checkbox" name="extratos_bnc001[]" form="form-lancar-bnc001" value="<?= (int)$item['id'] ?>" data-tipo="<?= htmlspecialchars((string)$item['tipo']) ?>" title="Lancar no BNC001">
+                                        <?php endif; ?>
+                                    </td>
+                                    <td><?= (int)$item['id'] ?></td>
+                                    <td>
+                                        <div class="fw-semibold"><?= (int)$item['cbcontador'] ?> - <?= htmlspecialchars($item['nome_conta'] ?: 'Conta') ?></div>
+                                        <div class="small text-muted"><?= dataHoraExtratoBanco($item['data_movimento']) ?></div>
+                                    </td>
+                                    <td class="historico-extrato">
+                                        <div><?= htmlspecialchars($item['historico'] ?: '-') ?></div>
+                                        <?php if (!empty($item['documento'])): ?>
+                                            <div class="small text-muted">Doc: <?= htmlspecialchars($item['documento']) ?></div>
+                                        <?php endif; ?>
+                                    </td>
+                                    <td><?= htmlspecialchars($item['tipo']) ?></td>
+                                    <td class="text-end"><?= moedaExtratoBanco($item['valor']) ?></td>
+                                    <td>
                                             <?php if (($item['conciliado'] ?? 'N') === 'S'): ?>
                                                 <span class="badge text-bg-success">Conciliado</span>
                                                 <?php if (!empty($item['bnc001_empresa'])): ?>
@@ -4136,15 +4171,14 @@ document.addEventListener('DOMContentLoaded', function () {
                                             <?php else: ?>
                                                 <div class="mt-1"><span class="badge text-bg-light border text-dark">Recebivel pendente</span></div>
                                             <?php endif; ?>
-                                        </td>
-                                    </tr>
-                                <?php endforeach; ?>
-                                <?php if (empty($extratosPendentes)): ?>
-                                    <tr><td colspan="7" class="text-center text-muted py-3">Nenhum extrato bancario encontrado para os filtros atuais.</td></tr>
-                                <?php endif; ?>
-                            </tbody>
-                        </table>
-                    </form>
+                                    </td>
+                                </tr>
+                            <?php endforeach; ?>
+                            <?php if (empty($extratosPendentes)): ?>
+                                <tr><td colspan="8" class="text-center text-muted py-3">Nenhum extrato bancario encontrado para os filtros atuais.</td></tr>
+                            <?php endif; ?>
+                        </tbody>
+                    </table>
                     <?php if ($usuarioMaster): ?>
                         <?php foreach ($extratosPendentes as $itemFormDesfazer): ?>
                             <?php if (!empty($itemFormDesfazer['recebimento_id']) && ($itemFormDesfazer['conciliado'] ?? 'N') !== 'S' && empty($itemFormDesfazer['bnc001_movcontador'])): ?>
