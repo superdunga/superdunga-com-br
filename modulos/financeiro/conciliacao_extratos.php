@@ -3217,44 +3217,54 @@ require '../../layout/header.php';
 .extrato-bancario-quadro th,
 .extrato-bancario-quadro td {
     white-space: normal;
-    overflow-wrap: anywhere;
+    overflow-wrap: break-word;
+    word-break: normal;
     vertical-align: middle;
 }
 
 .extrato-bancario-quadro th:nth-child(1),
 .extrato-bancario-quadro td:nth-child(1) {
-    width: 34px;
+    width: 38px;
+    text-align: center;
 }
 
 .extrato-bancario-quadro th:nth-child(2),
 .extrato-bancario-quadro td:nth-child(2) {
-    width: 46px;
+    width: 38px;
+    text-align: center;
 }
 
 .extrato-bancario-quadro th:nth-child(3),
 .extrato-bancario-quadro td:nth-child(3) {
-    width: 126px;
+    width: 56px;
 }
 
-.extrato-bancario-quadro th:nth-child(5),
-.extrato-bancario-quadro td:nth-child(5) {
-    width: 42px;
-    text-align: center;
+.extrato-bancario-quadro th:nth-child(4),
+.extrato-bancario-quadro td:nth-child(4) {
+    width: 140px;
 }
 
 .extrato-bancario-quadro th:nth-child(6),
 .extrato-bancario-quadro td:nth-child(6) {
-    width: 78px;
-    white-space: nowrap;
+    width: 42px;
+    text-align: center;
 }
 
 .extrato-bancario-quadro th:nth-child(7),
 .extrato-bancario-quadro td:nth-child(7) {
-    width: 102px;
+    width: 86px;
+    white-space: nowrap;
+    text-align: right;
+}
+
+.extrato-bancario-quadro th:nth-child(8),
+.extrato-bancario-quadro td:nth-child(8) {
+    width: 120px;
 }
 
 .historico-extrato {
     min-width: 0;
+    overflow-wrap: break-word;
 }
 
 .extrato-bancario-quadro .badge {
@@ -3983,7 +3993,7 @@ function validarLancamentoBnc001Extrato() {
 
 <section class="mb-4">
     <div class="row g-3">
-        <div class="col-xl-6">
+        <div class="col-xl-7">
             <div class="bg-white border rounded-2 shadow-sm overflow-hidden">
                 <div class="p-3 border-bottom bg-light">
                     <form method="POST" id="form-gerar-recebiveis" class="d-none">
@@ -4199,7 +4209,7 @@ function validarLancamentoBnc001Extrato() {
                 </div>
             </div>
         </div>
-        <div class="col-xl-6">
+        <div class="col-xl-5">
             <div class="bg-white border rounded-2 shadow-sm overflow-hidden">
                 <div class="p-3 border-bottom bg-light">
                     <div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-center gap-2">
