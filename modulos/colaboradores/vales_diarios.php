@@ -179,7 +179,7 @@ function enviarPdfVales(array $paginas, string $arquivo): void
     exit;
 }
 
-function gerarPdfRecibosVales(string $tipo, array $acerto, array $itens, array $totais, string $nomeEmpresa, int $empresaId): void
+function gerarPdfRecibosVales(string $tipo, array $acerto, array $itens, array $totais, string $nomeEmpresa, int $empresaId, bool $detalhado = true): void
 {
     $referencia = (string)$acerto['referencia'];
     $periodo = dataVales($acerto['data_ini']) . ' a ' . dataVales($acerto['data_fim']);
@@ -220,8 +220,12 @@ function gerarPdfRecibosVales(string $tipo, array $acerto, array $itens, array $
     if ($tipo === 'empresa') {
         $novaPagina('Recibo consolidado de vales diarios');
         $linha('Competencia: ' . $referencia . ' | Periodo: ' . $periodo . ' | Status: ' . (string)$acerto['status'], 9);
-        $linha('Colaboradores: ' . count($itens) . ' | Dias VA: ' . (int)$totais['dias_va'] . ' | VTs: ' . (int)$totais['qtd_vt'], 9);
-        $linha('Total VT: ' . moedaVales($totais['vt']) . ' | Total VA: ' . moedaVales($totais['va']) . ' | Total geral: ' . moedaVales($totais['geral']), 10, true);
+        if ($detalhado) {
+            $linha('Colaboradores: ' . count($itens) . ' | Dias VA: ' . (int)$totais['dias_va'] . ' | VTs: ' . (int)$totais['qtd_vt'], 9);
+            $linha('Total VT: ' . moedaVales($totais['vt']) . ' | Total VA: ' . moedaVales($totais['va']) . ' | Total geral: ' . moedaVales($totais['geral']), 10, true);
+        } else {
+            $linha('Colaboradores: ' . count($itens) . ' | Total geral: ' . moedaVales($totais['geral']), 10, true);
+        }
         $linha('Declaramos que a empresa realizou o pagamento de vales diarios referente ao acerto #' . (int)$acerto['id'] . ', no valor total de ' . moedaVales($totais['geral']) . '.', 8);
         $linha('Assinaturas: Responsavel pela empresa / Conferencia financeira', 8);
         $salvarPagina();
@@ -235,9 +239,16 @@ function gerarPdfRecibosVales(string $tipo, array $acerto, array $itens, array $
         $novaPagina('Recibo individual de vales diarios');
         $linha('Colaborador: ' . (int)$item['funcionario_id'] . ' - ' . (string)$item['nome_funcionario'], 10, true);
         $linha('Competencia: ' . $referencia . ' | Periodo: ' . $periodo . ' | Gerado em: ' . agoraVales(), 8);
-        $linha('Recebi de ' . $nomeEmpresa . ' os valores referentes ao pagamento antecipado de vales diarios do periodo ' . $periodo . '.', 8);
-        $linha('Vale transporte: ' . (int)$item['qtd_vt'] . ' unidade(s) | Unitario ' . moedaVales($item['valor_vt']) . ' | Total ' . moedaVales($item['total_vt']), 8);
-        $linha('Vale alimentacao: ' . (int)$item['dias_va'] . ' dia(s) | Unitario ' . moedaVales($item['valor_va']) . ' | Total ' . moedaVales($item['total_va']), 8);
+        $temVt = (float)$item['valor_vt'] > 0 || (float)$item['total_vt'] > 0;
+        $temVa = (float)$item['valor_va'] > 0 || (float)$item['total_va'] > 0;
+        $descricao = $temVt && $temVa ? 'vale transporte e vale alimentacao' : ($temVt ? 'vale transporte' : 'vale alimentacao');
+        $linha('Recebi de ' . $nomeEmpresa . ' os valores referentes ao pagamento antecipado de ' . $descricao . ' do periodo ' . $periodo . '.', 8);
+        if ($temVt) {
+            $linha('Vale transporte: ' . (int)$item['qtd_vt'] . ' unidade(s) | Unitario ' . moedaVales($item['valor_vt']) . ' | Total ' . moedaVales($item['total_vt']), 8);
+        }
+        if ($temVa) {
+            $linha('Vale alimentacao: ' . (int)$item['qtd_dias_va'] . ' dia(s) | Unitario ' . moedaVales($item['valor_va']) . ' | Total ' . moedaVales($item['total_va']), 8);
+        }
         $linha('Total recebido: ' . moedaVales($item['total_geral']), 10, true);
         $linha('Assinatura do colaborador: ________________________________________________', 8);
     }
@@ -246,7 +257,7 @@ function gerarPdfRecibosVales(string $tipo, array $acerto, array $itens, array $
     enviarPdfVales($paginas, nomeArquivoReciboVales($tipo, $empresaId, $acerto));
 }
 
-function imprimirRecibosVales(string $tipo, array $acerto, array $itens, array $totais, string $nomeEmpresa): void
+function imprimirRecibosVales(string $tipo, array $acerto, array $itens, array $totais, string $nomeEmpresa, bool $detalhado = true): void
 {
     $referencia = (string)$acerto['referencia'];
     $periodo = dataVales($acerto['data_ini']) . ' a ' . dataVales($acerto['data_fim']);
@@ -314,9 +325,13 @@ function imprimirRecibosVales(string $tipo, array $acerto, array $itens, array $
                 </div>
                 <div class="resumo">
                     <div class="box"><span class="label">Colaboradores</span><strong><?= number_format(count($itens), 0, ',', '.') ?></strong></div>
-                    <div class="box"><span class="label">Dias com VA</span><strong><?= number_format($totais['dias_va'], 0, ',', '.') ?></strong></div>
-                    <div class="box"><span class="label">VTs</span><strong><?= number_format($totais['qtd_vt'], 0, ',', '.') ?> | <?= moedaVales($totais['vt']) ?></strong></div>
-                    <div class="box"><span class="label">VA</span><strong><?= moedaVales($totais['va']) ?></strong></div>
+                    <?php if ($detalhado): ?>
+                        <div class="box"><span class="label">Dias com VA</span><strong><?= number_format($totais['dias_va'], 0, ',', '.') ?></strong></div>
+                        <div class="box"><span class="label">VTs</span><strong><?= number_format($totais['qtd_vt'], 0, ',', '.') ?> | <?= moedaVales($totais['vt']) ?></strong></div>
+                        <div class="box"><span class="label">VA</span><strong><?= moedaVales($totais['va']) ?></strong></div>
+                    <?php else: ?>
+                        <div class="box" style="grid-column: span 3;"><span class="label">Total geral</span><strong><?= moedaVales($totais['geral']) ?></strong></div>
+                    <?php endif; ?>
                 </div>
                 <div class="texto">
                     Declaramos para os devidos fins que a empresa <strong><?= htmlspecialchars($nomeEmpresa) ?></strong>
@@ -545,21 +560,55 @@ function garantirTabelasValesDiarios(PDO $pdo): void
     if (!indiceExisteVales($pdo, 'colaboradores_vales_itens', 'uniq_vales_item_acerto_func')) {
         $pdo->exec("ALTER TABLE colaboradores_vales_itens ADD UNIQUE KEY uniq_vales_item_acerto_func (acerto_id, funcionario_id)");
     }
+
+    $pdo->exec("
+        CREATE TABLE IF NOT EXISTS colaboradores_vales_dias (
+            id BIGINT AUTO_INCREMENT PRIMARY KEY,
+            empresa_id INT NOT NULL,
+            referencia CHAR(7) NOT NULL,
+            acerto_id INT NOT NULL,
+            item_id INT NOT NULL,
+            funcionario_id INT NOT NULL,
+            data_beneficio DATE NOT NULL,
+            ida CHAR(1) NOT NULL DEFAULT 'N',
+            volta CHAR(1) NOT NULL DEFAULT 'N',
+            gera_va CHAR(1) NOT NULL DEFAULT 'N',
+            atualizado_por INT NULL,
+            atualizado_em DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            UNIQUE KEY uniq_vales_func_data (empresa_id, funcionario_id, data_beneficio),
+            KEY idx_vales_dias_acerto (empresa_id, acerto_id, funcionario_id),
+            KEY idx_vales_dias_item (item_id)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    ");
+
+    $pdo->exec("
+        CREATE TABLE IF NOT EXISTS colaboradores_vales_status_historico (
+            id BIGINT AUTO_INCREMENT PRIMARY KEY,
+            empresa_id INT NOT NULL,
+            acerto_id INT NOT NULL,
+            status_anterior VARCHAR(20) NOT NULL,
+            status_novo VARCHAR(20) NOT NULL,
+            justificativa VARCHAR(255) NULL,
+            usuario_id INT NULL,
+            criado_em DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            KEY idx_vales_status_acerto (empresa_id, acerto_id, criado_em)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    ");
 }
 
-function buscarFuncionariosVales(PDO $pdo, int $empresaId, string $fimMes): array
+function buscarFuncionariosVales(PDO $pdo, int $empresaId, string $dataIni, string $dataFim): array
 {
     $stmt = $pdo->prepare("
         SELECT FUNCCONTADOR, NOMEFUNC, DTADMISSAO, DTDEMISSAO, QTDEVALES
         FROM armazem_REP001
         WHERE EMPRESA = ?
           AND DTADMISSAO <= ?
-          AND DTDEMISSAO IS NULL
+          AND (DTDEMISSAO IS NULL OR DTDEMISSAO >= ?)
           AND COALESCE(QTDEVALES, 0) = 10
           AND COALESCE(INATIVO, 'N') NOT IN ('S', '1')
         ORDER BY NOMEFUNC
     ");
-    $stmt->execute([$empresaId, $fimMes]);
+    $stmt->execute([$empresaId, $dataFim, $dataIni]);
     return $stmt->fetchAll(PDO::FETCH_ASSOC);
 }
 
@@ -586,12 +635,64 @@ function garantirCompetenciaVales(PDO $pdo, int $empresaId, int $usuarioId, stri
     return $competencia;
 }
 
-function buscarAcertoVales(PDO $pdo, int $empresaId, int $acertoId): ?array
+function buscarAcertoVales(PDO $pdo, int $empresaId, int $acertoId, string $referencia = ''): ?array
 {
-    $stmt = $pdo->prepare("SELECT * FROM colaboradores_vales_acertos WHERE empresa_id = ? AND id = ? LIMIT 1");
-    $stmt->execute([$empresaId, $acertoId]);
+    $sql = "SELECT * FROM colaboradores_vales_acertos WHERE empresa_id = ? AND id = ?";
+    $params = [$empresaId, $acertoId];
+    if ($referencia !== '') {
+        $sql .= " AND referencia = ?";
+        $params[] = $referencia;
+    }
+    $stmt = $pdo->prepare($sql . " LIMIT 1");
+    $stmt->execute($params);
     $acerto = $stmt->fetch(PDO::FETCH_ASSOC);
     return $acerto ?: null;
+}
+
+function dataDiaReferenciaVales(string $referencia, int $dia): string
+{
+    $data = sprintf('%s-%02d', $referencia, $dia);
+    $obj = DateTimeImmutable::createFromFormat('!Y-m-d', $data);
+    if (!$obj || $obj->format('Y-m-d') !== $data) {
+        throw new RuntimeException('Dia invalido para a competencia: ' . $dia . '.');
+    }
+    return $data;
+}
+
+function migrarDiasLegadosVales(PDO $pdo): void
+{
+    $stmt = $pdo->query("
+        SELECT i.id, i.empresa_id, i.referencia, i.acerto_id, i.funcionario_id, i.dias_json, i.atualizado_por
+        FROM colaboradores_vales_itens i
+        INNER JOIN colaboradores_vales_acertos a ON a.id = i.acerto_id AND a.empresa_id = i.empresa_id
+        WHERE i.acerto_id IS NOT NULL
+          AND i.qtd_dias > 0
+          AND NOT EXISTS (
+              SELECT 1 FROM colaboradores_vales_dias d WHERE d.item_id = i.id
+          )
+        ORDER BY i.id
+    ");
+    $insert = $pdo->prepare("
+        INSERT INTO colaboradores_vales_dias
+            (empresa_id, referencia, acerto_id, item_id, funcionario_id, data_beneficio, ida, volta, gera_va, atualizado_por)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'S', ?)
+    ");
+
+    foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $item) {
+        foreach (escalaVales($item['dias_json']) as $dia => $turnos) {
+            $insert->execute([
+                (int)$item['empresa_id'],
+                (string)$item['referencia'],
+                (int)$item['acerto_id'],
+                (int)$item['id'],
+                (int)$item['funcionario_id'],
+                dataDiaReferenciaVales((string)$item['referencia'], (int)$dia),
+                !empty($turnos['ida']) ? 'S' : 'N',
+                !empty($turnos['volta']) ? 'S' : 'N',
+                !empty($item['atualizado_por']) ? (int)$item['atualizado_por'] : null,
+            ]);
+        }
+    }
 }
 
 function diasPeriodoVales(string $dataIni, string $dataFim): array
@@ -614,25 +715,23 @@ function diasPeriodoVales(string $dataIni, string $dataFim): array
 function diasBloqueadosVales(PDO $pdo, int $empresaId, string $referencia, int $funcionarioId, int $acertoAtualId): array
 {
     $stmt = $pdo->prepare("
-        SELECT a.id AS acerto_id, a.status, i.dias_json
-        FROM colaboradores_vales_itens i
-        INNER JOIN colaboradores_vales_acertos a ON a.id = i.acerto_id
-        WHERE i.empresa_id = ?
-          AND i.referencia = ?
-          AND i.funcionario_id = ?
-          AND i.acerto_id <> ?
+        SELECT a.id AS acerto_id, a.status, DAY(d.data_beneficio) AS dia
+        FROM colaboradores_vales_dias d
+        INNER JOIN colaboradores_vales_acertos a ON a.id = d.acerto_id
+        WHERE d.empresa_id = ?
+          AND d.referencia = ?
+          AND d.funcionario_id = ?
+          AND d.acerto_id <> ?
           AND a.status IN ('ABERTO', 'FECHADO', 'PAGO')
     ");
     $stmt->execute([$empresaId, $referencia, $funcionarioId, $acertoAtualId]);
 
     $bloqueados = [];
     foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $linha) {
-        foreach (diasEscalaVales($linha['dias_json']) as $dia) {
-            $bloqueados[(int)$dia] = [
-                'acerto_id' => (int)$linha['acerto_id'],
-                'status' => (string)$linha['status'],
-            ];
-        }
+        $bloqueados[(int)$linha['dia']] = [
+            'acerto_id' => (int)$linha['acerto_id'],
+            'status' => (string)$linha['status'],
+        ];
     }
     return $bloqueados;
 }
@@ -684,31 +783,33 @@ function gerarItensAcertoVales(PDO $pdo, int $empresaId, int $usuarioId, array $
 function validarConflitosAcertoVales(PDO $pdo, int $empresaId, string $referencia, int $acertoId): array
 {
     $stmt = $pdo->prepare("
-        SELECT id, funcionario_id, nome_funcionario, dias_json
-        FROM colaboradores_vales_itens
-        WHERE empresa_id = ?
-          AND referencia = ?
-          AND acerto_id = ?
-        ORDER BY nome_funcionario
+        SELECT atual.nome_funcionario,
+               DAY(d_atual.data_beneficio) AS dia,
+               d_outro.acerto_id AS outro_acerto
+        FROM colaboradores_vales_dias d_atual
+        INNER JOIN colaboradores_vales_itens atual ON atual.id = d_atual.item_id
+        INNER JOIN colaboradores_vales_dias d_outro
+            ON d_outro.empresa_id = d_atual.empresa_id
+           AND d_outro.funcionario_id = d_atual.funcionario_id
+           AND d_outro.data_beneficio = d_atual.data_beneficio
+           AND d_outro.acerto_id <> d_atual.acerto_id
+        INNER JOIN colaboradores_vales_acertos outro ON outro.id = d_outro.acerto_id
+        WHERE d_atual.empresa_id = ?
+          AND d_atual.referencia = ?
+          AND d_atual.acerto_id = ?
+          AND outro.status IN ('ABERTO', 'FECHADO', 'PAGO')
+        ORDER BY atual.nome_funcionario, d_atual.data_beneficio
     ");
     $stmt->execute([$empresaId, $referencia, $acertoId]);
-
     $conflitos = [];
-    foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $item) {
-        $dias = diasEscalaVales($item['dias_json']);
-        if (!$dias) {
-            continue;
-        }
-        $bloqueados = diasBloqueadosVales($pdo, $empresaId, $referencia, (int)$item['funcionario_id'], $acertoId);
-        $intersecao = array_values(array_intersect($dias, array_keys($bloqueados)));
-        if ($intersecao) {
-            $conflitos[] = $item['nome_funcionario'] . ': dia(s) ' . implode(', ', $intersecao);
-        }
+    foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $linha) {
+        $conflitos[] = $linha['nome_funcionario'] . ': dia ' . (int)$linha['dia'] . ' (acerto #' . (int)$linha['outro_acerto'] . ')';
     }
     return $conflitos;
 }
 
 garantirTabelasValesDiarios($pdo_master);
+migrarDiasLegadosVales($pdo_master);
 
 $referencia = $_REQUEST['referencia'] ?? date('Y-m');
 if (!preg_match('/^\d{4}-\d{2}$/', $referencia)) {
@@ -720,7 +821,7 @@ $fimMes = date('Y-m-t', strtotime($inicioMes));
 $acao = $_SERVER['REQUEST_METHOD'] === 'POST' ? (string)($_POST['acao'] ?? '') : '';
 $mensagemOk = '';
 $mensagemErro = '';
-$funcionarios = buscarFuncionariosVales($pdo_master, $empresaId, $fimMes);
+$funcionarios = buscarFuncionariosVales($pdo_master, $empresaId, $inicioMes, $fimMes);
 
 try {
     if ($acao === 'salvar_parametros') {
@@ -771,20 +872,30 @@ try {
             throw new RuntimeException('Informe um periodo valido dentro da competencia.');
         }
 
-        $stmtAcerto = $pdo_master->prepare("
-            INSERT INTO colaboradores_vales_acertos
-                (competencia_id, empresa_id, referencia, data_ini, data_fim, status, observacao, criado_por, atualizado_por)
-            VALUES (?, ?, ?, ?, ?, 'ABERTO', NULLIF(?, ''), ?, ?)
-        ");
-        $stmtAcerto->execute([(int)$competencia['id'], $empresaId, $referencia, $dataIni, $dataFim, $observacao, $usuarioId ?: null, $usuarioId ?: null]);
-        $acertoIdCriado = (int)$pdo_master->lastInsertId();
-        gerarItensAcertoVales($pdo_master, $empresaId, $usuarioId, $competencia, $acertoIdCriado, $funcionarios);
+        $funcionariosPeriodo = buscarFuncionariosVales($pdo_master, $empresaId, $dataIni, $dataFim);
+        $pdo_master->beginTransaction();
+        try {
+            $stmtAcerto = $pdo_master->prepare("
+                INSERT INTO colaboradores_vales_acertos
+                    (competencia_id, empresa_id, referencia, data_ini, data_fim, status, observacao, criado_por, atualizado_por)
+                VALUES (?, ?, ?, ?, ?, 'ABERTO', NULLIF(?, ''), ?, ?)
+            ");
+            $stmtAcerto->execute([(int)$competencia['id'], $empresaId, $referencia, $dataIni, $dataFim, $observacao, $usuarioId ?: null, $usuarioId ?: null]);
+            $acertoIdCriado = (int)$pdo_master->lastInsertId();
+            gerarItensAcertoVales($pdo_master, $empresaId, $usuarioId, $competencia, $acertoIdCriado, $funcionariosPeriodo);
+            $pdo_master->commit();
+        } catch (Throwable $e) {
+            if ($pdo_master->inTransaction()) {
+                $pdo_master->rollBack();
+            }
+            throw $e;
+        }
         header('Location: vales_diarios.php?referencia=' . urlencode($referencia) . '&acerto_id=' . $acertoIdCriado . '&ok=acerto');
         exit;
     }
 
     if ($acao === 'atualizar_colaboradores') {
-        $acerto = buscarAcertoVales($pdo_master, $empresaId, (int)($_POST['acerto_id'] ?? 0));
+        $acerto = buscarAcertoVales($pdo_master, $empresaId, (int)($_POST['acerto_id'] ?? 0), $referencia);
         if (!$acerto || ($acerto['status'] ?? '') !== 'ABERTO') {
             throw new RuntimeException('Selecione um acerto aberto.');
         }
@@ -792,16 +903,85 @@ try {
         if (!$competencia) {
             throw new RuntimeException('Competencia nao encontrada.');
         }
-        gerarItensAcertoVales($pdo_master, $empresaId, $usuarioId, $competencia, (int)$acerto['id'], $funcionarios);
+        $funcionariosPeriodo = buscarFuncionariosVales($pdo_master, $empresaId, (string)$acerto['data_ini'], (string)$acerto['data_fim']);
+        gerarItensAcertoVales($pdo_master, $empresaId, $usuarioId, $competencia, (int)$acerto['id'], $funcionariosPeriodo);
         $mensagemOk = 'Colaboradores atualizados no acerto.';
     }
 
     if ($acao === 'salvar_dias') {
-        $acerto = buscarAcertoVales($pdo_master, $empresaId, (int)($_POST['acerto_id'] ?? 0));
+        $acerto = buscarAcertoVales($pdo_master, $empresaId, (int)($_POST['acerto_id'] ?? 0), $referencia);
         if (!$acerto || ($acerto['status'] ?? '') !== 'ABERTO') {
             throw new RuntimeException('Somente acertos abertos podem ser alterados.');
         }
         $diasPermitidos = array_column(diasPeriodoVales($acerto['data_ini'], $acerto['data_fim']), 'dia');
+        $itensEnviados = array_values(array_unique(array_map('intval', $_POST['item_id'] ?? [])));
+        if (!$itensEnviados) {
+            throw new RuntimeException('Nenhum colaborador foi enviado para salvar.');
+        }
+
+        $placeholders = implode(',', array_fill(0, count($itensEnviados), '?'));
+        $stmtItensValidos = $pdo_master->prepare("
+            SELECT id, funcionario_id, nome_funcionario, valor_vt, valor_va
+            FROM colaboradores_vales_itens
+            WHERE empresa_id = ?
+              AND acerto_id = ?
+              AND id IN ({$placeholders})
+        ");
+        $stmtItensValidos->execute(array_merge([$empresaId, (int)$acerto['id']], $itensEnviados));
+        $itensValidos = [];
+        foreach ($stmtItensValidos->fetchAll(PDO::FETCH_ASSOC) as $itemValido) {
+            $itensValidos[(int)$itemValido['id']] = $itemValido;
+        }
+        if (count($itensValidos) !== count($itensEnviados)) {
+            throw new RuntimeException('A escala contem colaborador invalido para este acerto.');
+        }
+
+        $escalasSalvar = [];
+        foreach ($itensEnviados as $itemId) {
+            $idas = array_map('intval', $_POST['ida'][$itemId] ?? []);
+            $voltas = array_map('intval', $_POST['volta'][$itemId] ?? []);
+            $diasComMarcacao = array_values(array_unique(array_merge($idas, $voltas)));
+            $diasComMarcacao = array_values(array_intersect($diasComMarcacao, $diasPermitidos));
+            sort($diasComMarcacao);
+
+            $escala = [];
+            foreach ($diasComMarcacao as $dia) {
+                $ida = in_array($dia, $idas, true);
+                $volta = in_array($dia, $voltas, true);
+                if ($ida || $volta) {
+                    $escala[(int)$dia] = ['ida' => $ida, 'volta' => $volta];
+                }
+            }
+            $escalasSalvar[$itemId] = $escala;
+        }
+
+        $stmtConflito = $pdo_master->prepare("
+            SELECT d.acerto_id
+            FROM colaboradores_vales_dias d
+            INNER JOIN colaboradores_vales_acertos a ON a.id = d.acerto_id
+            WHERE d.empresa_id = ?
+              AND d.funcionario_id = ?
+              AND d.data_beneficio = ?
+              AND d.acerto_id <> ?
+              AND a.status IN ('ABERTO', 'FECHADO', 'PAGO')
+            LIMIT 1
+        ");
+        $conflitosPrevios = [];
+        foreach ($escalasSalvar as $itemId => $escala) {
+            $itemValido = $itensValidos[$itemId];
+            foreach (array_keys($escala) as $dia) {
+                $dataBeneficio = dataDiaReferenciaVales($referencia, (int)$dia);
+                $stmtConflito->execute([$empresaId, (int)$itemValido['funcionario_id'], $dataBeneficio, (int)$acerto['id']]);
+                $outroAcerto = (int)($stmtConflito->fetchColumn() ?: 0);
+                if ($outroAcerto > 0) {
+                    $conflitosPrevios[] = $itemValido['nome_funcionario'] . ': dia ' . (int)$dia . ' (acerto #' . $outroAcerto . ')';
+                }
+            }
+        }
+        if ($conflitosPrevios) {
+            throw new RuntimeException('Existem dias ja selecionados em outro acerto: ' . implode(' | ', $conflitosPrevios));
+        }
+
         $stmtItem = $pdo_master->prepare("
             UPDATE colaboradores_vales_itens
             SET dias_json = ?,
@@ -818,70 +998,95 @@ try {
               AND empresa_id = ?
               AND acerto_id = ?
         ");
-        $stmtItemAtual = $pdo_master->prepare("
-            SELECT valor_vt, valor_va
-            FROM colaboradores_vales_itens
-            WHERE id = ?
-              AND empresa_id = ?
-              AND acerto_id = ?
-            LIMIT 1
+        $stmtExcluirDias = $pdo_master->prepare("
+            DELETE FROM colaboradores_vales_dias
+            WHERE empresa_id = ? AND acerto_id = ? AND item_id = ?
+        ");
+        $stmtInserirDia = $pdo_master->prepare("
+            INSERT INTO colaboradores_vales_dias
+                (empresa_id, referencia, acerto_id, item_id, funcionario_id, data_beneficio, ida, volta, gera_va, atualizado_por)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ");
 
-        foreach ($_POST['item_id'] ?? [] as $itemId) {
-            $itemId = (int)$itemId;
-            $idas = array_map('intval', $_POST['ida'][$itemId] ?? []);
-            $voltas = array_map('intval', $_POST['volta'][$itemId] ?? []);
-            $diasComMarcacao = array_values(array_unique(array_merge($idas, $voltas)));
-            $diasComMarcacao = array_values(array_intersect($diasComMarcacao, $diasPermitidos));
-            sort($diasComMarcacao);
-
-            $escala = [];
-            foreach ($diasComMarcacao as $dia) {
-                $ida = in_array($dia, $idas, true);
-                $volta = in_array($dia, $voltas, true);
-                if ($ida || $volta) {
-                    $escala[(int)$dia] = ['ida' => $ida, 'volta' => $volta];
+        $pdo_master->beginTransaction();
+        try {
+            foreach ($escalasSalvar as $itemId => $escala) {
+                $itemAtual = $itensValidos[$itemId];
+                $qtdDias = count($escala);
+                $qtdVt = qtdVtEscalaVales($escala);
+                $qtdDiasVa = $qtdDias;
+                $valorVt = (float)$itemAtual['valor_vt'];
+                $valorVa = (float)$itemAtual['valor_va'];
+                $totalVt = round($qtdVt * $valorVt, 2);
+                $totalVa = round($qtdDiasVa * $valorVa, 2);
+                $totalGeral = round($totalVt + $totalVa, 2);
+                $stmtItem->execute([
+                    json_encode($escala, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
+                    $qtdDias,
+                    $qtdVt,
+                    $qtdDiasVa,
+                    $valorVt,
+                    $valorVa,
+                    $totalVt,
+                    $totalVa,
+                    $totalGeral,
+                    $usuarioId ?: null,
+                    $itemId,
+                    $empresaId,
+                    (int)$acerto['id'],
+                ]);
+                $stmtExcluirDias->execute([$empresaId, (int)$acerto['id'], $itemId]);
+                foreach ($escala as $dia => $turnos) {
+                    $stmtInserirDia->execute([
+                        $empresaId,
+                        $referencia,
+                        (int)$acerto['id'],
+                        $itemId,
+                        (int)$itemAtual['funcionario_id'],
+                        dataDiaReferenciaVales($referencia, (int)$dia),
+                        !empty($turnos['ida']) ? 'S' : 'N',
+                        !empty($turnos['volta']) ? 'S' : 'N',
+                        $valorVa > 0 ? 'S' : 'N',
+                        $usuarioId ?: null,
+                    ]);
                 }
             }
-
-            $qtdDias = count($escala);
-            $qtdVt = qtdVtEscalaVales($escala);
-            $qtdDiasVa = $qtdDias;
-            $stmtItemAtual->execute([$itemId, $empresaId, (int)$acerto['id']]);
-            $itemAtual = $stmtItemAtual->fetch(PDO::FETCH_ASSOC) ?: ['valor_vt' => 0, 'valor_va' => 0];
-            $valorVt = (float)$itemAtual['valor_vt'];
-            $valorVa = (float)$itemAtual['valor_va'];
-            $totalVt = round($qtdVt * $valorVt, 2);
-            $totalVa = round($qtdDiasVa * $valorVa, 2);
-            $totalGeral = round($totalVt + $totalVa, 2);
-            $stmtItem->execute([
-                json_encode($escala, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
-                $qtdDias,
-                $qtdVt,
-                $qtdDiasVa,
-                $valorVt,
-                $valorVa,
-                $totalVt,
-                $totalVa,
-                $totalGeral,
-                $usuarioId ?: null,
-                $itemId,
-                $empresaId,
-                (int)$acerto['id'],
-            ]);
-        }
-
-        $conflitos = validarConflitosAcertoVales($pdo_master, $empresaId, $referencia, (int)$acerto['id']);
-        if ($conflitos) {
-            throw new RuntimeException('Existem dias ja selecionados em outro acerto para este funcionario: ' . implode(' | ', $conflitos));
+            $pdo_master->commit();
+        } catch (PDOException $e) {
+            if ($pdo_master->inTransaction()) {
+                $pdo_master->rollBack();
+            }
+            if ((string)$e->getCode() === '23000') {
+                throw new RuntimeException('Um dos dias foi gravado em outro acerto durante esta operacao. Nenhuma alteracao foi salva.');
+            }
+            throw $e;
+        } catch (Throwable $e) {
+            if ($pdo_master->inTransaction()) {
+                $pdo_master->rollBack();
+            }
+            throw $e;
         }
         $mensagemOk = 'Escala e valores salvos.';
     }
 
     if (in_array($acao, ['fechar', 'pagar', 'reabrir'], true)) {
-        $acerto = buscarAcertoVales($pdo_master, $empresaId, (int)($_POST['acerto_id'] ?? 0));
+        $acerto = buscarAcertoVales($pdo_master, $empresaId, (int)($_POST['acerto_id'] ?? 0), $referencia);
         if (!$acerto) {
             throw new RuntimeException('Acerto nao encontrado.');
+        }
+        $statusAnterior = (string)$acerto['status'];
+        if ($acao === 'fechar' && $statusAnterior !== 'ABERTO') {
+            throw new RuntimeException('Somente acertos abertos podem ser fechados.');
+        }
+        if ($acao === 'pagar' && (!$podeVerDetalhesBeneficios || $statusAnterior !== 'FECHADO')) {
+            throw new RuntimeException('Somente MASTER ou GERENTE podem marcar um acerto fechado como pago.');
+        }
+        if ($acao === 'reabrir' && (!$podeVerDetalhesBeneficios || !in_array($statusAnterior, ['FECHADO', 'PAGO'], true))) {
+            throw new RuntimeException('Somente MASTER ou GERENTE podem reabrir um acerto fechado ou pago.');
+        }
+        $justificativa = trim((string)($_POST['justificativa'] ?? ''));
+        if ($acao === 'reabrir' && $justificativa === '') {
+            throw new RuntimeException('Informe a justificativa para reabrir o acerto.');
         }
         if (in_array($acao, ['fechar', 'pagar'], true)) {
             $conflitos = validarConflitosAcertoVales($pdo_master, $empresaId, $referencia, (int)$acerto['id']);
@@ -890,14 +1095,33 @@ try {
             }
         }
         $novoStatus = ['fechar' => 'FECHADO', 'pagar' => 'PAGO', 'reabrir' => 'ABERTO'][$acao];
-        $stmtStatus = $pdo_master->prepare("
-            UPDATE colaboradores_vales_acertos
-            SET status = ?,
-                atualizado_por = ?
-            WHERE empresa_id = ?
-              AND id = ?
-        ");
-        $stmtStatus->execute([$novoStatus, $usuarioId ?: null, $empresaId, (int)$acerto['id']]);
+        $pdo_master->beginTransaction();
+        try {
+            $stmtStatus = $pdo_master->prepare("
+                UPDATE colaboradores_vales_acertos
+                SET status = ?,
+                    atualizado_por = ?
+                WHERE empresa_id = ?
+                  AND id = ?
+                  AND status = ?
+            ");
+            $stmtStatus->execute([$novoStatus, $usuarioId ?: null, $empresaId, (int)$acerto['id'], $statusAnterior]);
+            if ($stmtStatus->rowCount() !== 1) {
+                throw new RuntimeException('O status do acerto foi alterado por outro usuario. Atualize a pagina.');
+            }
+            $stmtHistorico = $pdo_master->prepare("
+                INSERT INTO colaboradores_vales_status_historico
+                    (empresa_id, acerto_id, status_anterior, status_novo, justificativa, usuario_id)
+                VALUES (?, ?, ?, ?, NULLIF(?, ''), ?)
+            ");
+            $stmtHistorico->execute([$empresaId, (int)$acerto['id'], $statusAnterior, $novoStatus, $justificativa, $usuarioId ?: null]);
+            $pdo_master->commit();
+        } catch (Throwable $e) {
+            if ($pdo_master->inTransaction()) {
+                $pdo_master->rollBack();
+            }
+            throw $e;
+        }
         $mensagemOk = 'Status do acerto atualizado.';
     }
 } catch (Throwable $e) {
@@ -926,7 +1150,7 @@ $stmtAcertos->execute([$empresaId, $referencia]);
 $acertos = $stmtAcertos->fetchAll(PDO::FETCH_ASSOC);
 
 $acertoId = (int)($_REQUEST['acerto_id'] ?? ($acertos[0]['id'] ?? 0));
-$acertoAtual = $acertoId > 0 ? buscarAcertoVales($pdo_master, $empresaId, $acertoId) : null;
+$acertoAtual = $acertoId > 0 ? buscarAcertoVales($pdo_master, $empresaId, $acertoId, $referencia) : null;
 $periodoDias = $acertoAtual ? diasPeriodoVales($acertoAtual['data_ini'], $acertoAtual['data_fim']) : [];
 
 $stmtParametros = $pdo_master->prepare("SELECT * FROM colaboradores_vales_parametros WHERE empresa_id = ?");
@@ -975,10 +1199,20 @@ if ($acertoAtual && in_array(($_GET['recibo'] ?? ''), ['empresa', 'colaboradores
         exit('Somente usuarios MASTER ou GERENTE podem emitir recibos detalhados por colaborador.');
     }
     $nomeEmpresaRecibo = nomeEmpresaVales($pdo_master, $empresaId);
-    if (($_GET['preview'] ?? '') === '1') {
-        imprimirRecibosVales($tipoRecibo, $acertoAtual, $itens, $totais, $nomeEmpresaRecibo);
+    $itensRecibo = $itens;
+    if ($tipoRecibo === 'colaboradores') {
+        $itensRecibo = array_values(array_filter($itens, static function (array $item): bool {
+            return (float)$item['total_vt'] > 0 || (float)$item['total_va'] > 0;
+        }));
+        if (!$itensRecibo) {
+            http_response_code(422);
+            exit('Nao existem colaboradores com beneficios calculados neste acerto.');
+        }
     }
-    gerarPdfRecibosVales($tipoRecibo, $acertoAtual, $itens, $totais, $nomeEmpresaRecibo, $empresaId);
+    if (($_GET['preview'] ?? '') === '1') {
+        imprimirRecibosVales($tipoRecibo, $acertoAtual, $itensRecibo, $totais, $nomeEmpresaRecibo, $podeVerDetalhesBeneficios);
+    }
+    gerarPdfRecibosVales($tipoRecibo, $acertoAtual, $itensRecibo, $totais, $nomeEmpresaRecibo, $empresaId, $podeVerDetalhesBeneficios);
 }
 
 require '../../layout/header.php';
@@ -1038,9 +1272,6 @@ require '../../layout/header.php';
                 <label class="form-label">Competencia</label>
                 <input type="month" name="referencia" value="<?= htmlspecialchars($referencia) ?>" class="form-control">
             </div>
-            <?php if ($acertoAtual): ?>
-                <input type="hidden" name="acerto_id" value="<?= (int)$acertoAtual['id'] ?>">
-            <?php endif; ?>
             <div class="col-sm-auto">
                 <button class="btn btn-primary">Filtrar</button>
             </div>
@@ -1114,7 +1345,7 @@ require '../../layout/header.php';
         <div class="card-body d-flex flex-column flex-md-row gap-2 justify-content-between align-items-md-center">
             <div>
                 <strong>Recibos do acerto #<?= (int)$acertoAtual['id'] ?></strong>
-                <div class="text-muted small">Emita o recibo consolidado da empresa e os recibos individuais dos colaboradores.</div>
+                <div class="text-muted small"><?= $podeVerDetalhesBeneficios ? 'Emita o recibo consolidado da empresa e os recibos individuais dos colaboradores.' : 'Emita o recibo consolidado simplificado, sem detalhamento de VT e VA.' ?></div>
             </div>
             <div class="d-flex flex-wrap gap-2">
                 <a class="btn btn-outline-danger" href="vales_diarios.php?referencia=<?= urlencode($referencia) ?>&acerto_id=<?= (int)$acertoAtual['id'] ?>&recibo=empresa">Recibo empresa PDF</a>
@@ -1227,14 +1458,32 @@ require '../../layout/header.php';
                         <button class="btn btn-outline-secondary btn-sm">Atualizar colaboradores</button>
                     </form>
                 <?php endif; ?>
-                <form method="post" onsubmit="return confirm('Confirmar alteracao de status do acerto?');">
-                    <input type="hidden" name="referencia" value="<?= htmlspecialchars($referencia) ?>">
-                    <input type="hidden" name="acerto_id" value="<?= (int)$acertoAtual['id'] ?>">
-                    <input type="hidden" name="acao" value="<?= $podeEditar ? 'fechar' : (($acertoAtual['status'] ?? '') === 'FECHADO' ? 'pagar' : 'reabrir') ?>">
-                    <button class="btn btn-outline-primary btn-sm">
-                        <?= $podeEditar ? 'Fechar acerto' : (($acertoAtual['status'] ?? '') === 'FECHADO' ? 'Marcar pago' : 'Reabrir') ?>
-                    </button>
-                </form>
+                <?php if ($podeEditar): ?>
+                    <form method="post" onsubmit="return confirm('Confirmar o fechamento do acerto?');">
+                        <input type="hidden" name="referencia" value="<?= htmlspecialchars($referencia) ?>">
+                        <input type="hidden" name="acerto_id" value="<?= (int)$acertoAtual['id'] ?>">
+                        <input type="hidden" name="acao" value="fechar">
+                        <button class="btn btn-outline-primary btn-sm">Fechar acerto</button>
+                    </form>
+                <?php elseif ($podeVerDetalhesBeneficios): ?>
+                    <?php if (($acertoAtual['status'] ?? '') === 'FECHADO'): ?>
+                        <form method="post" onsubmit="return confirm('Confirmar o pagamento do acerto?');">
+                            <input type="hidden" name="referencia" value="<?= htmlspecialchars($referencia) ?>">
+                            <input type="hidden" name="acerto_id" value="<?= (int)$acertoAtual['id'] ?>">
+                            <input type="hidden" name="acao" value="pagar">
+                            <button class="btn btn-success btn-sm">Marcar pago</button>
+                        </form>
+                    <?php endif; ?>
+                    <?php if (in_array(($acertoAtual['status'] ?? ''), ['FECHADO', 'PAGO'], true)): ?>
+                        <form method="post" class="d-flex gap-2" onsubmit="return confirm('Confirmar a reabertura do acerto?');">
+                            <input type="hidden" name="referencia" value="<?= htmlspecialchars($referencia) ?>">
+                            <input type="hidden" name="acerto_id" value="<?= (int)$acertoAtual['id'] ?>">
+                            <input type="hidden" name="acao" value="reabrir">
+                            <input type="text" name="justificativa" class="form-control form-control-sm" maxlength="255" required placeholder="Justificativa da reabertura">
+                            <button class="btn btn-outline-danger btn-sm">Reabrir</button>
+                        </form>
+                    <?php endif; ?>
+                <?php endif; ?>
             </div>
         <?php endif; ?>
     </div>
