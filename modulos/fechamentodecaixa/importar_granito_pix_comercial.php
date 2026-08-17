@@ -51,8 +51,16 @@ function granitoPixData($valor) {
 function granitoAgendaTipoOperacao(string $tipo): string {
     $tipoOriginal = trim($tipo);
 
-    if (function_exists('mb_check_encoding') && !mb_check_encoding($tipoOriginal, 'UTF-8')) {
-        $tipoOriginal = mb_convert_encoding($tipoOriginal, 'UTF-8', 'Windows-1252');
+    $utf8Valido = function_exists('mb_check_encoding')
+        ? mb_check_encoding($tipoOriginal, 'UTF-8')
+        : preg_match('//u', $tipoOriginal) === 1;
+    if (!$utf8Valido) {
+        $tipoConvertido = function_exists('mb_convert_encoding')
+            ? mb_convert_encoding($tipoOriginal, 'UTF-8', 'Windows-1252')
+            : iconv('Windows-1252', 'UTF-8//IGNORE', $tipoOriginal);
+        if ($tipoConvertido !== false) {
+            $tipoOriginal = $tipoConvertido;
+        }
     }
 
     if (function_exists('mb_convert_encoding')
@@ -64,7 +72,20 @@ function granitoAgendaTipoOperacao(string $tipo): string {
         );
     }
 
-    $tipoNormalizado = iconv('UTF-8', 'ASCII//TRANSLIT//IGNORE', $tipoOriginal);
+    $tipoSemAcentos = strtr($tipoOriginal, [
+        'Á' => 'A', 'À' => 'A', 'Â' => 'A', 'Ã' => 'A', 'Ä' => 'A',
+        'á' => 'a', 'à' => 'a', 'â' => 'a', 'ã' => 'a', 'ä' => 'a',
+        'É' => 'E', 'È' => 'E', 'Ê' => 'E', 'Ë' => 'E',
+        'é' => 'e', 'è' => 'e', 'ê' => 'e', 'ë' => 'e',
+        'Í' => 'I', 'Ì' => 'I', 'Î' => 'I', 'Ï' => 'I',
+        'í' => 'i', 'ì' => 'i', 'î' => 'i', 'ï' => 'i',
+        'Ó' => 'O', 'Ò' => 'O', 'Ô' => 'O', 'Õ' => 'O', 'Ö' => 'O',
+        'ó' => 'o', 'ò' => 'o', 'ô' => 'o', 'õ' => 'o', 'ö' => 'o',
+        'Ú' => 'U', 'Ù' => 'U', 'Û' => 'U', 'Ü' => 'U',
+        'ú' => 'u', 'ù' => 'u', 'û' => 'u', 'ü' => 'u',
+        'Ç' => 'C', 'ç' => 'c',
+    ]);
+    $tipoNormalizado = iconv('UTF-8', 'ASCII//TRANSLIT//IGNORE', $tipoSemAcentos);
     $tipo = strtolower($tipoNormalizado !== false ? $tipoNormalizado : $tipoOriginal);
     $tipo = preg_replace('/[^a-z0-9]+/', '', $tipo) ?? $tipo;
 
