@@ -50,6 +50,20 @@ function granitoPixData($valor) {
 
 function granitoAgendaTipoOperacao(string $tipo): string {
     $tipoOriginal = trim($tipo);
+
+    if (function_exists('mb_check_encoding') && !mb_check_encoding($tipoOriginal, 'UTF-8')) {
+        $tipoOriginal = mb_convert_encoding($tipoOriginal, 'UTF-8', 'Windows-1252');
+    }
+
+    if (function_exists('mb_convert_encoding')
+        && (strpos($tipoOriginal, "\xC3\x83") !== false || strpos($tipoOriginal, "\xC3\x82") !== false)) {
+        $tipoOriginal = mb_convert_encoding(
+            mb_convert_encoding($tipoOriginal, 'Windows-1252', 'UTF-8'),
+            'UTF-8',
+            'Windows-1252'
+        );
+    }
+
     $tipoNormalizado = iconv('UTF-8', 'ASCII//TRANSLIT//IGNORE', $tipoOriginal);
     $tipo = strtolower($tipoNormalizado !== false ? $tipoNormalizado : $tipoOriginal);
     $tipo = preg_replace('/[^a-z0-9]+/', '', $tipo) ?? $tipo;
@@ -63,14 +77,6 @@ function granitoAgendaTipoOperacao(string $tipo): string {
     }
 
     if (strpos($tipo, 'credito') !== false) {
-        return 'C';
-    }
-
-    if (strpos($tipo, 'débito') !== false || strpos($tipo, 'debito') !== false || strpos($tipo, 'dã©bito') !== false) {
-        return 'D';
-    }
-
-    if (strpos($tipo, 'crédito') !== false || strpos($tipo, 'credito') !== false || strpos($tipo, 'crã©dito') !== false) {
         return 'C';
     }
 
