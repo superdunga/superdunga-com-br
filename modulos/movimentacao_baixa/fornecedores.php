@@ -3,12 +3,14 @@ require '../../config/auth.php';
 require '../../config/conexao.php';
 require_once '../../config/modulos.php';
 require __DIR__ . '/_empresa2_guard.php';
+require_once __DIR__ . '/../financeiro/_cartao_credito_lib.php';
 
 $pdo = $pdo_master;
 $empresaId = (int)($_SESSION['empresa_id'] ?? 0);
 $usuarioId = (int)($_SESSION['usuario_id'] ?? 0);
 $perfil = strtoupper((string)($_SESSION['nivel'] ?? ''));
 $permitido = moduloPermitido($pdo, $empresaId, 'movimentacao_baixa_fornecedores', $perfil);
+garantirTabelasCartaoCredito($pdo);
 
 function mbfH($valor)
 {
@@ -52,6 +54,36 @@ function mbfDocumentoDuplicado(PDO $pdo, string $cgc, int $fcontadorAtual = 0): 
     ");
     $stmt->execute([$cgc, $fcontadorAtual]);
     return (int)$stmt->fetchColumn() > 0;
+}
+
+function mbfAtualizarLancamentosCartaoPorDescricao(PDO $pdo, string $descricaoNorm, ?int $fcontador, ?int $fcontadorAtual = null): int
+{
+    $stmt = $pdo->query("
+        SELECT id, descricao, fornecedor_fcontador
+        FROM financeiro_cartao_lancamentos
+        WHERE empresa_id = 2
+          AND cpcontador IS NULL
+          AND bnc001_movcontador IS NULL
+    ");
+    $ids = [];
+    foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $linha) {
+        if (normalizarDescricaoCartao((string)$linha['descricao']) !== $descricaoNorm) {
+            continue;
+        }
+        if ($fcontadorAtual !== null && (int)($linha['fornecedor_fcontador'] ?? 0) !== $fcontadorAtual) {
+            continue;
+        }
+        $ids[] = (int)$linha['id'];
+    }
+    if (!$ids) {
+        return 0;
+    }
+
+    $marcadores = implode(',', array_fill(0, count($ids), '?'));
+    $params = array_merge([$fcontador], $ids);
+    $atualizar = $pdo->prepare("UPDATE financeiro_cartao_lancamentos SET fornecedor_fcontador = ? WHERE id IN ($marcadores)");
+    $atualizar->execute($params);
+    return $atualizar->rowCount();
 }
 
 $mensagem = '';
@@ -118,8 +150,41 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $permitido && $empresaId === 2) {
             ");
             $stmt->execute([$novaSituacao, $novaSituacao, $usuarioId ?: null, $fcontador]);
             $mensagem = 'Situacao do fornecedor alterada.';
+        } elseif ($acao === 'transferir_descricao_cartao') {
+            $mapeamentoId = (int)($_POST['mapeamento_id'] ?? 0);
+            $novoFcontador = (int)($_POST['novo_fcontador'] ?? 0);
+            $stmtMapa = $pdo->prepare("SELECT * FROM financeiro_cartao_fornecedor_map WHERE id = ? AND empresa_id = 2 LIMIT 1");
+            $stmtMapa->execute([$mapeamentoId]);
+            $mapa = $stmtMapa->fetch(PDO::FETCH_ASSOC);
+            if (!$mapa || !mbfFornecedor($pdo, $novoFcontador)) {
+                throw new RuntimeException('Descricao ou fornecedor de destino invalido.');
+            }
+
+            $pdo->beginTransaction();
+            $pdo->prepare("UPDATE financeiro_cartao_fornecedor_map SET fcontador = ?, atualizado_em = NOW() WHERE id = ? AND empresa_id = 2")
+                ->execute([$novoFcontador, $mapeamentoId]);
+            mbfAtualizarLancamentosCartaoPorDescricao($pdo, (string)$mapa['descricao_norm'], $novoFcontador);
+            $pdo->commit();
+            $mensagem = 'Descricao transferida para o fornecedor selecionado.';
+        } elseif ($acao === 'excluir_descricao_cartao') {
+            $mapeamentoId = (int)($_POST['mapeamento_id'] ?? 0);
+            $stmtMapa = $pdo->prepare("SELECT * FROM financeiro_cartao_fornecedor_map WHERE id = ? AND empresa_id = 2 LIMIT 1");
+            $stmtMapa->execute([$mapeamentoId]);
+            $mapa = $stmtMapa->fetch(PDO::FETCH_ASSOC);
+            if (!$mapa) {
+                throw new RuntimeException('Descricao vinculada nao encontrada.');
+            }
+
+            $pdo->beginTransaction();
+            mbfAtualizarLancamentosCartaoPorDescricao($pdo, (string)$mapa['descricao_norm'], null, (int)$mapa['fcontador']);
+            $pdo->prepare("DELETE FROM financeiro_cartao_fornecedor_map WHERE id = ? AND empresa_id = 2")->execute([$mapeamentoId]);
+            $pdo->commit();
+            $mensagem = 'Descricao removida do reconhecimento do cartao.';
         }
     } catch (Throwable $e) {
+        if ($pdo->inTransaction()) {
+            $pdo->rollBack();
+        }
         $erro = $e->getMessage();
     }
 }
@@ -133,6 +198,8 @@ $fSituacao = $_GET['situacao'] ?? 'ativos';
 $fTipoesParam = trim((string)($_GET['tipoes'] ?? ''));
 $fTipoes = ctype_digit($fTipoesParam) ? (int)$fTipoesParam : 0;
 $fornecedores = [];
+$fornecedoresOpcoes = [];
+$descricoesCartao = [];
 $tipos = [];
 
 if ($permitido && $empresaId === 2) {
@@ -185,6 +252,29 @@ if ($permitido && $empresaId === 2) {
     ");
     $stmt->execute($params);
     $fornecedores = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+    $stmt = $pdo->query("
+        SELECT FCONTADOR, COALESCE(NULLIF(APELIDO, ''), NOME) AS nome
+        FROM armazem_cp003
+        WHERE EMPRESA = 2
+          AND COALESCE(excluido_firebird, 'N') <> 'S'
+          AND COALESCE(INATIVO, 'N') <> 'S'
+          AND COALESCE(REGDISAB, 'N') <> 'S'
+        ORDER BY nome, FCONTADOR
+    ");
+    $fornecedoresOpcoes = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+    if ($editar) {
+        $stmt = $pdo->prepare("
+            SELECT id, descricao_original, descricao_norm
+            FROM financeiro_cartao_fornecedor_map
+            WHERE empresa_id = 2
+              AND fcontador = ?
+            ORDER BY descricao_original
+        ");
+        $stmt->execute([(int)$editar['FCONTADOR']]);
+        $descricoesCartao = $stmt->fetchAll(PDO::FETCH_ASSOC);
+    }
 }
 
 $form = [
@@ -285,6 +375,49 @@ require '../../layout/header.php';
                 </div>
             </form>
         </section>
+
+        <?php if ($editar): ?>
+        <section class="mbf-card">
+            <h2 class="h6 fw-bold mb-1">Descricoes reconhecidas nas faturas</h2>
+            <p class="text-muted small mb-3">Estas descricoes fazem os lancamentos importados serem associados automaticamente a este fornecedor.</p>
+            <?php if ($descricoesCartao): ?>
+                <div class="mbf-scroll">
+                    <table class="mbf-table">
+                        <thead><tr><th>Descricao da fatura</th><th>Transferir para</th><th></th></tr></thead>
+                        <tbody>
+                        <?php foreach ($descricoesCartao as $descricaoCartao): ?>
+                            <tr>
+                                <td><strong><?= mbfH($descricaoCartao['descricao_original']) ?></strong></td>
+                                <td>
+                                    <form method="post" action="fornecedores.php?editar=<?= (int)$editar['FCONTADOR'] ?>" class="d-flex gap-2">
+                                        <input type="hidden" name="acao" value="transferir_descricao_cartao">
+                                        <input type="hidden" name="mapeamento_id" value="<?= (int)$descricaoCartao['id'] ?>">
+                                        <select name="novo_fcontador" class="form-select form-select-sm" required>
+                                            <option value="">Selecione o fornecedor...</option>
+                                            <?php foreach ($fornecedoresOpcoes as $fornecedorOpcao): ?>
+                                                <option value="<?= (int)$fornecedorOpcao['FCONTADOR'] ?>"><?= mbfH($fornecedorOpcao['nome']) ?></option>
+                                            <?php endforeach; ?>
+                                        </select>
+                                        <button class="btn btn-sm btn-outline-primary text-nowrap">Transferir</button>
+                                    </form>
+                                </td>
+                                <td class="text-end">
+                                    <form method="post" action="fornecedores.php?editar=<?= (int)$editar['FCONTADOR'] ?>" onsubmit="return confirm('Remover esta descricao do reconhecimento automatico?');">
+                                        <input type="hidden" name="acao" value="excluir_descricao_cartao">
+                                        <input type="hidden" name="mapeamento_id" value="<?= (int)$descricaoCartao['id'] ?>">
+                                        <button class="btn btn-sm btn-outline-danger">Excluir</button>
+                                    </form>
+                                </td>
+                            </tr>
+                        <?php endforeach; ?>
+                        </tbody>
+                    </table>
+                </div>
+            <?php else: ?>
+                <div class="text-muted small">Nenhuma descricao de fatura vinculada a este fornecedor.</div>
+            <?php endif; ?>
+        </section>
+        <?php endif; ?>
 
         <section class="mbf-card">
             <h2 class="h6 fw-bold mb-3">Fornecedores cadastrados</h2>
