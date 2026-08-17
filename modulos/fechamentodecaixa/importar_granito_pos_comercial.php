@@ -92,11 +92,6 @@ function identificarGrupoGranitoPosPorRecebiveis(PDO $pdo, int $empresaId, strin
     }
 
     $qtdSemCorrespondencia = count($idsGranito) - $qtdComercial - $qtdOutros;
-    if ($qtdSemCorrespondencia > 0) {
-        throw new RuntimeException(
-            "Importacao bloqueada: {$qtdSemCorrespondencia} transacao(oes) do arquivo nao existem nos recebiveis POS ja importados."
-        );
-    }
 
     return [
         'grupo' => $qtdComercial > 0 ? 'COMERCIAL' : 'OUTROS',
@@ -225,9 +220,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['arquivo'])) {
 
             fclose($handle);
             $qtdCorrespondencias = (int)$identificacaoPos['comercial'] + (int)$identificacaoPos['outros'];
+            $qtdNovas = (int)$identificacaoPos['sem_correspondencia'];
             echo "<div class='alert alert-success'>Arquivo confirmado como Granito "
                 . htmlspecialchars(ucfirst(strtolower($identificacaoPos['grupo'])))
-                . " por <strong>{$qtdCorrespondencias}</strong> recebiveis anteriores. Importacao concluida! Registros importados: <strong>{$importados}</strong>. Duplicados: <strong>{$duplicados}</strong>. Atualizados com agenda: <strong>{$atualizadosComAgenda}</strong>.</div>";
+                . " por <strong>{$qtdCorrespondencias}</strong> recebiveis anteriores. IDs novos identificados: <strong>{$qtdNovas}</strong>. Importacao concluida! Registros importados: <strong>{$importados}</strong>. Duplicados: <strong>{$duplicados}</strong>. Atualizados com agenda: <strong>{$atualizadosComAgenda}</strong>.</div>";
         }
     }
 }
