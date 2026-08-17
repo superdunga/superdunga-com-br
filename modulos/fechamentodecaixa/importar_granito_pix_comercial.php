@@ -114,6 +114,79 @@ function granitoAgendaParcela(string $parcelaTexto): array {
     return [max(1, $parcela), max(1, $total)];
 }
 
+function identificarGrupoAgendaGranito(PDO $pdo, int $empresaId, string $arquivo): array
+{
+    $handle = fopen($arquivo, 'r');
+    if (!$handle) {
+        throw new RuntimeException('Nao foi possivel abrir a agenda para validar o grupo.');
+    }
+
+    $idsPosPagos = [];
+    $linha = 0;
+    while (($dados = fgetcsv($handle, 0, ';')) !== false) {
+        $linha++;
+        if ($linha === 1 || count($dados) < 11) {
+            continue;
+        }
+
+        $idTransacao = trim((string)($dados[0] ?? ''));
+        $status = trim((string)($dados[3] ?? ''));
+        $tipoOperacao = granitoAgendaTipoOperacao((string)($dados[2] ?? ''));
+        if ($idTransacao !== '' && strcasecmp($status, 'Pago') === 0 && in_array($tipoOperacao, ['D', 'C'], true)) {
+            $idsPosPagos[$idTransacao] = true;
+        }
+    }
+    fclose($handle);
+
+    if (!$idsPosPagos) {
+        throw new RuntimeException('Importacao bloqueada: a agenda nao possui transacoes POS pagas para identificar se pertence a Comercial ou Outros.');
+    }
+
+    $correspondencias = ['COMERCIAL' => [], 'OUTROS' => []];
+    foreach (array_chunk(array_keys($idsPosPagos), 500) as $ids) {
+        $placeholders = implode(',', array_fill(0, count($ids), '?'));
+        $stmt = $pdo->prepare("
+            SELECT id_transacao, origem
+            FROM armazem_conciliacao_recebimentos
+            WHERE empresa_id = ?
+              AND id_transacao IN ({$placeholders})
+              AND origem IN ('GRANITO_POS_COMERCIAL', 'GRANITO_POS_OUTROS')
+        ");
+        $stmt->execute(array_merge([$empresaId], $ids));
+        foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $registro) {
+            $grupo = $registro['origem'] === 'GRANITO_POS_COMERCIAL' ? 'COMERCIAL' : 'OUTROS';
+            $correspondencias[$grupo][(string)$registro['id_transacao']] = true;
+        }
+    }
+
+    $qtdComercial = count($correspondencias['COMERCIAL']);
+    $qtdOutros = count($correspondencias['OUTROS']);
+    $qtdSemCorrespondencia = count(array_diff(
+        array_keys($idsPosPagos),
+        array_keys($correspondencias['COMERCIAL']),
+        array_keys($correspondencias['OUTROS'])
+    ));
+
+    if ($qtdComercial > 0 && $qtdOutros > 0) {
+        throw new RuntimeException(
+            "Importacao bloqueada: agenda ambigua. Correspondencias Comercial: {$qtdComercial}; Outros: {$qtdOutros}."
+        );
+    }
+    if ($qtdComercial === 0 && $qtdOutros === 0) {
+        throw new RuntimeException(
+            'Importacao bloqueada: nenhuma transacao POS paga da agenda foi encontrada nas importacoes Granito POS.'
+        );
+    }
+
+    return [
+        'grupo' => $qtdComercial > 0 ? 'COMERCIAL' : 'OUTROS',
+        'comercial' => $qtdComercial,
+        'outros' => $qtdOutros,
+        'sem_correspondencia' => $qtdSemCorrespondencia,
+        'total_pos_pagos' => count($idsPosPagos),
+    ];
+}
+
 function granitoPixNormalizarCabecalho($valor) {
     $valor = strtolower(trim((string)$valor));
     $mapa = [
@@ -439,6 +512,33 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['acao'] ?? '') === 'upload_
     } elseif (!file_exists($arquivo)) {
         $mensagens[] = ['tipo' => 'danger', 'texto' => 'Arquivo nao encontrado.'];
     } else {
+        $grupoSelecionado = strtoupper((string)($regraImportacao['grupo'] ?? ''));
+        if (!in_array($grupoSelecionado, ['COMERCIAL', 'OUTROS'], true)) {
+            $origemSelecionada = strtoupper((string)($regraImportacao['origem'] ?? ''));
+            $grupoSelecionado = strpos($origemSelecionada, 'OUTROS') !== false ? 'OUTROS' : 'COMERCIAL';
+        }
+
+        try {
+            $identificacaoAgenda = identificarGrupoAgendaGranito($pdo_master, $empresa_id, $arquivo);
+        } catch (Throwable $e) {
+            $identificacaoAgenda = null;
+            $mensagens[] = ['tipo' => 'danger', 'texto' => $e->getMessage()];
+        }
+
+        if ($identificacaoAgenda && $identificacaoAgenda['grupo'] !== $grupoSelecionado) {
+            $mensagens[] = [
+                'tipo' => 'danger',
+                'texto' => 'Importacao bloqueada: o arquivo foi identificado como Granito '
+                    . ucfirst(strtolower($identificacaoAgenda['grupo']))
+                    . ', mas a regra selecionada e Granito '
+                    . ucfirst(strtolower($grupoSelecionado)) . '. '
+                    . 'Correspondencias Comercial: ' . $identificacaoAgenda['comercial']
+                    . '; Outros: ' . $identificacaoAgenda['outros'] . '.',
+            ];
+            $identificacaoAgenda = null;
+        }
+
+        if ($identificacaoAgenda) {
         try {
             $arquivoAgendaSalvo = salvarArquivoAgendaAdquirente($_FILES['arquivo'], $empresa_id);
         } catch (Throwable $e) {
@@ -631,8 +731,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['acao'] ?? '') === 'upload_
             fclose($handle);
             $mensagens[] = [
                 'tipo' => 'success',
-                'texto' => "Importacao concluida! Linhas de agenda gravadas: {$agendaGravados}. Pix importados: {$importados}. POS atualizados com taxas da agenda: {$posAtualizados}. POS gravados na agenda aguardando transacao: {$posSemTransacao}.",
+                'texto' => 'Arquivo confirmado como Granito '
+                    . ucfirst(strtolower($identificacaoAgenda['grupo']))
+                    . ' por ' . ($identificacaoAgenda['comercial'] + $identificacaoAgenda['outros'])
+                    . " correspondencias POS. Importacao concluida! Linhas de agenda gravadas: {$agendaGravados}. Pix importados: {$importados}. POS atualizados com taxas da agenda: {$posAtualizados}. POS gravados na agenda aguardando transacao: {$posSemTransacao}.",
             ];
+        }
         }
     }
 }
