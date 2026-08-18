@@ -519,7 +519,7 @@ require '../../layout/header.php';
 
                         <?php if ($_SESSION['nivel'] === 'MASTER'): ?>
                         <td>
-                            <a href="movimentar.php?id=<?= $p['id'] ?>"
+                            <a href="movimentar.php?id=<?= $p['id'] ?>&retorno=conciliar"
                                class="btn btn-sm btn-outline-warning">
                                 Editar
                             </a>

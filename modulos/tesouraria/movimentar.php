@@ -11,6 +11,8 @@ require '../../config/conexao.php';
 $id = $_GET['id'] ?? null;
 $modoEdicao = !empty($id);
 $fluxo = $_GET['fluxo'] ?? '';
+$retorno = ($_GET['retorno'] ?? '') === 'conciliar' ? 'conciliar' : '';
+$urlRetorno = $retorno === 'conciliar' ? 'conciliar.php' : 'menu_movimentacao.php';
 $fluxosEspeciais = [
     'abertura' => [
         'titulo' => 'Abertura de Caixa',
@@ -607,7 +609,7 @@ if ($modoEdicao) {
 
         $pdo_master->commit();
 
-        header("Location: movimentar.php?sucesso=1&mov_id=" . $mov_id . ($modoEdicao ? "&id=" . $mov_id : "") . ($fluxoEspecial ? "&fluxo=" . urlencode($fluxo) : ""));
+        header("Location: movimentar.php?sucesso=1&mov_id=" . $mov_id . ($modoEdicao ? "&id=" . $mov_id : "") . ($fluxoEspecial ? "&fluxo=" . urlencode($fluxo) : "") . ($retorno !== '' ? "&retorno=" . urlencode($retorno) : ""));
         exit;
 
     } catch (Throwable $e) {
@@ -622,7 +624,7 @@ if ($modoEdicao) {
 require '../../layout/header.php';
 
 if (isset($_GET['sucesso'])) {
-    echo "<script>setTimeout(function(){ window.location.href='menu_movimentacao.php'; }, 0);</script>";
+    echo '<script>setTimeout(function(){ window.location.href=' . json_encode($urlRetorno) . '; }, 0);</script>';
     echo "<script>alert('Movimentação salva com sucesso');</script>";
 }
 
@@ -630,7 +632,7 @@ $mov_id = $modoEdicao ? $id : ($_GET['mov_id'] ?? null);
 $comprovantes = [];
 $tipoFormulario = $mov['tipo_operacao'] ?? ($fluxoEspecial['tipo'] ?? '');
 $historicoFormulario = $mov['observacao'] ?? ($fluxoEspecial['historico'] ?? '');
-$urlVoltar = 'menu_movimentacao.php';
+$urlVoltar = $urlRetorno;
 $mostrarEntrada = !$fluxoEspecial || $fluxo === 'fechamento';
 $mostrarSaida = !$fluxoEspecial || $fluxo === 'abertura';
 $colunaDinheiro = ($mostrarEntrada && $mostrarSaida) ? 'col-12 col-md-6' : 'col-12';
