@@ -895,12 +895,50 @@ require '../../layout/header.php';
         border-radius: .4rem;
     }
     .conta-check:hover { background: #f5f8fc; }
+    .conta-check.is-selected {
+        background: #eaf2ff;
+        color: #123d7a;
+        font-weight: 600;
+    }
     .conta-check.is-hidden { display: none; }
     .conta-check input { flex: 0 0 auto; }
     .conta-check span {
         font-size: .9rem;
         line-height: 1.15;
         overflow-wrap: anywhere;
+    }
+    .contas-selecionadas {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: .35rem;
+        min-height: 34px;
+        margin-top: .5rem;
+        padding: .4rem .5rem;
+        border-left: 3px solid #0d6efd;
+        background: #f7f9fc;
+    }
+    .contas-selecionadas-titulo {
+        margin-right: .2rem;
+        color: #334155;
+        font-size: .78rem;
+        font-weight: 700;
+        text-transform: uppercase;
+    }
+    .contas-selecionadas-itens {
+        display: flex;
+        flex: 1 1 420px;
+        flex-wrap: wrap;
+        gap: .35rem;
+    }
+    .conta-selecionada-item {
+        padding: .2rem .45rem;
+        border: 1px solid #9ec5fe;
+        border-radius: .25rem;
+        background: #fff;
+        color: #123d7a;
+        font-size: .82rem;
+        line-height: 1.2;
     }
 
     @media (max-width: 575.98px) {
@@ -1007,6 +1045,10 @@ require '../../layout/header.php';
                             </label>
                         <?php endforeach; ?>
                     </div>
+                </div>
+                <div class="contas-selecionadas" id="contas-selecionadas" aria-live="polite">
+                    <span class="contas-selecionadas-titulo">Contas selecionadas</span>
+                    <div class="contas-selecionadas-itens text-muted small" id="contas-selecionadas-itens">Nenhuma conta selecionada. O filtro considera todas.</div>
                 </div>
                 <div class="form-text">
                     Marque uma ou mais contas. Sem marcar nenhuma, a tela mostra todas.
@@ -1398,6 +1440,7 @@ document.addEventListener('DOMContentLoaded', function () {
     var botaoSelecionarTodas = document.getElementById('selecionar-todas-contas');
     var botaoLimparMarcadas = document.getElementById('limpar-contas-marcadas');
     var resumoContasMarcadas = document.getElementById('resumo-contas-marcadas');
+    var contasSelecionadasItens = document.getElementById('contas-selecionadas-itens');
     var contasLabels = Array.prototype.slice.call(document.querySelectorAll('.conta-check'));
 
     function textoNormalizado(valor) {
@@ -1415,13 +1458,35 @@ document.addEventListener('DOMContentLoaded', function () {
     }
 
     function atualizarResumoContas() {
-        if (!resumoContasMarcadas) {
-            return;
+        var marcadas = contasLabels.filter(function (label) {
+            var checkbox = label.querySelector('input[type="checkbox"]');
+            var selecionada = Boolean(checkbox && checkbox.checked);
+            label.classList.toggle('is-selected', selecionada);
+            return selecionada;
+        });
+        var totalMarcadas = marcadas.length;
+        var totalVisiveis = contasVisiveis().length;
+
+        if (resumoContasMarcadas) {
+            resumoContasMarcadas.textContent = ' Visiveis: ' + totalVisiveis + ' | Marcadas: ' + totalMarcadas + '.';
         }
 
-        var totalMarcadas = document.querySelectorAll('input[name="cbcontador[]"]:checked').length;
-        var totalVisiveis = contasVisiveis().length;
-        resumoContasMarcadas.textContent = ' Visiveis: ' + totalVisiveis + ' | Marcadas: ' + totalMarcadas + '.';
+        if (contasSelecionadasItens) {
+            contasSelecionadasItens.textContent = '';
+            contasSelecionadasItens.classList.remove('text-muted', 'small');
+
+            if (marcadas.length === 0) {
+                contasSelecionadasItens.classList.add('text-muted', 'small');
+                contasSelecionadasItens.textContent = 'Nenhuma conta selecionada. O filtro considera todas.';
+            } else {
+                marcadas.forEach(function (label) {
+                    var item = document.createElement('span');
+                    item.className = 'conta-selecionada-item';
+                    item.textContent = label.textContent.trim();
+                    contasSelecionadasItens.appendChild(item);
+                });
+            }
+        }
     }
 
     function aplicarFiltroContas() {
