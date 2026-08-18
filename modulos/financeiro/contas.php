@@ -154,6 +154,10 @@ if ($dataFim === '') {
 $tipoes = trim($_GET['tipoes'] ?? '');
 $historico = trim($_GET['historico'] ?? '');
 $documento = trim($_GET['documento'] ?? '');
+$valorMinTexto = trim($_GET['valor_min'] ?? '');
+$valorMaxTexto = trim($_GET['valor_max'] ?? '');
+$valorMin = $valorMinTexto !== '' ? normalizarDecimalConta($valorMinTexto) : null;
+$valorMax = $valorMaxTexto !== '' ? normalizarDecimalConta($valorMaxTexto) : null;
 $dc = strtoupper(trim($_GET['dc'] ?? ''));
 $visao = trim($_GET['visao'] ?? 'extrato');
 $mostrarAcertos = trim($_GET['mostrar_acertos'] ?? 'todos');
@@ -470,6 +474,16 @@ if ($documento !== '') {
     $params[] = $likeDoc;
 }
 
+if ($valorMin !== null) {
+    $where[] = 'ABS(b.VALORMOV) >= ?';
+    $params[] = $valorMin;
+}
+
+if ($valorMax !== null) {
+    $where[] = 'ABS(b.VALORMOV) <= ?';
+    $params[] = $valorMax;
+}
+
 if (in_array($dc, ['C', 'D'], true)) {
     $where[] = 'b.TIPOMOV = ?';
     $params[] = $dc;
@@ -603,7 +617,7 @@ $registros = $stmt->fetchAll(PDO::FETCH_ASSOC);
 $acertosExtrato = [];
 $itensAcertos = [];
 
-if ($mostrarAcertos !== 'nao' && $visao === 'extrato' && $tipoes === '' && $documento === '' && $dc === '') {
+if ($mostrarAcertos !== 'nao' && $visao === 'extrato' && $tipoes === '' && $documento === '' && $valorMin === null && $valorMax === null && $dc === '') {
     $whereAcertos = [
         'a.empresa_id = ?',
         "a.status = 'ATIVO'",
@@ -1042,7 +1056,15 @@ require '../../layout/header.php';
                 <label class="form-label">Documento</label>
                 <input type="text" name="documento" class="form-control" value="<?= htmlspecialchars($documento) ?>">
             </div>
-            <div class="col-12 col-lg-9 d-flex flex-wrap gap-2 justify-content-lg-end contas-filter-actions">
+            <div class="col-6 col-lg-2">
+                <label class="form-label">Valor minimo</label>
+                <input type="text" name="valor_min" class="form-control" inputmode="decimal" placeholder="0,00" value="<?= htmlspecialchars($valorMinTexto) ?>">
+            </div>
+            <div class="col-6 col-lg-2">
+                <label class="form-label">Valor maximo</label>
+                <input type="text" name="valor_max" class="form-control" inputmode="decimal" placeholder="0,00" value="<?= htmlspecialchars($valorMaxTexto) ?>">
+            </div>
+            <div class="col-12 col-lg-5 d-flex flex-wrap gap-2 justify-content-lg-end contas-filter-actions">
                 <a href="contas.php" class="btn btn-outline-secondary">Limpar</a>
                 <a href="contas.php?<?= htmlspecialchars(queryContasBanco(['visao' => 'sintetico'])) ?>" class="btn <?= $visao === 'sintetico' ? 'btn-success' : 'btn-outline-success' ?>">Sintetico</a>
                 <a href="contas.php?<?= htmlspecialchars(queryContasBanco(['visao' => 'extrato'])) ?>" class="btn <?= $visao === 'extrato' ? 'btn-primary' : 'btn-outline-primary' ?>">Analitico</a>
