@@ -63,23 +63,73 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         requireCsrf($csrf);
         $acao = $_POST['acao'] ?? '';
 
+        if ($acao === 'testar_evolution') {
+            $evolutionInstancia = postValue('evolution_instancia');
+            $evolutionToken = postValue('evolution_token');
+            $evolutionUrl = rtrim(postValue('evolution_api_base_url'), '/');
+            if ($evolutionInstancia === '' || $evolutionToken === '' || $evolutionUrl === '') {
+                throw new Exception('Preencha URL, API Key e instancia da Evolution antes de testar.');
+            }
+
+            $ch = curl_init($evolutionUrl . '/instance/connectionState/' . rawurlencode($evolutionInstancia));
+            curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+            curl_setopt($ch, CURLOPT_HTTPHEADER, ['apikey: ' . $evolutionToken]);
+            curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 10);
+            curl_setopt($ch, CURLOPT_TIMEOUT, 20);
+            $response = curl_exec($ch);
+            $curlError = curl_error($ch);
+            $httpCode = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
+            curl_close($ch);
+
+            if ($response === false) {
+                throw new Exception('Nao foi possivel conectar a Evolution: ' . ($curlError ?: 'erro de conexao.'));
+            }
+            $decoded = json_decode($response, true);
+            if ($httpCode < 200 || $httpCode >= 300) {
+                $mensagemApi = is_array($decoded) ? ($decoded['message'] ?? $decoded['error'] ?? '') : '';
+                throw new Exception('Evolution respondeu HTTP ' . $httpCode . ($mensagemApi !== '' ? ': ' . (is_array($mensagemApi) ? json_encode($mensagemApi) : $mensagemApi) : '.'));
+            }
+            $estado = strtolower((string)($decoded['instance']['state'] ?? $decoded['state'] ?? ''));
+            if (in_array($estado, ['open', 'connected'], true)) {
+                $alerta = 'Evolution conectada. Instancia ' . $evolutionInstancia . ' esta online.';
+            } else {
+                throw new Exception('Evolution acessivel, mas a instancia esta ' . ($estado !== '' ? $estado : 'sem estado de conexao') . '.');
+            }
+        }
+
         if ($acao === 'salvar_config') {
+            $provedor = postValue('provedor', 'WASCRIPT') === 'EVOLUTION' ? 'EVOLUTION' : 'WASCRIPT';
+            $evolutionInstancia = postValue('evolution_instancia');
+            $evolutionToken = postValue('evolution_token');
+            $evolutionUrl = postValue('evolution_api_base_url');
+            if ($provedor === 'EVOLUTION' && ($evolutionInstancia === '' || $evolutionToken === '' || $evolutionUrl === '')) {
+                throw new Exception('Informe o nome da instancia da Evolution API.');
+            }
             $stmt = $pdo_master->prepare("
-                INSERT INTO whatsapp_config (id, empresa_id, nome, token, api_base_url, ativo)
-                VALUES (?, ?, ?, ?, ?, ?)
+                INSERT INTO whatsapp_config
+                    (id, empresa_id, nome, provedor, token, api_base_url, evolution_token, evolution_api_base_url, instancia, ativo)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON DUPLICATE KEY UPDATE
                     empresa_id = VALUES(empresa_id),
                     nome = VALUES(nome),
+                    provedor = VALUES(provedor),
                     token = VALUES(token),
                     api_base_url = VALUES(api_base_url),
+                    evolution_token = VALUES(evolution_token),
+                    evolution_api_base_url = VALUES(evolution_api_base_url),
+                    instancia = VALUES(instancia),
                     ativo = VALUES(ativo)
             ");
             $stmt->execute([
                 $empresaId,
                 $empresaId,
                 postValue('nome', 'Principal'),
-                postValue('token'),
-                postValue('api_base_url', 'https://api-whatsapp.wascript.com.br/api/enviar-texto'),
+                $provedor,
+                postValue('wascript_token'),
+                postValue('wascript_api_base_url', 'https://api-whatsapp.wascript.com.br/api/enviar-texto'),
+                $evolutionToken,
+                $evolutionUrl,
+                $evolutionInstancia !== '' ? $evolutionInstancia : null,
                 postValue('ativo', 'S') === 'S' ? 'S' : 'N',
             ]);
 
@@ -337,6 +387,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 }
 
 $config = whatsappConfig($pdo_master, $empresaId);
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['acao'] ?? '') === 'testar_evolution') {
+    $config = array_merge($config ?: [], [
+        'provedor' => 'EVOLUTION',
+        'evolution_token' => postValue('evolution_token'),
+        'evolution_api_base_url' => postValue('evolution_api_base_url'),
+        'instancia' => postValue('evolution_instancia'),
+    ]);
+}
 $geradoresSistema = whatsappGeradoresSistema();
 $stmt = $pdo_master->prepare("SELECT * FROM whatsapp_destinatarios WHERE empresa_id = ? ORDER BY ativo DESC, tipo, nome");
 $stmt->execute([$empresaId]);
@@ -464,7 +522,6 @@ require __DIR__ . '/../../layout/header.php';
             <div class="card-body">
                 <form method="post" class="row g-3">
                     <input type="hidden" name="csrf" value="<?= htmlspecialchars($csrf) ?>">
-                    <input type="hidden" name="acao" value="salvar_config">
 
                     <div class="col-md-6">
                         <label class="form-label">Nome</label>
@@ -480,22 +537,70 @@ require __DIR__ . '/../../layout/header.php';
                     </div>
 
                     <div class="col-12">
-                        <label class="form-label">Token da API Waseller</label>
-                        <input type="text" name="token" class="form-control font-monospace" value="<?= htmlspecialchars($config['token'] ?? '') ?>" required>
-                        <div class="form-text">
+                        <label class="form-label">Provedor</label>
+                        <select name="provedor" id="whatsapp-provedor" class="form-select">
+                            <option value="WASCRIPT" <?= (($config['provedor'] ?? 'WASCRIPT') === 'WASCRIPT') ? 'selected' : '' ?>>Wascript / Waseller</option>
+                            <option value="EVOLUTION" <?= (($config['provedor'] ?? '') === 'EVOLUTION') ? 'selected' : '' ?>>Evolution API</option>
+                        </select>
+                        <div class="form-text">As duas configuracoes ficam salvas. Esta selecao define somente qual provedor sera usado nos envios.</div>
+                    </div>
+
+                    <div class="col-12" id="whatsapp-wascript-bloco">
+                        <div class="border rounded p-3">
+                            <div class="fw-semibold mb-3">Configuracao Wascript / Waseller</div>
+                            <label class="form-label">Token da API Waseller</label>
+                            <input type="text" name="wascript_token" class="form-control font-monospace mb-2" value="<?= htmlspecialchars($config['token'] ?? '') ?>">
+                            <label class="form-label">URL base da API Waseller</label>
+                            <input type="url" name="wascript_api_base_url" class="form-control" value="<?= htmlspecialchars($config['api_base_url'] ?? 'https://api-whatsapp.wascript.com.br/api/enviar-texto') ?>">
+                            <div class="form-text">
                             Use aqui o token gerado no painel da Waseller para envio das mensagens.
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="col-12" id="whatsapp-evolution-bloco">
+                        <div class="border rounded p-3">
+                            <div class="fw-semibold mb-3">Configuracao Evolution API</div>
+                            <label class="form-label">API Key da Evolution</label>
+                            <input type="text" name="evolution_token" id="whatsapp-evolution-token" class="form-control font-monospace mb-2" value="<?= htmlspecialchars($config['evolution_token'] ?? '') ?>">
+                            <label class="form-label">URL base da Evolution API</label>
+                            <input type="url" name="evolution_api_base_url" id="whatsapp-evolution-url" class="form-control mb-2" value="<?= htmlspecialchars($config['evolution_api_base_url'] ?? '') ?>" placeholder="https://servidor-evolution">
+                            <label class="form-label">Nome da instancia Evolution</label>
+                            <input type="text" name="evolution_instancia" id="whatsapp-evolution-instancia" class="form-control font-monospace" value="<?= htmlspecialchars($config['instancia'] ?? '') ?>" placeholder="Ex.: Armazem_do_Dunga">
                         </div>
                     </div>
 
                     <div class="col-12">
-                        <label class="form-label">URL base da API Waseller</label>
-                        <input type="url" name="api_base_url" class="form-control" value="<?= htmlspecialchars($config['api_base_url'] ?? 'https://api-whatsapp.wascript.com.br/api/enviar-texto') ?>" required>
-                    </div>
-
-                    <div class="col-12">
-                        <button class="btn btn-primary w-100">Salvar configuracao</button>
+                        <div class="d-flex flex-column flex-sm-row gap-2">
+                            <button type="submit" name="acao" value="salvar_config" class="btn btn-primary flex-fill">Salvar configuracao</button>
+                            <button type="submit" name="acao" value="testar_evolution" id="btn-testar-evolution" class="btn btn-outline-success flex-fill">Testar Evolution</button>
+                        </div>
                     </div>
                 </form>
+                <script>
+                (function () {
+                    var provedor = document.getElementById('whatsapp-provedor');
+                    var wascriptBloco = document.getElementById('whatsapp-wascript-bloco');
+                    var evolutionBloco = document.getElementById('whatsapp-evolution-bloco');
+                    var evolutionInstancia = document.getElementById('whatsapp-evolution-instancia');
+                    var evolutionToken = document.getElementById('whatsapp-evolution-token');
+                    var evolutionUrl = document.getElementById('whatsapp-evolution-url');
+                    var botaoTestarEvolution = document.getElementById('btn-testar-evolution');
+
+                    function atualizarProvedor() {
+                        var evolution = provedor.value === 'EVOLUTION';
+                        wascriptBloco.hidden = evolution;
+                        evolutionBloco.hidden = !evolution;
+                        evolutionInstancia.required = evolution;
+                        evolutionToken.required = evolution;
+                        evolutionUrl.required = evolution;
+                        botaoTestarEvolution.hidden = !evolution;
+                    }
+
+                    provedor.addEventListener('change', atualizarProvedor);
+                    atualizarProvedor();
+                }());
+                </script>
             </div>
         </div>
     </div>

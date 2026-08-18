@@ -12,8 +12,12 @@ function whatsappEnsureTables(PDO $pdo): void
         CREATE TABLE IF NOT EXISTS whatsapp_config (
             id TINYINT UNSIGNED NOT NULL PRIMARY KEY,
             nome VARCHAR(100) NOT NULL DEFAULT 'Principal',
+            provedor VARCHAR(20) NOT NULL DEFAULT 'WASCRIPT',
             token VARCHAR(255) NOT NULL DEFAULT '',
             api_base_url VARCHAR(255) NOT NULL DEFAULT 'https://api-whatsapp.wascript.com.br/api/enviar-texto',
+            evolution_token VARCHAR(255) NOT NULL DEFAULT '',
+            evolution_api_base_url VARCHAR(255) NOT NULL DEFAULT '',
+            instancia VARCHAR(120) NULL,
             agendamento_token VARCHAR(64) NULL,
             ativo CHAR(1) NOT NULL DEFAULT 'S',
             atualizado_em DATETIME NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
@@ -66,6 +70,10 @@ function whatsappEnsureTables(PDO $pdo): void
 
     whatsappEnsureColumn($pdo, 'whatsapp_envios', 'rotina_id', 'ALTER TABLE whatsapp_envios ADD rotina_id INT UNSIGNED NULL AFTER id');
     whatsappEnsureColumn($pdo, 'whatsapp_config', 'empresa_id', 'ALTER TABLE whatsapp_config ADD empresa_id INT NOT NULL DEFAULT 1 AFTER id');
+    whatsappEnsureColumn($pdo, 'whatsapp_config', 'provedor', "ALTER TABLE whatsapp_config ADD provedor VARCHAR(20) NOT NULL DEFAULT 'WASCRIPT' AFTER nome");
+    whatsappEnsureColumn($pdo, 'whatsapp_config', 'evolution_token', "ALTER TABLE whatsapp_config ADD evolution_token VARCHAR(255) NOT NULL DEFAULT '' AFTER api_base_url");
+    whatsappEnsureColumn($pdo, 'whatsapp_config', 'evolution_api_base_url', "ALTER TABLE whatsapp_config ADD evolution_api_base_url VARCHAR(255) NOT NULL DEFAULT '' AFTER evolution_token");
+    whatsappEnsureColumn($pdo, 'whatsapp_config', 'instancia', 'ALTER TABLE whatsapp_config ADD instancia VARCHAR(120) NULL AFTER api_base_url');
     whatsappEnsureColumn($pdo, 'whatsapp_config', 'agendamento_token', 'ALTER TABLE whatsapp_config ADD agendamento_token VARCHAR(64) NULL AFTER api_base_url');
     whatsappEnsureColumn($pdo, 'whatsapp_destinatarios', 'empresa_id', 'ALTER TABLE whatsapp_destinatarios ADD empresa_id INT NOT NULL DEFAULT 1 AFTER id');
     whatsappEnsureColumn($pdo, 'whatsapp_mensagens', 'empresa_id', 'ALTER TABLE whatsapp_mensagens ADD empresa_id INT NOT NULL DEFAULT 1 AFTER id');
@@ -391,6 +399,12 @@ function whatsappSend(PDO $pdo, array $config, array $destinatario, string $mens
 {
     $token = trim($config['token'] ?? '');
     $apiBase = rtrim(trim($config['api_base_url'] ?? ''), '/');
+    $provedor = strtoupper(trim($config['provedor'] ?? 'WASCRIPT'));
+    $instancia = trim($config['instancia'] ?? '');
+    if ($provedor === 'EVOLUTION') {
+        $token = trim($config['evolution_token'] ?? '');
+        $apiBase = rtrim(trim($config['evolution_api_base_url'] ?? ''), '/');
+    }
     $numero = trim($destinatario['numero'] ?? '');
     $nome = trim($destinatario['nome'] ?? '');
 
@@ -402,17 +416,27 @@ function whatsappSend(PDO $pdo, array $config, array $destinatario, string $mens
         return whatsappRegisterSend($pdo, $mensagemId, $destinatario, $mensagem, 'ERRO', null, 'Numero do destinatario vazio.', $usuarioId, $rotinaId);
     }
 
-    $url = $apiBase . '/' . rawurlencode($token);
-    $payload = [
-        'phone' => $numero,
-        'message' => $mensagem,
-    ];
+    if ($provedor === 'EVOLUTION') {
+        if ($instancia === '') {
+            return whatsappRegisterSend($pdo, $mensagemId, $destinatario, $mensagem, 'ERRO', null, 'Instancia da Evolution API nao configurada.', $usuarioId, $rotinaId);
+        }
+        if (strtoupper(trim($destinatario['tipo'] ?? 'PESSOA')) === 'GRUPO') {
+            $numero = preg_replace('/\D+/', '', preg_replace('/@g\.us$/i', '', $numero)) . '@g.us';
+        }
+        $url = $apiBase . '/message/sendText/' . rawurlencode($instancia);
+        $payload = ['number' => $numero, 'text' => $mensagem];
+        $headers = ['Content-Type: application/json', 'apikey: ' . $token];
+    } else {
+        $url = $apiBase . '/' . rawurlencode($token);
+        $payload = ['phone' => $numero, 'message' => $mensagem];
+        $headers = ['Content-Type: application/json'];
+    }
 
     $ch = curl_init($url);
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
     curl_setopt($ch, CURLOPT_POST, true);
     curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($payload, JSON_UNESCAPED_UNICODE));
-    curl_setopt($ch, CURLOPT_HTTPHEADER, ['Content-Type: application/json']);
+    curl_setopt($ch, CURLOPT_HTTPHEADER, $headers);
     curl_setopt($ch, CURLOPT_TIMEOUT, 30);
 
     $response = curl_exec($ch);
@@ -436,6 +460,12 @@ function whatsappSendDocument(PDO $pdo, array $config, array $destinatario, stri
 {
     $token = trim($config['token'] ?? '');
     $apiBase = rtrim(trim($config['api_base_url'] ?? ''), '/');
+    $provedor = strtoupper(trim($config['provedor'] ?? 'WASCRIPT'));
+    $instancia = trim($config['instancia'] ?? '');
+    if ($provedor === 'EVOLUTION') {
+        $token = trim($config['evolution_token'] ?? '');
+        $apiBase = rtrim(trim($config['evolution_api_base_url'] ?? ''), '/');
+    }
     $numero = trim($destinatario['numero'] ?? '');
 
     if ($token === '' || $apiBase === '') {
@@ -450,24 +480,39 @@ function whatsappSendDocument(PDO $pdo, array $config, array $destinatario, stri
         return whatsappRegisterSend($pdo, null, $destinatario, $mensagemRegistro, 'ERRO', null, 'Arquivo PDF nao encontrado.', $usuarioId, $rotinaId);
     }
 
-    $apiDocumento = str_replace('/enviar-texto', '/enviar-documento', $apiBase);
-    if ($apiDocumento === $apiBase && substr($apiDocumento, -4) !== '/api') {
-        $apiDocumento = preg_replace('#/api/[^/]+$#', '/api/enviar-documento', $apiDocumento);
-    }
-
-    $url = rtrim($apiDocumento, '/') . '/' . rawurlencode($token);
     $base64 = 'data:application/pdf;base64,' . base64_encode((string)file_get_contents($arquivoPdf));
-    $payload = [
-        'phone' => $numero,
-        'base64' => $base64,
-        'name' => $nomeArquivo,
-    ];
+    if ($provedor === 'EVOLUTION') {
+        if ($instancia === '') {
+            return whatsappRegisterSend($pdo, null, $destinatario, $mensagemRegistro, 'ERRO', null, 'Instancia da Evolution API nao configurada.', $usuarioId, $rotinaId);
+        }
+        if (strtoupper(trim($destinatario['tipo'] ?? 'PESSOA')) === 'GRUPO') {
+            $numero = preg_replace('/\D+/', '', preg_replace('/@g\.us$/i', '', $numero)) . '@g.us';
+        }
+        $url = $apiBase . '/message/sendMedia/' . rawurlencode($instancia);
+        $payload = [
+            'number' => $numero,
+            'mediatype' => 'document',
+            'mimetype' => 'application/pdf',
+            'caption' => $mensagemRegistro,
+            'media' => $base64,
+            'fileName' => $nomeArquivo,
+        ];
+        $headers = ['Content-Type: application/json', 'apikey: ' . $token];
+    } else {
+        $apiDocumento = str_replace('/enviar-texto', '/enviar-documento', $apiBase);
+        if ($apiDocumento === $apiBase && substr($apiDocumento, -4) !== '/api') {
+            $apiDocumento = preg_replace('#/api/[^/]+$#', '/api/enviar-documento', $apiDocumento);
+        }
+        $url = rtrim($apiDocumento, '/') . '/' . rawurlencode($token);
+        $payload = ['phone' => $numero, 'base64' => $base64, 'name' => $nomeArquivo];
+        $headers = ['Content-Type: application/json'];
+    }
 
     $ch = curl_init($url);
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
     curl_setopt($ch, CURLOPT_POST, true);
     curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($payload, JSON_UNESCAPED_UNICODE));
-    curl_setopt($ch, CURLOPT_HTTPHEADER, ['Content-Type: application/json']);
+    curl_setopt($ch, CURLOPT_HTTPHEADER, $headers);
     curl_setopt($ch, CURLOPT_TIMEOUT, 45);
 
     $response = curl_exec($ch);
