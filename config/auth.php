@@ -18,6 +18,46 @@ if (!isset($_SESSION['usuario_id'])) {
     exit;
 }
 
+function protegerReenvioFormulario(): void
+{
+    if (($_SERVER['REQUEST_METHOD'] ?? 'GET') !== 'POST') {
+        return;
+    }
+
+    $token = trim((string)($_POST['_sd_submit_token'] ?? ''));
+    if ($token === '' || !preg_match('/^[a-zA-Z0-9-]{20,80}$/', $token)) {
+        return;
+    }
+
+    $agora = time();
+    $tokensUsados = is_array($_SESSION['_sd_submit_tokens'] ?? null)
+        ? $_SESSION['_sd_submit_tokens']
+        : [];
+
+    foreach ($tokensUsados as $tokenUsado => $momento) {
+        if (($agora - (int)$momento) > 1800) {
+            unset($tokensUsados[$tokenUsado]);
+        }
+    }
+
+    if (isset($tokensUsados[$token])) {
+        $_SESSION['_sd_submit_tokens'] = $tokensUsados;
+        http_response_code(409);
+        header('Content-Type: text/html; charset=UTF-8');
+        echo '<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
+            . '<title>Envio duplicado</title></head><body style="font-family:Arial,sans-serif;padding:24px">'
+            . '<h1 style="font-size:20px">Envio duplicado bloqueado</h1>'
+            . '<p>Esta operacao ja foi enviada. Volte para a tela anterior e confira o resultado antes de tentar novamente.</p>'
+            . '<button type="button" onclick="history.back()">Voltar</button></body></html>';
+        exit;
+    }
+
+    $tokensUsados[$token] = $agora;
+    $_SESSION['_sd_submit_tokens'] = $tokensUsados;
+}
+
+protegerReenvioFormulario();
+
 function redirecionarPendenciasOperador(): void
 {
     if (($_SESSION['nivel'] ?? '') !== 'OPERADOR') {
