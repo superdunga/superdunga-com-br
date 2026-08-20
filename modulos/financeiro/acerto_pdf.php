@@ -141,7 +141,9 @@ foreach ($paginas as $conteudo) {
     $objetos[$paginaId] = "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 {$largura} {$altura}] /Resources << /Font << /F1 3 0 R /F2 4 0 R >> >> /Contents {$conteudoId} 0 R >>";
     $idsPaginas[] = $paginaId;
 }
-$objetos[2] = '<< /Type /Pages /Kids [' . implode(' ', array_map(static fn($id) => "{$id} 0 R", $idsPaginas)) . '] /Count ' . count($idsPaginas) . ' >>';
+$objetos[2] = '<< /Type /Pages /Kids [' . implode(' ', array_map(static function ($id) {
+    return "{$id} 0 R";
+}, $idsPaginas)) . '] /Count ' . count($idsPaginas) . ' >>';
 ksort($objetos);
 
 $pdf = "%PDF-1.4\n";

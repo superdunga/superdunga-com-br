@@ -59,7 +59,9 @@ function mbaIdsSelecionados($valor): array
         return [];
     }
 
-    return array_values(array_unique(array_filter(array_map('intval', $valor), static fn(int $id): bool => $id > 0)));
+    return array_values(array_unique(array_filter(array_map('intval', $valor), static function (int $id): bool {
+        return $id > 0;
+    })));
 }
 
 function mbaAcertoFechadoPorMovimento(PDO $pdo, int $empresaId, int $movcontador): ?int
@@ -261,8 +263,12 @@ function mbaFecharAcerto(PDO $pdo, int $empresaId, int $usuarioId, array $dados)
         $stmtFornecedor->execute([$empresaId, $fcontador]);
         $nomeFornecedor = (string)($stmtFornecedor->fetchColumn() ?: "Fornecedor {$fcontador}");
 
-        $totalReceber = array_sum(array_map(static fn(array $t): float => (float)($t['VLRRESTANTE'] ?: $t['VLRPARCELA']), $crTitulos));
-        $totalPagar = array_sum(array_map(static fn(array $t): float => (float)($t['VLRRESTANTE'] ?: $t['VLRPARCELA']), $cpTitulos));
+        $totalReceber = array_sum(array_map(static function (array $titulo): float {
+            return (float)($titulo['VLRRESTANTE'] ?: $titulo['VLRPARCELA']);
+        }, $crTitulos));
+        $totalPagar = array_sum(array_map(static function (array $titulo): float {
+            return (float)($titulo['VLRRESTANTE'] ?: $titulo['VLRPARCELA']);
+        }, $cpTitulos));
         $saldo = round($totalReceber - $totalPagar, 2);
 
         $stmtAcerto = $pdo->prepare("
