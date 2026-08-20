@@ -1803,6 +1803,8 @@ function whatsappMensagemConciliacaoTesouraria(PDO $pdo, int $empresaId = 1): st
     date_default_timezone_set('America/Sao_Paulo');
 
     $limiteListagem = 50;
+    $cbcontadorTesouraria = $empresaId === 4 ? 5 : 8;
+    $filtroMovcontador = $empresaId === 4 ? 'AND f.MOVCONTADOR > 233704' : '';
 
     $stmt = $pdo->prepare("
         SELECT COUNT(*) AS qtd, COALESCE(SUM(valor_operacao), 0) AS total
@@ -1832,7 +1834,8 @@ function whatsappMensagemConciliacaoTesouraria(PDO $pdo, int $empresaId = 1): st
         SELECT COUNT(*) AS qtd, COALESCE(SUM(f.VALORMOV), 0) AS total
         FROM armazem_bnc001 f
         WHERE f.EMPRESA = ?
-          AND f.CBCONTADOR = 8
+          AND f.CBCONTADOR = ?
+          {$filtroMovcontador}
           AND f.DTMOV > '2026-04-15'
           AND (
               COALESCE(f.deletado, 'N') <> 'S'
@@ -1852,14 +1855,15 @@ function whatsappMensagemConciliacaoTesouraria(PDO $pdo, int $empresaId = 1): st
                 AND fc.empresa_id = ?
           )
     ");
-    $stmt->execute([$empresaId, $empresaId, $empresaId]);
+    $stmt->execute([$empresaId, $cbcontadorTesouraria, $empresaId, $empresaId]);
     $resumoFirebird = $stmt->fetch(PDO::FETCH_ASSOC);
 
     $stmt = $pdo->prepare("
         SELECT f.MOVCONTADOR, f.DTMOV, f.VALORMOV, f.HISTMOV
         FROM armazem_bnc001 f
         WHERE f.EMPRESA = ?
-          AND f.CBCONTADOR = 8
+          AND f.CBCONTADOR = ?
+          {$filtroMovcontador}
           AND f.DTMOV > '2026-04-15'
           AND (
               COALESCE(f.deletado, 'N') <> 'S'
@@ -1882,9 +1886,10 @@ function whatsappMensagemConciliacaoTesouraria(PDO $pdo, int $empresaId = 1): st
         LIMIT ?
     ");
     $stmt->bindValue(1, $empresaId, PDO::PARAM_INT);
-    $stmt->bindValue(2, $empresaId, PDO::PARAM_INT);
+    $stmt->bindValue(2, $cbcontadorTesouraria, PDO::PARAM_INT);
     $stmt->bindValue(3, $empresaId, PDO::PARAM_INT);
-    $stmt->bindValue(4, $limiteListagem, PDO::PARAM_INT);
+    $stmt->bindValue(4, $empresaId, PDO::PARAM_INT);
+    $stmt->bindValue(5, $limiteListagem, PDO::PARAM_INT);
     $stmt->execute();
     $firebird = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
