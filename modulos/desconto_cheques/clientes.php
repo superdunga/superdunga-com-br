@@ -142,7 +142,9 @@ $stmtClientes = $pdo_master->prepare("
 ");
 $stmtClientes->execute($params);
 $clientes = $stmtClientes->fetchAll(PDO::FETCH_ASSOC);
-$totalAVencer = array_sum(array_map(static fn(array $cliente): float => (float)$cliente['valor_a_vencer'], $clientes));
+$totalAVencer = array_sum(array_map(static function (array $cliente): float {
+    return (float)$cliente['valor_a_vencer'];
+}, $clientes));
 
 require '../../layout/header.php';
 ?>
