@@ -68,6 +68,7 @@ function sistemaModulosPadrao(): array
         ['codigo' => 'movimentacao_baixa_caixa_banco', 'grupo' => 'Movimentacao/Baixa', 'nome' => 'Caixa/Banco', 'url' => 'modulos/movimentacao_baixa/caixa_banco.php', 'ordem' => 329, 'somente_master' => true],
         ['codigo' => 'movimentacao_baixa_contas_pagar', 'grupo' => 'Movimentacao/Baixa', 'nome' => 'Contas a Pagar', 'url' => 'modulos/movimentacao_baixa/contas_pagar.php', 'ordem' => 330, 'somente_master' => true],
         ['codigo' => 'movimentacao_baixa_contas_receber', 'grupo' => 'Movimentacao/Baixa', 'nome' => 'Contas a Receber', 'url' => 'modulos/movimentacao_baixa/contas_receber.php', 'ordem' => 331, 'somente_master' => true],
+        ['codigo' => 'movimentacao_baixa_acertos', 'grupo' => 'Movimentacao/Baixa', 'nome' => 'Acertos', 'url' => 'modulos/movimentacao_baixa/acertos.php', 'ordem' => 332, 'somente_master' => true],
         ['codigo' => 'movimentacao_baixa_clientes', 'grupo' => 'Movimentacao/Baixa', 'nome' => 'Clientes', 'url' => 'modulos/movimentacao_baixa/clientes.php', 'ordem' => 332, 'somente_master' => true],
         ['codigo' => 'movimentacao_baixa_fornecedores', 'grupo' => 'Movimentacao/Baixa', 'nome' => 'Fornecedores', 'url' => 'modulos/movimentacao_baixa/fornecedores.php', 'ordem' => 333, 'somente_master' => true],
         ['codigo' => 'movimentacao_baixa_contas_bnc', 'grupo' => 'Movimentacao/Baixa', 'nome' => 'Contas BNC002', 'url' => 'modulos/movimentacao_baixa/contas_bnc.php', 'ordem' => 334, 'somente_master' => true],

@@ -265,7 +265,7 @@ require '../../layout/header.php';
                         <div class="col-12 d-flex flex-wrap gap-2">
                             <button class="btn btn-success">Salvar conferencia</button>
                             <?php if (!empty($contaEditar['arquivo_caminho'])): ?>
-                                <a class="btn btn-outline-primary" target="_blank" href="../../<?= htmlspecialchars((string)$contaEditar['arquivo_caminho']) ?>">Abrir PDF</a>
+                                <a class="btn btn-outline-primary" target="_blank" rel="noopener" href="abrir_pdf.php?id=<?= (int)$contaEditar['id'] ?>">Abrir PDF</a>
                             <?php endif; ?>
                         </div>
                     </form>

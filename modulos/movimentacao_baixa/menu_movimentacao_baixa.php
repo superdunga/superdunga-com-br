@@ -33,6 +33,15 @@ $opcoes = [
         'botao' => 'btn-info',
     ],
     [
+        'titulo' => 'Acertos',
+        'descricao' => 'Quite contas a receber e a pagar na mesma conta, mantendo os dois lados do acerto.',
+        'href' => 'acertos.php',
+        'modulo' => 'movimentacao_baixa_acertos',
+        'icone' => 'AT',
+        'botao' => 'btn-primary',
+        'somente_empresa' => 2,
+    ],
+    [
         'titulo' => 'Clientes',
         'descricao' => 'Cadastro de clientes da empresa 2 nas tabelas espelhadas.',
         'href' => 'clientes.php',

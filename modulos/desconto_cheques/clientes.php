@@ -108,7 +108,31 @@ if (in_array($filtroAtivo, ['S', 'N'], true)) {
 }
 
 $stmtClientes = $pdo_master->prepare("
-    SELECT dc.*, COALESCE(NULLIF(cr.APELIDO, ''), cr.NOME) AS cliente_oficial_nome
+    SELECT
+        dc.*,
+        COALESCE(NULLIF(cr.APELIDO, ''), cr.NOME) AS cliente_oficial_nome,
+        COALESCE((
+            SELECT SUM(d.valor)
+            FROM desconto_cheques_documentos d
+            INNER JOIN desconto_cheques_operacoes o
+                    ON o.id = d.operacao_id
+                   AND o.empresa_id = dc.empresa_id
+            LEFT JOIN armazem_cr001 titulo
+                   ON titulo.EMPRESA = o.empresa_id
+                  AND titulo.CRCONTADOR = d.crcontador
+                  AND COALESCE(titulo.excluido_firebird, 'N') = 'N'
+            WHERE o.cliente_id = dc.id
+              AND d.data_vencimento >= CURRENT_DATE()
+              AND (
+                  o.status IN ('ABERTA', 'CONFIRMADA')
+                  OR (
+                      o.status = 'LANCADA'
+                      AND titulo.CRCONTADOR IS NOT NULL
+                      AND COALESCE(titulo.STATUS, '') <> 'QT'
+                      AND COALESCE(titulo.VLRRESTANTE, titulo.VLRPARCELA, 0) > 0
+                  )
+              )
+        ), 0) AS valor_a_vencer
     FROM desconto_cheques_clientes dc
     LEFT JOIN armazem_cr002 cr
       ON cr.EMPRESA = dc.empresa_id
@@ -118,6 +142,7 @@ $stmtClientes = $pdo_master->prepare("
 ");
 $stmtClientes->execute($params);
 $clientes = $stmtClientes->fetchAll(PDO::FETCH_ASSOC);
+$totalAVencer = array_sum(array_map(static fn(array $cliente): float => (float)$cliente['valor_a_vencer'], $clientes));
 
 require '../../layout/header.php';
 ?>
@@ -223,17 +248,21 @@ require '../../layout/header.php';
     <div class="card shadow-sm">
         <div class="card-header bg-white">
             <form method="get" class="row g-2 align-items-end">
-                <div class="col-12 col-md-6">
+                <div class="col-12 col-md-4">
                     <label class="form-label small">Buscar cliente</label>
                     <input type="text" name="nome" class="form-control" value="<?= htmlspecialchars($filtroNome) ?>">
                 </div>
-                <div class="col-6 col-md-3">
+                <div class="col-6 col-md-2">
                     <label class="form-label small">Status</label>
                     <select name="ativo" class="form-select">
                         <option value="S" <?= $filtroAtivo === 'S' ? 'selected' : '' ?>>Ativos</option>
                         <option value="N" <?= $filtroAtivo === 'N' ? 'selected' : '' ?>>Inativos</option>
                         <option value="todos" <?= $filtroAtivo === 'todos' ? 'selected' : '' ?>>Todos</option>
                     </select>
+                </div>
+                <div class="col-6 col-md-3">
+                    <label class="form-label small">Total a vencer</label>
+                    <div class="form-control bg-light fw-semibold text-end"><?= moedaDC($totalAVencer) ?></div>
                 </div>
                 <div class="col-6 col-md-3 d-grid">
                     <button type="submit" class="btn btn-outline-primary">Filtrar</button>
@@ -250,6 +279,7 @@ require '../../layout/header.php';
                         <th class="text-end">Taxa</th>
                         <th class="text-center">Adicional</th>
                         <th class="text-end">Limite</th>
+                        <th class="text-end">A vencer</th>
                         <th class="text-center">Status</th>
                         <th class="text-end">Acao</th>
                     </tr>
@@ -263,6 +293,7 @@ require '../../layout/header.php';
                             <td class="text-end"><?= percentualDC($cliente['taxa_desconto']) ?></td>
                             <td class="text-center"><?= $cliente['usa_adicional_prazo'] === 'S' ? 'Sim' : 'Nao' ?></td>
                             <td class="text-end"><?= moedaDC($cliente['limite_credito']) ?></td>
+                            <td class="text-end fw-semibold"><?= moedaDC($cliente['valor_a_vencer']) ?></td>
                             <td class="text-center">
                                 <span class="badge <?= $cliente['ativo'] === 'S' ? 'text-bg-success' : 'text-bg-secondary' ?>">
                                     <?= $cliente['ativo'] === 'S' ? 'Ativo' : 'Inativo' ?>
@@ -272,7 +303,7 @@ require '../../layout/header.php';
                         </tr>
                     <?php endforeach; ?>
                     <?php if (empty($clientes)): ?>
-                        <tr><td colspan="8" class="text-center text-muted py-4">Nenhum cliente encontrado.</td></tr>
+                        <tr><td colspan="9" class="text-center text-muted py-4">Nenhum cliente encontrado.</td></tr>
                     <?php endif; ?>
                 </tbody>
             </table>

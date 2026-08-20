@@ -300,6 +300,7 @@ function validarPermissaoModuloAtual(): void
         'modulos/financeiro/contas_receber_clientes.php' => 'financeiro_contas_receber',
         'modulos/financeiro/contas_pagar.php' => 'financeiro',
         'modulos/financeiro/contas.php' => 'financeiro',
+        'modulos/financeiro/acerto_pdf.php' => 'financeiro',
         'modulos/financeiro/conciliacao_extratos.php' => 'financeiro_conciliacao_extratos',
         'modulos/estoque/posicao_estoque.php' => 'estoque_posicao',
         'modulos/rotinas_operacionais/recebimento_mercadorias.php' => 'recebimento_mercadorias',
@@ -308,6 +309,7 @@ function validarPermissaoModuloAtual(): void
         'modulos/colaboradores/folha_pagamento.php' => 'colaboradores_folha_pagamento',
         'modulos/desconto_cheques/ler_documento.php' => 'desconto_cheques_operacoes',
         'modulos/desconto_cheques/consultar_emissor.php' => 'desconto_cheques_operacoes',
+        'modulos/energia/abrir_pdf.php' => 'energia_contas',
     ];
 
     $codigoModulo = $aliases[$caminho] ?? null;

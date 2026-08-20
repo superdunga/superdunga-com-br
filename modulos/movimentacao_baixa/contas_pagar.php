@@ -3,10 +3,12 @@ require '../../config/auth.php';
 require '../../config/conexao.php';
 require_once '../../config/modulos.php';
 require __DIR__ . '/_empresa2_guard.php';
+require_once __DIR__ . '/_acertos_lib.php';
 
 $pdo = $pdo_master;
 $empresaId = (int)($_SESSION['empresa_id'] ?? 0);
 $usuarioId = (int)($_SESSION['usuario_id'] ?? 0);
+mbaGarantirEstrutura($pdo);
 
 function cpbH($valor)
 {
@@ -737,6 +739,11 @@ function cpbExcluirTitulo(PDO $pdo, $empresaId, $usuarioId, $cpcontador)
         throw new RuntimeException('Titulo vinculado a acerto ativo nao pode ser excluido.');
     }
 
+    $acertoMovBaixa = mbaAcertoFechadoPorTitulo($pdo, $empresaId, 'CP', (int)$cpcontador);
+    if ($acertoMovBaixa !== null) {
+        throw new RuntimeException("Titulo vinculado ao acerto Cliente x Fornecedor #{$acertoMovBaixa} nao pode ser excluido.");
+    }
+
     $stmt = $pdo->prepare("
         UPDATE armazem_cp001
         SET excluido_firebird = 'S',
@@ -788,6 +795,11 @@ function cpbExcluirBaixaTitulo(PDO $pdo, $empresaId, $usuarioId, $movcontador)
     $stmtAcerto->execute([$empresaId, $movcontador]);
     if ((int)$stmtAcerto->fetchColumn() > 0) {
         throw new RuntimeException('Baixa vinculada a acerto ativo nao pode ser excluida.');
+    }
+
+    $acertoMovBaixa = mbaAcertoFechadoPorMovimento($pdo, $empresaId, (int)$movcontador);
+    if ($acertoMovBaixa !== null) {
+        throw new RuntimeException("Baixa vinculada ao acerto Cliente x Fornecedor #{$acertoMovBaixa} nao pode ser excluida.");
     }
 
     $stmtContrapAcerto = $pdo->prepare("

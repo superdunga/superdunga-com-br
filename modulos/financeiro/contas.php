@@ -1420,6 +1420,7 @@ require '../../layout/header.php';
                     </div>
                 </div>
                 <div class="modal-footer">
+                    <a href="acerto_pdf.php?id=<?= $acertoModalId ?>" class="btn btn-outline-primary">PDF</a>
                     <form method="POST" onsubmit="return confirm('Desfazer este acerto e voltar a exibir os lancamentos filhos?')">
                         <input type="hidden" name="acao" value="desfazer_acerto">
                         <input type="hidden" name="acerto_id" value="<?= $acertoModalId ?>">
