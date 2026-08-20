@@ -76,7 +76,9 @@ if ($max !== null) {
     $where[] = 'c.VLRPARCELA <= ?';
     $params[] = $max;
 }
-$whereSql = implode(' AND ', array_map(static fn($w) => '(' . $w . ')', $where));
+$whereSql = implode(' AND ', array_map(static function ($w) {
+    return '(' . $w . ')';
+}, $where));
 $whereVinculo = $where;
 $whereVinculo[] = "EXISTS (
     SELECT 1
@@ -86,7 +88,9 @@ $whereVinculo[] = "EXISTS (
       AND va.id_destino = c.CPCONTADOR
       AND COALESCE(va.enviado_superdunga, 'N') = 'S'
 )";
-$whereVinculoSql = implode(' AND ', array_map(static fn($w) => '(' . $w . ')', $whereVinculo));
+$whereVinculoSql = implode(' AND ', array_map(static function ($w) {
+    return '(' . $w . ')';
+}, $whereVinculo));
 
 $stmtResumo = $pdo->prepare("SELECT COUNT(*) AS qtd, COALESCE(SUM(c.VLRPARCELA), 0) AS total FROM armazem_cp001 c WHERE {$whereSql}");
 $stmtResumo->execute($params);

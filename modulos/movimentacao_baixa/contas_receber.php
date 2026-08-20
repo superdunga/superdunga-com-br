@@ -4,6 +4,7 @@ require '../../config/conexao.php';
 require_once '../../config/modulos.php';
 require __DIR__ . '/_empresa2_guard.php';
 require_once __DIR__ . '/_acertos_lib.php';
+require_once __DIR__ . '/_exportacao_filtros.php';
 
 $pdo = $pdo_master;
 $empresaId = (int)($_SESSION['empresa_id'] ?? 0);
@@ -1264,7 +1265,7 @@ if ($fStatus !== '') {
 
 $whereSql = implode(' AND ', $where);
 
-$stmtLista = $pdo->prepare("
+$sqlListaBase = "
     SELECT cp.*,
            COALESCE(NULLIF(f.APELIDO, ''), f.NOME, CONCAT('Cliente ', cp.CLICONTADOR)) AS cliente_nome,
            t.DESCES AS tipoes_desc,
@@ -1284,8 +1285,39 @@ $stmtLista = $pdo->prepare("
      AND t.ESCONTADOR = cp.TIPOES
     WHERE {$whereSql}
     ORDER BY cp.DTVENC DESC, cp.CRCONTADOR DESC
-    LIMIT 200
-");
+";
+
+if (in_array(($_GET['exportar'] ?? ''), ['csv', 'pdf'], true)) {
+    $stmtExportar = $pdo->prepare($sqlListaBase);
+    $stmtExportar->execute($params);
+    $registrosExportar = $stmtExportar->fetchAll(PDO::FETCH_ASSOC);
+    $linhasExportar = array_map(static function ($registro) {
+        return [
+            (string)$registro['CRCONTADOR'],
+            !empty($registro['DTVENDA']) ? date('d/m/Y', strtotime($registro['DTVENDA'])) : '',
+            !empty($registro['DTVENC']) ? date('d/m/Y', strtotime($registro['DTVENC'])) : '',
+            (string)$registro['cliente_nome'],
+            (string)$registro['tipoes_desc'],
+            (string)($registro['TITULO'] ?: $registro['NOTAFISCAL'] ?: $registro['NUMDOCORIGEM']),
+            number_format((float)$registro['VLRPARCELA'], 2, ',', '.'),
+            number_format((float)$registro['VLRRESTANTE'], 2, ',', '.'),
+            (string)$registro['STATUS'],
+            (string)$registro['origem_titulo'],
+        ];
+    }, $registrosExportar);
+    $nomeExportacao = 'movbaixa_contas_receber_empresa_' . $empresaId . '_' . date('Ymd_His');
+    $cabecalhos = ['CR', 'Venda', 'Vencimento', 'Cliente', 'TIPOES', 'Documento', 'Valor', 'Restante', 'Status', 'Origem'];
+    if ($_GET['exportar'] === 'csv') {
+        mbxExportarCsv($nomeExportacao, $cabecalhos, $linhasExportar);
+    }
+    mbxExportarPdf($nomeExportacao, 'MovBaixa - Contas a Receber', ['Empresa: ' . $empresaId, 'Registros filtrados: ' . count($linhasExportar)], [
+        ['titulo'=>'CR','largura'=>42,'limite'=>8], ['titulo'=>'Venda','largura'=>58,'limite'=>10], ['titulo'=>'Venc.','largura'=>58,'limite'=>10],
+        ['titulo'=>'Cliente','largura'=>150,'limite'=>28], ['titulo'=>'TIPOES','largura'=>120,'limite'=>22], ['titulo'=>'Documento','largura'=>105,'limite'=>19],
+        ['titulo'=>'Valor','largura'=>68,'limite'=>13], ['titulo'=>'Restante','largura'=>68,'limite'=>13], ['titulo'=>'Status','largura'=>45,'limite'=>8], ['titulo'=>'Origem','largura'=>70,'limite'=>12],
+    ], $linhasExportar);
+}
+
+$stmtLista = $pdo->prepare($sqlListaBase . ' LIMIT 200');
 $stmtLista->execute($params);
 $titulos = $stmtLista->fetchAll(PDO::FETCH_ASSOC);
 
@@ -1758,6 +1790,8 @@ require '../../layout/header.php';
                 <div class="crb-actions">
                     <button class="crb-btn" type="submit">Filtrar</button>
                     <a class="crb-btn light" href="contas_receber.php">Limpar</a>
+                    <a class="crb-btn secondary" href="contas_receber.php?<?= crbH(mbxUrlExportacao('csv')) ?>">Exportar CSV</a>
+                    <a class="crb-btn secondary" href="contas_receber.php?<?= crbH(mbxUrlExportacao('pdf')) ?>">Exportar PDF</a>
                 </div>
             </div>
         </form>

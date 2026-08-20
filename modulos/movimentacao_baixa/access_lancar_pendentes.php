@@ -180,7 +180,9 @@ if ($max !== null) {
     $where[] = 'l.valor_origem <= ?';
     $params[] = $max;
 }
-$whereSql = implode(' AND ', array_map(static fn($w) => '(' . $w . ')', $where));
+$whereSql = implode(' AND ', array_map(static function ($w) {
+    return '(' . $w . ')';
+}, $where));
 
 $stmtResumo = $pdo->prepare("
     SELECT COUNT(*) AS qtd,

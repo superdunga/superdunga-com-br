@@ -3,6 +3,7 @@ require '../../config/auth.php';
 require '../../config/conexao.php';
 require_once '../../config/modulos.php';
 require __DIR__ . '/_empresa2_guard.php';
+require_once __DIR__ . '/_exportacao_filtros.php';
 
 $pdo = $pdo_master;
 $empresaId = (int)($_SESSION['empresa_id'] ?? 0);
@@ -932,7 +933,7 @@ if ($fValorMax !== '') {
     $params[] = mbFloat($fValorMax);
 }
 
-$sqlLista = "
+$sqlListaBase = "
     SELECT b.*,
            c.NUMERO AS CONTA_NUMERO,
            c.DESCABREV AS CONTA_DESC,
@@ -978,9 +979,34 @@ $sqlLista = "
      AND mca.movcontador = b.MOVCONTADOR
     WHERE " . implode(' AND ', $where) . "
     ORDER BY b.DTMOV DESC, b.MOVCONTADOR DESC
-    LIMIT 200
 ";
-$stmtLista = $pdo->prepare($sqlLista);
+
+if (in_array(($_GET['exportar'] ?? ''), ['csv', 'pdf'], true)) {
+    $stmtExportar = $pdo->prepare($sqlListaBase);
+    $stmtExportar->execute($params);
+    $registrosExportar = $stmtExportar->fetchAll(PDO::FETCH_ASSOC);
+    $linhasExportar = array_map(static function ($registro) {
+        return [
+            (string)$registro['MOVCONTADOR'], !empty($registro['DTMOV']) ? date('d/m/Y', strtotime($registro['DTMOV'])) : '',
+            trim((string)$registro['CONTA_DESC'] . ' (' . (string)$registro['CBCONTADOR'] . ')'),
+            trim((string)$registro['TIPO_DESC'] . ' (' . (string)$registro['TIPOES'] . ')'),
+            (string)$registro['HISTMOV'], (string)$registro['NUMDOC'], (string)$registro['TIPOMOV'],
+            number_format((float)$registro['VALORMOV'], 2, ',', '.'),
+        ];
+    }, $registrosExportar);
+    $nomeExportacao = 'movbaixa_caixa_banco_empresa_' . $empresaId . '_' . date('Ymd_His');
+    $cabecalhos = ['Movimento', 'Data', 'Conta', 'TIPOES', 'Historico', 'Documento', 'D/C', 'Valor'];
+    if ($_GET['exportar'] === 'csv') {
+        mbxExportarCsv($nomeExportacao, $cabecalhos, $linhasExportar);
+    }
+    mbxExportarPdf($nomeExportacao, 'MovBaixa - Caixa/Banco', ['Empresa: ' . $empresaId, 'Registros filtrados: ' . count($linhasExportar)], [
+        ['titulo'=>'Mov.','largura'=>52,'limite'=>9], ['titulo'=>'Data','largura'=>58,'limite'=>10], ['titulo'=>'Conta','largura'=>145,'limite'=>27],
+        ['titulo'=>'TIPOES','largura'=>145,'limite'=>27], ['titulo'=>'Historico','largura'=>210,'limite'=>39], ['titulo'=>'Documento','largura'=>80,'limite'=>14],
+        ['titulo'=>'D/C','largura'=>32,'limite'=>3], ['titulo'=>'Valor','largura'=>72,'limite'=>14],
+    ], $linhasExportar);
+}
+
+$stmtLista = $pdo->prepare($sqlListaBase . ' LIMIT 200');
 $stmtLista->execute($params);
 $lancamentos = $stmtLista->fetchAll(PDO::FETCH_ASSOC);
 
@@ -1482,6 +1508,8 @@ require_once __DIR__ . '/../../layout/header.php';
                 <div class="mb-actions">
                     <button type="submit" class="mb-btn">Filtrar</button>
                     <a class="mb-btn light" href="caixa_banco.php">Limpar</a>
+                    <a class="mb-btn secondary" href="caixa_banco.php?<?= mbH(mbxUrlExportacao('csv')) ?>">Exportar CSV</a>
+                    <a class="mb-btn secondary" href="caixa_banco.php?<?= mbH(mbxUrlExportacao('pdf')) ?>">Exportar PDF</a>
                 </div>
             </div>
         </form>

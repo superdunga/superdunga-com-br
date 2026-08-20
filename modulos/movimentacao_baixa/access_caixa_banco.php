@@ -69,7 +69,9 @@ if ($max !== null) {
     $where[] = 'b.VALORMOV <= ?';
     $params[] = $max;
 }
-$whereSql = implode(' AND ', array_map(static fn($w) => '(' . $w . ')', $where));
+$whereSql = implode(' AND ', array_map(static function ($w) {
+    return '(' . $w . ')';
+}, $where));
 $whereVinculo = $where;
 $whereVinculo[] = "EXISTS (
     SELECT 1
@@ -79,7 +81,9 @@ $whereVinculo[] = "EXISTS (
       AND va.id_destino = b.MOVCONTADOR
       AND COALESCE(va.enviado_superdunga, 'N') = 'S'
 )";
-$whereVinculoSql = implode(' AND ', array_map(static fn($w) => '(' . $w . ')', $whereVinculo));
+$whereVinculoSql = implode(' AND ', array_map(static function ($w) {
+    return '(' . $w . ')';
+}, $whereVinculo));
 
 $stmtResumo = $pdo->prepare("
     SELECT COUNT(*) AS qtd, COALESCE(SUM(CASE WHEN b.TIPOMOV = 'D' THEN b.VALORMOV ELSE 0 END), 0) AS debito,

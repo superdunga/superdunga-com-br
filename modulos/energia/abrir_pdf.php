@@ -32,7 +32,7 @@ $prefixoPermitido = $baseUploads !== false ? rtrim($baseUploads, DIRECTORY_SEPAR
 if (
     $baseUploads === false
     || $arquivo === false
-    || !str_starts_with($arquivo, $prefixoPermitido)
+    || strpos($arquivo, $prefixoPermitido) !== 0
     || !is_file($arquivo)
     || strtolower(pathinfo($arquivo, PATHINFO_EXTENSION)) !== 'pdf'
 ) {
@@ -41,7 +41,7 @@ if (
 }
 
 $nomeDownload = preg_replace('/[^A-Za-z0-9._-]/', '_', (string)($conta['arquivo_nome'] ?: basename($arquivo)));
-if (!str_ends_with(strtolower($nomeDownload), '.pdf')) {
+if (substr(strtolower($nomeDownload), -4) !== '.pdf') {
     $nomeDownload .= '.pdf';
 }
 

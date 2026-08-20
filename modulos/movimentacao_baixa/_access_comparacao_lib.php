@@ -42,22 +42,30 @@ function acQueryAtual(array $remover = []): string
 
 function acCampoDataAccess(string $campo): string
 {
-    return match ($campo) {
-        'bom_para' => 'l.data_bom_para_origem',
-        'emissao' => 'l.data_emissao_origem',
-        'sem_data' => '',
-        default => 'l.data_pagamento_origem',
-    };
+    switch ($campo) {
+        case 'bom_para':
+            return 'l.data_bom_para_origem';
+        case 'emissao':
+            return 'l.data_emissao_origem';
+        case 'sem_data':
+            return '';
+        default:
+            return 'l.data_pagamento_origem';
+    }
 }
 
 function acCampoDataAccessLabel(string $campo): string
 {
-    return match ($campo) {
-        'bom_para' => 'DataBomPara',
-        'emissao' => 'DataEmissao',
-        'sem_data' => 'Sem data',
-        default => 'DataPagamento',
-    };
+    switch ($campo) {
+        case 'bom_para':
+            return 'DataBomPara';
+        case 'emissao':
+            return 'DataEmissao';
+        case 'sem_data':
+            return 'Sem data';
+        default:
+            return 'DataPagamento';
+    }
 }
 
 function acTipoAccessSql(): string

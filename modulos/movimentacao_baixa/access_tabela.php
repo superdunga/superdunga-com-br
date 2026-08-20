@@ -235,7 +235,9 @@ if ($valorMax !== null) {
     $params[] = $valorMax;
 }
 
-$whereSql = implode(' AND ', array_map(static fn($item) => '(' . $item . ')', $where));
+$whereSql = implode(' AND ', array_map(static function ($item) {
+    return '(' . $item . ')';
+}, $where));
 
 if (($_GET['exportar'] ?? '') === 'csv') {
     $stmtCsv = $pdo->prepare("
