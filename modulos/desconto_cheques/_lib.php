@@ -7,6 +7,7 @@ function garantirTabelasDescontoCheques(PDO $pdo): void
             id INT AUTO_INCREMENT PRIMARY KEY,
             empresa_id INT NOT NULL,
             nome VARCHAR(180) NOT NULL,
+            clicontador INT NULL,
             celular VARCHAR(40) NULL,
             taxa_desconto DECIMAL(10,4) NOT NULL DEFAULT 0,
             usa_adicional_prazo CHAR(1) NOT NULL DEFAULT 'S',
@@ -18,6 +19,9 @@ function garantirTabelasDescontoCheques(PDO $pdo): void
             INDEX idx_dc_clientes_ativo (empresa_id, ativo)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
     ");
+
+    garantirColunaDC($pdo, 'desconto_cheques_clientes', 'clicontador', "INT NULL AFTER nome");
+    garantirIndiceDC($pdo, 'desconto_cheques_clientes', 'idx_dc_clientes_clicontador', ['empresa_id', 'clicontador']);
 
     $pdo->exec("
         CREATE TABLE IF NOT EXISTS desconto_cheques_prazos (

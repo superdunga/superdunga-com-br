@@ -78,7 +78,7 @@ function gerarMovimentoDescontoCheques(PDO $pdo, int $empresaId, int $usuarioId,
 function gerarLancamentosFinanceirosDescontoCheques(PDO $pdo, int $empresaId, int $usuarioId, int $operacaoId): array
 {
     $stmtOperacao = $pdo->prepare("
-        SELECT o.*, c.nome AS cliente_nome
+        SELECT o.*, c.nome AS cliente_nome, c.clicontador
         FROM desconto_cheques_operacoes o
         INNER JOIN desconto_cheques_clientes c ON c.id = o.cliente_id
         WHERE o.id = ?
@@ -92,6 +92,9 @@ function gerarLancamentosFinanceirosDescontoCheques(PDO $pdo, int $empresaId, in
     }
     if (($operacao['status'] ?? '') === 'LANCADA') {
         throw new RuntimeException('Esta operacao ja foi lancada no financeiro.');
+    }
+    if (empty($operacao['clicontador'])) {
+        throw new RuntimeException('O cliente da operacao nao possui vinculo com o cliente oficial. Atualize o cadastro antes de gerar o financeiro.');
     }
 
     $stmtDocs = $pdo->prepare("
@@ -131,7 +134,7 @@ function gerarLancamentosFinanceirosDescontoCheques(PDO $pdo, int $empresaId, in
                     TIPOCR, TIPOES, NOTAFISCAL, REGSTAMP, USERLANC, DTLANC,
                     USERALT, DTALT, CHAVEINTEGRACAO, financeiro_verificado, excluido_firebird
                 ) VALUES (
-                    ?, ?, ?, 1, ?, ?, NULL, ?, ?, ?, '1/1', ?, ?, 0, 'AB', 'DESCONTO_CHEQUES', ?, 'DESCONTO_CHEQUES',
+                    ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, '1/1', ?, ?, 0, 'AB', 'DESCONTO_CHEQUES', ?, 'DESCONTO_CHEQUES',
                     'CR', 51, NULL, NOW(), ?, NOW(), ?, NOW(), ?, 'N', 'N'
                 )
             ");
@@ -141,6 +144,7 @@ function gerarLancamentosFinanceirosDescontoCheques(PDO $pdo, int $empresaId, in
                 $operacao['data_referencia'],
                 $titulo,
                 (float)$doc['valor'],
+                (int)$operacao['clicontador'],
                 $obs,
                 $operacao['data_referencia'],
                 (float)$doc['valor'],

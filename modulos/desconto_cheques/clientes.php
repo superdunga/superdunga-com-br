@@ -12,14 +12,30 @@ $mensagemErro = '';
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $nome = trim((string)($_POST['nome'] ?? ''));
+    $clicontador = (int)($_POST['clicontador'] ?? 0);
     $celular = preg_replace('/[^\d()+\-\s]/', '', (string)($_POST['celular'] ?? ''));
     $taxaDesconto = decimalDC($_POST['taxa_desconto'] ?? '0');
     $usaAdicionalPrazo = ($_POST['usa_adicional_prazo'] ?? 'S') === 'N' ? 'N' : 'S';
     $limiteCredito = decimalDC($_POST['limite_credito'] ?? '0');
     $ativo = ($_POST['ativo'] ?? 'S') === 'N' ? 'N' : 'S';
 
+    $clienteOficialValido = false;
+    if ($clicontador > 0) {
+        $stmtClienteOficial = $pdo_master->prepare("
+            SELECT COUNT(*)
+            FROM armazem_cr002
+            WHERE EMPRESA = ?
+              AND CLICONTADOR = ?
+              AND COALESCE(excluido_firebird, 'N') <> 'S'
+        ");
+        $stmtClienteOficial->execute([$empresaId, $clicontador]);
+        $clienteOficialValido = (int)$stmtClienteOficial->fetchColumn() > 0;
+    }
+
     if ($nome === '') {
         $mensagemErro = 'Informe o nome do cliente.';
+    } elseif (!$clienteOficialValido) {
+        $mensagemErro = 'Selecione o cliente oficial vinculado.';
     } elseif ($taxaDesconto < 0) {
         $mensagemErro = 'A taxa de desconto nao pode ser negativa.';
     } elseif ($limiteCredito < 0) {
@@ -29,6 +45,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $stmt = $pdo_master->prepare("
                 UPDATE desconto_cheques_clientes
                 SET nome = ?,
+                    clicontador = ?,
                     celular = NULLIF(?, ''),
                     taxa_desconto = ?,
                     usa_adicional_prazo = ?,
@@ -37,14 +54,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 WHERE id = ?
                   AND empresa_id = ?
             ");
-            $stmt->execute([$nome, $celular, $taxaDesconto, $usaAdicionalPrazo, $limiteCredito, $ativo, $clienteId, $empresaId]);
+            $stmt->execute([$nome, $clicontador, $celular, $taxaDesconto, $usaAdicionalPrazo, $limiteCredito, $ativo, $clienteId, $empresaId]);
         } else {
             $stmt = $pdo_master->prepare("
                 INSERT INTO desconto_cheques_clientes
-                    (empresa_id, nome, celular, taxa_desconto, usa_adicional_prazo, limite_credito, ativo)
-                VALUES (?, ?, NULLIF(?, ''), ?, ?, ?, ?)
+                    (empresa_id, nome, clicontador, celular, taxa_desconto, usa_adicional_prazo, limite_credito, ativo)
+                VALUES (?, ?, ?, NULLIF(?, ''), ?, ?, ?, ?)
             ");
-            $stmt->execute([$empresaId, $nome, $celular, $taxaDesconto, $usaAdicionalPrazo, $limiteCredito, $ativo]);
+            $stmt->execute([$empresaId, $nome, $clicontador, $celular, $taxaDesconto, $usaAdicionalPrazo, $limiteCredito, $ativo]);
         }
 
         header('Location: clientes.php?ok=1');
@@ -65,26 +82,39 @@ if ($clienteId > 0) {
     $clienteEditar = $stmtEditar->fetch(PDO::FETCH_ASSOC) ?: null;
 }
 
+$stmtClientesOficiais = $pdo_master->prepare("
+    SELECT CLICONTADOR, COALESCE(NULLIF(APELIDO, ''), NOME, CONCAT('Cliente ', CLICONTADOR)) AS nome
+    FROM armazem_cr002
+    WHERE EMPRESA = ?
+      AND COALESCE(excluido_firebird, 'N') <> 'S'
+    ORDER BY nome, CLICONTADOR
+");
+$stmtClientesOficiais->execute([$empresaId]);
+$clientesOficiais = $stmtClientesOficiais->fetchAll(PDO::FETCH_ASSOC);
+
 $filtroNome = trim((string)($_GET['nome'] ?? ''));
 $filtroAtivo = $_GET['ativo'] ?? 'S';
-$where = ['empresa_id = ?'];
+$where = ['dc.empresa_id = ?'];
 $params = [$empresaId];
 
 if ($filtroNome !== '') {
-    $where[] = 'nome LIKE ?';
+    $where[] = 'dc.nome LIKE ?';
     $params[] = '%' . $filtroNome . '%';
 }
 
 if (in_array($filtroAtivo, ['S', 'N'], true)) {
-    $where[] = 'ativo = ?';
+    $where[] = 'dc.ativo = ?';
     $params[] = $filtroAtivo;
 }
 
 $stmtClientes = $pdo_master->prepare("
-    SELECT *
-    FROM desconto_cheques_clientes
+    SELECT dc.*, COALESCE(NULLIF(cr.APELIDO, ''), cr.NOME) AS cliente_oficial_nome
+    FROM desconto_cheques_clientes dc
+    LEFT JOIN armazem_cr002 cr
+      ON cr.EMPRESA = dc.empresa_id
+     AND cr.CLICONTADOR = dc.clicontador
     WHERE " . implode(' AND ', $where) . "
-    ORDER BY nome
+    ORDER BY dc.nome
 ");
 $stmtClientes->execute($params);
 $clientes = $stmtClientes->fetchAll(PDO::FETCH_ASSOC);
@@ -143,6 +173,17 @@ require '../../layout/header.php';
                 <div class="col-12 col-lg-4">
                     <label class="form-label">Nome</label>
                     <input type="text" name="nome" class="form-control" required value="<?= htmlspecialchars((string)($clienteEditar['nome'] ?? '')) ?>">
+                </div>
+                <div class="col-12 col-lg-4">
+                    <label class="form-label">Cliente oficial</label>
+                    <select name="clicontador" class="form-select" required>
+                        <option value="">Selecione...</option>
+                        <?php foreach ($clientesOficiais as $clienteOficial): ?>
+                            <option value="<?= (int)$clienteOficial['CLICONTADOR'] ?>" <?= (int)($clienteEditar['clicontador'] ?? 0) === (int)$clienteOficial['CLICONTADOR'] ? 'selected' : '' ?>>
+                                <?= htmlspecialchars($clienteOficial['nome'] . ' (' . $clienteOficial['CLICONTADOR'] . ')') ?>
+                            </option>
+                        <?php endforeach; ?>
+                    </select>
                 </div>
                 <div class="col-12 col-sm-6 col-lg-2">
                     <label class="form-label">Celular</label>
@@ -204,6 +245,7 @@ require '../../layout/header.php';
                 <thead class="table-light">
                     <tr>
                         <th>Cliente</th>
+                        <th>Cliente oficial</th>
                         <th>Celular</th>
                         <th class="text-end">Taxa</th>
                         <th class="text-center">Adicional</th>
@@ -216,6 +258,7 @@ require '../../layout/header.php';
                     <?php foreach ($clientes as $cliente): ?>
                         <tr>
                             <td class="fw-semibold"><?= htmlspecialchars($cliente['nome']) ?></td>
+                            <td><?= !empty($cliente['clicontador']) ? htmlspecialchars($cliente['cliente_oficial_nome'] . ' (' . $cliente['clicontador'] . ')') : '<span class="text-danger">Nao vinculado</span>' ?></td>
                             <td><?= htmlspecialchars((string)($cliente['celular'] ?? '-')) ?></td>
                             <td class="text-end"><?= percentualDC($cliente['taxa_desconto']) ?></td>
                             <td class="text-center"><?= $cliente['usa_adicional_prazo'] === 'S' ? 'Sim' : 'Nao' ?></td>
@@ -229,7 +272,7 @@ require '../../layout/header.php';
                         </tr>
                     <?php endforeach; ?>
                     <?php if (empty($clientes)): ?>
-                        <tr><td colspan="7" class="text-center text-muted py-4">Nenhum cliente encontrado.</td></tr>
+                        <tr><td colspan="8" class="text-center text-muted py-4">Nenhum cliente encontrado.</td></tr>
                     <?php endif; ?>
                 </tbody>
             </table>
@@ -238,4 +281,3 @@ require '../../layout/header.php';
 </section>
 
 <?php require '../../layout/footer.php'; ?>
-
