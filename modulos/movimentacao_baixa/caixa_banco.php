@@ -945,6 +945,7 @@ $sqlListaBase = "
            ext.extrato_data AS EXTRATO_DATA,
            ext.extrato_valor AS EXTRATO_VALOR,
            ext.extrato_conta AS EXTRATO_CONTA,
+           fa.acerto_id AS ACERTO_ID,
            mca.tipo_contrapartida AS ABERTA_TIPO,
            mca.contador_contrapartida AS ABERTA_CONTADOR,
            mca.valor AS ABERTA_VALOR
@@ -974,6 +975,16 @@ $sqlListaBase = "
     ) ext
       ON ext.bnc001_empresa = b.EMPRESA
      AND ext.bnc001_movcontador = b.MOVCONTADOR
+    LEFT JOIN (
+        SELECT ai.empresa_id, ai.movcontador, MIN(ai.acerto_id) AS acerto_id
+        FROM financeiro_acertos_extrato_itens ai
+        INNER JOIN financeiro_acertos_extrato a
+          ON a.id = ai.acerto_id
+         AND a.status = 'ATIVO'
+        GROUP BY ai.empresa_id, ai.movcontador
+    ) fa
+      ON fa.empresa_id = b.EMPRESA
+     AND fa.movcontador = b.MOVCONTADOR
     LEFT JOIN mov_baixa_contrapartidas mca
       ON mca.empresa_id = b.EMPRESA
      AND mca.movcontador = b.MOVCONTADOR
@@ -1569,6 +1580,11 @@ require_once __DIR__ . '/../../layout/header.php';
                                     </div>
                                 <?php else: ?>
                                     <span class="mb-badge">Pendente</span>
+                                <?php endif; ?>
+                                <?php if (!empty($linha['ACERTO_ID'])): ?>
+                                    <div style="margin-top:4px;">
+                                        <span class="mb-badge c">Acerto #<?= (int)$linha['ACERTO_ID'] ?></span>
+                                    </div>
                                 <?php endif; ?>
                             </td>
                             <td>

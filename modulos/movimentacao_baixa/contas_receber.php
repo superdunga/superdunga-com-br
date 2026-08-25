@@ -1850,6 +1850,12 @@ require '../../layout/header.php';
                                 $crIdLinha = (int)$titulo['CRCONTADOR'];
                                 $baixasLinha = $baixasPorTitulo[$crIdLinha] ?? [];
                                 $agrupadosLinha = $agrupadosPorTitulo[$crIdLinha] ?? [];
+                                $acertosLinha = [];
+                                foreach ($baixasLinha as $baixaLinha) {
+                                    if (!empty($baixaLinha['acerto_id'])) {
+                                        $acertosLinha[(int)$baixaLinha['acerto_id']] = true;
+                                    }
+                                }
                             ?>
                             <tr>
                                 <td>
@@ -1881,6 +1887,11 @@ require '../../layout/header.php';
                                     <span class="crb-badge <?= $statusLinha === 'QT' ? 'paid' : 'open' ?>">
                                         <?= crbH($statusLinha ?: 'SEM STATUS') ?>
                                     </span>
+                                    <?php foreach (array_keys($acertosLinha) as $acertoIdLinha): ?>
+                                        <div style="margin-top:4px;">
+                                            <span class="crb-badge paid">Acerto #<?= (int)$acertoIdLinha ?></span>
+                                        </div>
+                                    <?php endforeach; ?>
                                 </td>
                                 <td>
                                     <?php if ($statusLinha === 'QT'): ?>

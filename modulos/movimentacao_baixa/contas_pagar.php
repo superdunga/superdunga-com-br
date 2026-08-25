@@ -1699,6 +1699,12 @@ require '../../layout/header.php';
                                 $cpIdLinha = (int)$titulo['CPCONTADOR'];
                                 $baixasLinha = $baixasPorTitulo[$cpIdLinha] ?? [];
                                 $agrupadosLinha = $agrupadosPorTitulo[$cpIdLinha] ?? [];
+                                $acertosLinha = [];
+                                foreach ($baixasLinha as $baixaLinha) {
+                                    if (!empty($baixaLinha['acerto_id'])) {
+                                        $acertosLinha[(int)$baixaLinha['acerto_id']] = true;
+                                    }
+                                }
                             ?>
                             <tr>
                                 <td>
@@ -1730,6 +1736,11 @@ require '../../layout/header.php';
                                     <span class="cpb-badge <?= $statusLinha === 'QT' ? 'paid' : 'open' ?>">
                                         <?= cpbH($statusLinha ?: 'SEM STATUS') ?>
                                     </span>
+                                    <?php foreach (array_keys($acertosLinha) as $acertoIdLinha): ?>
+                                        <div style="margin-top:4px;">
+                                            <span class="cpb-badge paid">Acerto #<?= (int)$acertoIdLinha ?></span>
+                                        </div>
+                                    <?php endforeach; ?>
                                 </td>
                                 <td>
                                     <?php if ($statusLinha === 'QT'): ?>
