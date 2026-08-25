@@ -1284,7 +1284,7 @@ $sqlListaBase = "
       ON t.EMPRESA = cp.EMPRESA
      AND t.ESCONTADOR = cp.TIPOES
     WHERE {$whereSql}
-    ORDER BY cp.DTVENC DESC, cp.CRCONTADOR DESC
+    ORDER BY cp.DTVENC DESC, cp.DTVENDA DESC, cp.CRCONTADOR DESC
 ";
 
 if (in_array(($_GET['exportar'] ?? ''), ['csv', 'pdf'], true)) {
