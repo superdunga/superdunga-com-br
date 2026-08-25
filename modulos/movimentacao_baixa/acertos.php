@@ -116,8 +116,16 @@ require '../../layout/header.php';
 
 <style>
     .mba-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 1rem; }
-    .mba-table-wrap { max-height: 520px; overflow: auto; }
-    .mba-table { min-width: 700px; }
+    .mba-table-wrap { max-height: 520px; overflow-y: auto; overflow-x: hidden; }
+    .mba-table { width: 100%; table-layout: fixed; font-size: .82rem; }
+    .mba-table th, .mba-table td { padding: .35rem .3rem; }
+    .mba-table th:nth-child(1), .mba-table td:nth-child(1) { width: 6%; }
+    .mba-table th:nth-child(2), .mba-table td:nth-child(2) { width: 10%; }
+    .mba-table th:nth-child(3), .mba-table td:nth-child(3),
+    .mba-table th:nth-child(4), .mba-table td:nth-child(4) { width: 15%; white-space: nowrap; }
+    .mba-table th:nth-child(5), .mba-table td:nth-child(5) { width: 25%; overflow-wrap: anywhere; }
+    .mba-table th:nth-child(6), .mba-table td:nth-child(6) { width: 10%; }
+    .mba-table th:nth-child(7), .mba-table td:nth-child(7) { width: 19%; white-space: nowrap; }
     .mba-table th { position: sticky; top: 0; z-index: 1; }
     .mba-summary-value { font-size: 1.05rem; font-weight: 700; }
     @media (max-width: 1199.98px) { .mba-grid { grid-template-columns: 1fr; } }
