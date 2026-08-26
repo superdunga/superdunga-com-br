@@ -265,6 +265,7 @@ $stmt = $pdo_master->prepare("
 
 $stmt->execute($params);
 $movimentacoes = $stmt->fetchAll(PDO::FETCH_ASSOC);
+$movDestaque = (int)($_GET['mov_id'] ?? 0);
 
 /* =========================
    DETALHAMENTO (MASTER / OPERADOR)
@@ -295,6 +296,24 @@ if ($podeVerDetalhes) {
 
 require '../../layout/header.php';
 ?>
+
+<style>
+    .tesouraria-mov-destaque {
+        --bs-table-bg: #fff3cd;
+        --bs-table-hover-bg: #ffecb5;
+        box-shadow: inset 4px 0 0 #d39e00;
+        scroll-margin-top: 110px;
+    }
+</style>
+
+<?php if ($movDestaque > 0): ?>
+<script>
+document.addEventListener('DOMContentLoaded', function () {
+    const linha = document.getElementById('movimento-<?= $movDestaque ?>');
+    if (linha) linha.scrollIntoView({block: 'center'});
+});
+</script>
+<?php endif; ?>
 
 <div class="card shadow-sm">
     <div class="card-body">
@@ -379,7 +398,7 @@ require '../../layout/header.php';
                         $saldo += $valor;
                         ?>
 
-                        <tr>
+                        <tr id="movimento-<?= (int)$m['id'] ?>" class="<?= $movDestaque === (int)$m['id'] ? 'tesouraria-mov-destaque' : '' ?>">
                             <td><?= date('d/m/Y H:i', strtotime($m['data_mov'])) ?></td>
                             <td><?= $m['id'] ?></td>
                             <td><?= htmlspecialchars($m['observacao']) ?></td>

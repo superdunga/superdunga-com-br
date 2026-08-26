@@ -1201,7 +1201,7 @@ require '../../layout/header.php';
 ?>
 
 <style>
-    .cpb-wrap { max-width: 1180px; margin: 0 auto; padding: 18px; }
+    .cpb-wrap { max-width: 1540px; margin: 0 auto; padding: 18px; }
     .cpb-hero { background: #143b63; color: #fff; border-radius: 6px; padding: 22px; margin-bottom: 18px; display:flex; justify-content:space-between; gap:16px; align-items:center; }
     .cpb-hero h1 { margin:0 0 6px; font-size:1.55rem; }
     .cpb-card { background:#fff; border:1px solid #d8dee8; border-radius:6px; padding:16px; margin-bottom:16px; box-shadow:0 2px 10px rgba(15,23,42,.04); }
@@ -1230,6 +1230,27 @@ require '../../layout/header.php';
     .cpb-table { width:100%; border-collapse:collapse; min-width:1000px; }
     .cpb-table th, .cpb-table td { border-bottom:1px solid #e2e8f0; padding:9px 8px; text-align:left; vertical-align:top; font-size:.9rem; }
     .cpb-table th { background:#12336b; color:#fff; font-size:.82rem; text-transform:uppercase; }
+    .cpb-lista-wrap { overflow-x:visible; }
+    .cpb-lista { min-width:0; table-layout:fixed; }
+    .cpb-lista th, .cpb-lista td { padding:10px 6px; overflow-wrap:anywhere; }
+    .cpb-lista tbody tr:nth-child(4n+1) { background:#f8fafc; }
+    .cpb-lista tbody tr:hover { background:#eef6ff; }
+    .cpb-lista th:nth-child(1) { width:3%; }
+    .cpb-lista th:nth-child(2) { width:6%; }
+    .cpb-lista th:nth-child(3) { width:11%; }
+    .cpb-lista th:nth-child(4) { width:16%; }
+    .cpb-lista th:nth-child(5) { width:15%; }
+    .cpb-lista th:nth-child(6) { width:13%; }
+    .cpb-lista th:nth-child(7) { width:11%; }
+    .cpb-lista th:nth-child(8) { width:16%; }
+    .cpb-lista th:nth-child(9) { width:9%; }
+    .cpb-lista td:nth-child(2), .cpb-lista td:nth-child(3) { white-space:nowrap; }
+    .cpb-lista td:nth-child(7) { text-align:right; font-variant-numeric:tabular-nums; }
+    .cpb-lista td:last-child .cpb-btn { display:block; width:100%; margin:0 0 5px; padding:6px 5px; }
+    @media (max-width: 1100px) {
+        .cpb-lista th, .cpb-lista td { font-size:.76rem; padding:8px 4px; }
+        .cpb-lista th { font-size:.7rem; }
+    }
     .cpb-badge { display:inline-block; border-radius:999px; padding:3px 8px; font-size:.78rem; font-weight:700; background:#e2e8f0; color:#0f172a; }
     .cpb-badge.open { background:#fff7ed; color:#9a3412; }
     .cpb-badge.paid { background:#dcfce7; color:#166534; }
@@ -1669,28 +1690,25 @@ require '../../layout/header.php';
                 <button type="submit" name="acao" value="preparar_baixa" form="form-titulos-selecionados" class="cpb-btn">Baixar titulos selecionados</button>
                 <button type="submit" name="acao" value="preparar_agrupamento" form="form-titulos-selecionados" class="cpb-btn secondary">Agrupar selecionados</button>
             </div>
-            <div class="cpb-table-wrap">
-                <table class="cpb-table">
+            <div class="cpb-table-wrap cpb-lista-wrap">
+                <table class="cpb-table cpb-lista">
                     <thead>
                         <tr>
                             <th></th>
                             <th>CP</th>
-                            <th>Compra</th>
-                            <th>Vencimento</th>
+                            <th>Datas</th>
                             <th>Fornecedor</th>
                             <th>Documento</th>
                             <th>TIPOES</th>
-                            <th>Origem</th>
-                            <th>Valor</th>
-                            <th>Restante</th>
-                            <th>Status</th>
+                            <th>Valores</th>
+                            <th>Status / Quitacao</th>
                             <th>Acoes</th>
                         </tr>
                     </thead>
                     <tbody>
                         <?php if (!$titulos): ?>
                             <tr>
-                                <td colspan="12" style="text-align:center;color:#64748b;">Nenhum titulo encontrado.</td>
+                                <td colspan="9" style="text-align:center;color:#64748b;">Nenhum titulo encontrado.</td>
                             </tr>
                         <?php endif; ?>
                         <?php foreach ($titulos as $titulo): ?>
@@ -1719,19 +1737,23 @@ require '../../layout/header.php';
                                     <?php endif; ?>
                                 </td>
                                 <td><?= (int)$titulo['CPCONTADOR'] ?></td>
-                                <td><?= cpbH(cpbData($titulo['DTCOMPRA'])) ?></td>
-                                <td><?= cpbH(cpbData($titulo['DTVENC'])) ?></td>
+                                <td>
+                                    <div class="small text-muted">Compra</div><?= cpbH(cpbData($titulo['DTCOMPRA'])) ?>
+                                    <div class="small text-muted mt-1">Vencimento</div><strong><?= cpbH(cpbData($titulo['DTVENC'])) ?></strong>
+                                </td>
                                 <td><?= cpbH(($titulo['FCONTADOR'] ?? '') . ' - ' . ($titulo['fornecedor_nome'] ?? '')) ?></td>
                                 <td>
                                     <strong><?= cpbH($titulo['TITULO'] ?? '') ?></strong>
                                     <?php if (!empty($titulo['NOTAFISCAL'])): ?>
                                         <div class="text-muted small">NF <?= cpbH($titulo['NOTAFISCAL']) ?></div>
                                     <?php endif; ?>
+                                    <div class="text-muted small mt-1"><?= cpbH($titulo['origem_titulo'] ?? '') ?></div>
                                 </td>
                                 <td><?= cpbH(($titulo['TIPOES'] ?? '') . ' - ' . ($titulo['tipoes_desc'] ?? '')) ?></td>
-                                <td><?= cpbH($titulo['origem_titulo'] ?? '') ?></td>
-                                <td><?= cpbH(cpbMoeda($titulo['VLRPARCELA'])) ?></td>
-                                <td><?= cpbH(cpbMoeda($titulo['VLRRESTANTE'])) ?></td>
+                                <td>
+                                    <div class="small text-muted">Valor</div><strong><?= cpbH(cpbMoeda($titulo['VLRPARCELA'])) ?></strong>
+                                    <div class="small text-muted mt-1">Restante</div><?= cpbH(cpbMoeda($titulo['VLRRESTANTE'])) ?>
+                                </td>
                                 <td>
                                     <span class="cpb-badge <?= $statusLinha === 'QT' ? 'paid' : 'open' ?>">
                                         <?= cpbH($statusLinha ?: 'SEM STATUS') ?>
@@ -1741,6 +1763,21 @@ require '../../layout/header.php';
                                             <span class="cpb-badge paid">Acerto #<?= (int)$acertoIdLinha ?></span>
                                         </div>
                                     <?php endforeach; ?>
+                                    <?php if ($statusLinha === 'QT' && $baixasLinha): ?>
+                                        <?php foreach ($baixasLinha as $baixaLinha): ?>
+                                            <div class="small mt-2">
+                                                <strong><?= cpbH(cpbData($baixaLinha['DTMOV'] ?? '')) ?></strong><br>
+                                                <?= cpbH(($baixaLinha['CBCONTADOR'] ?? '') . ' - ' . ($baixaLinha['conta_nome'] ?? '')) ?>
+                                            </div>
+                                        <?php endforeach; ?>
+                                    <?php elseif ($statusLinha === 'QT'): ?>
+                                        <div class="small">
+                                            <strong><?= cpbH(cpbData($titulo['DTPAGTO'] ?? '')) ?></strong><br>
+                                            <span class="text-muted">Conta nao localizada</span>
+                                        </div>
+                                    <?php else: ?>
+                                        <span class="text-muted">-</span>
+                                    <?php endif; ?>
                                 </td>
                                 <td>
                                     <?php if ($statusLinha === 'QT'): ?>
@@ -1769,7 +1806,7 @@ require '../../layout/header.php';
                             </tr>
                             <?php if ($agrupadosLinha): ?>
                                 <tr id="detalhe-agrupamento-<?= $cpIdLinha ?>" class="cpb-detalhe-baixa" style="display:none;">
-                                    <td colspan="12">
+                                    <td colspan="9">
                                         <div class="cpb-table-wrap">
                                             <table class="cpb-table" style="min-width:760px;">
                                                 <thead>
@@ -1811,7 +1848,7 @@ require '../../layout/header.php';
                                 </tr>
                             <?php endif; ?>
                             <tr id="detalhe-baixa-<?= $cpIdLinha ?>" class="cpb-detalhe-baixa" style="display:none;">
-                                <td colspan="12">
+                                <td colspan="9">
                                     <?php if ($baixasLinha): ?>
                                         <div class="cpb-table-wrap">
                                             <table class="cpb-table" style="min-width:820px;">

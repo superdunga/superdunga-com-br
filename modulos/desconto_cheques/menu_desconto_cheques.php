@@ -38,6 +38,25 @@ $opcoes = [
     ],
 ];
 
+if ($empresaId === 2) {
+    $opcoes[] = [
+        'titulo' => 'Analise de Cheques',
+        'descricao' => 'Consulte cheques, emissores, vencimentos, valores e imagens.',
+        'href' => 'analise_cheques.php',
+        'modulo' => 'desconto_cheques_analise',
+        'icone' => 'AN',
+        'botao' => 'btn-success',
+    ];
+    $opcoes[] = [
+        'titulo' => 'Simulador',
+        'descricao' => 'Simule o desconto considerando compensacao e feriados.',
+        'href' => 'simulador.php',
+        'modulo' => 'desconto_cheques_simulador',
+        'icone' => 'SI',
+        'botao' => 'btn-info',
+    ];
+}
+
 $opcoes = filtrarOpcoesPorModulo($pdo_master, $empresaId, $opcoes);
 
 require '../../layout/header.php';

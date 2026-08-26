@@ -624,7 +624,17 @@ if ($modoEdicao) {
 require '../../layout/header.php';
 
 if (isset($_GET['sucesso'])) {
-    echo '<script>setTimeout(function(){ window.location.href=' . json_encode($urlRetorno) . '; }, 0);</script>';
+    $movIdSucesso = (int)($_GET['mov_id'] ?? 0);
+    $stmtDataSucesso = $pdo_master->prepare("SELECT DATE(data_mov) FROM tesouraria_movimentacoes WHERE id = ? AND empresa_id = ? LIMIT 1");
+    $stmtDataSucesso->execute([$movIdSucesso, (int)($_SESSION['empresa_id'] ?? 0)]);
+    $dataMovSucesso = (string)($stmtDataSucesso->fetchColumn() ?: date('Y-m-d'));
+    $urlAposSucesso = $retorno === 'conciliar'
+        ? 'conciliar.php'
+        : 'extrato.php?data_ini=' . urlencode($dataMovSucesso)
+            . '&data_fim=' . urlencode($dataMovSucesso)
+            . '&mov_id=' . $movIdSucesso
+            . '#movimento-' . $movIdSucesso;
+    echo '<script>setTimeout(function(){ window.location.href=' . json_encode($urlAposSucesso) . '; }, 0);</script>';
     echo "<script>alert('Movimentação salva com sucesso');</script>";
 }
 

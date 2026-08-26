@@ -60,6 +60,8 @@ function sistemaModulosPadrao(): array
         ['codigo' => 'desconto_cheques_clientes', 'grupo' => 'Desconto de Cheques', 'nome' => 'Clientes', 'url' => 'modulos/desconto_cheques/clientes.php', 'ordem' => 323, 'somente_master' => true],
         ['codigo' => 'desconto_cheques_operacoes', 'grupo' => 'Desconto de Cheques', 'nome' => 'Operacoes', 'url' => 'modulos/desconto_cheques/operacoes.php', 'ordem' => 324, 'somente_master' => true],
         ['codigo' => 'desconto_cheques_feriados', 'grupo' => 'Desconto de Cheques', 'nome' => 'Feriados', 'url' => 'modulos/desconto_cheques/feriados.php', 'ordem' => 325, 'somente_master' => true],
+        ['codigo' => 'desconto_cheques_analise', 'grupo' => 'Desconto de Cheques', 'nome' => 'Analise de Cheques', 'url' => 'modulos/desconto_cheques/analise_cheques.php', 'ordem' => 325, 'somente_master' => true],
+        ['codigo' => 'desconto_cheques_simulador', 'grupo' => 'Desconto de Cheques', 'nome' => 'Simulador', 'url' => 'modulos/desconto_cheques/simulador.php', 'ordem' => 325, 'somente_master' => true],
 
         ['codigo' => 'vale_compras', 'grupo' => 'Vale-Compras', 'nome' => 'Vale-Compras', 'url' => 'modulos/vale_compras/cadastro.php', 'ordem' => 326, 'somente_master' => true],
         ['codigo' => 'vale_compras_operacoes', 'grupo' => 'Vale-Compras', 'nome' => 'Operacoes', 'url' => 'modulos/vale_compras/cadastro.php', 'ordem' => 327, 'somente_master' => true],

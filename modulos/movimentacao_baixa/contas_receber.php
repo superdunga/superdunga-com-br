@@ -1353,7 +1353,7 @@ require '../../layout/header.php';
 ?>
 
 <style>
-    .crb-wrap { max-width: 1180px; margin: 0 auto; padding: 18px; }
+    .crb-wrap { max-width: 1540px; margin: 0 auto; padding: 18px; }
     .crb-hero { background: #143b63; color: #fff; border-radius: 6px; padding: 22px; margin-bottom: 18px; display:flex; justify-content:space-between; gap:16px; align-items:center; }
     .crb-hero h1 { margin:0 0 6px; font-size:1.55rem; }
     .crb-card { background:#fff; border:1px solid #d8dee8; border-radius:6px; padding:16px; margin-bottom:16px; box-shadow:0 2px 10px rgba(15,23,42,.04); }
@@ -1382,6 +1382,27 @@ require '../../layout/header.php';
     .crb-table { width:100%; border-collapse:collapse; min-width:1000px; }
     .crb-table th, .crb-table td { border-bottom:1px solid #e2e8f0; padding:9px 8px; text-align:left; vertical-align:top; font-size:.9rem; }
     .crb-table th { background:#12336b; color:#fff; font-size:.82rem; text-transform:uppercase; }
+    .crb-lista-wrap { overflow-x:visible; }
+    .crb-lista { min-width:0; table-layout:fixed; }
+    .crb-lista th, .crb-lista td { padding:10px 6px; overflow-wrap:anywhere; }
+    .crb-lista tbody tr:nth-child(4n+1) { background:#f8fafc; }
+    .crb-lista tbody tr:hover { background:#eef6ff; }
+    .crb-lista th:nth-child(1) { width:3%; }
+    .crb-lista th:nth-child(2) { width:6%; }
+    .crb-lista th:nth-child(3) { width:11%; }
+    .crb-lista th:nth-child(4) { width:16%; }
+    .crb-lista th:nth-child(5) { width:15%; }
+    .crb-lista th:nth-child(6) { width:13%; }
+    .crb-lista th:nth-child(7) { width:11%; }
+    .crb-lista th:nth-child(8) { width:16%; }
+    .crb-lista th:nth-child(9) { width:9%; }
+    .crb-lista td:nth-child(2), .crb-lista td:nth-child(3) { white-space:nowrap; }
+    .crb-lista td:nth-child(7) { text-align:right; font-variant-numeric:tabular-nums; }
+    .crb-lista td:last-child .crb-btn { display:block; width:100%; margin:0 0 5px; padding:6px 5px; }
+    @media (max-width: 1100px) {
+        .crb-lista th, .crb-lista td { font-size:.76rem; padding:8px 4px; }
+        .crb-lista th { font-size:.7rem; }
+    }
     .crb-badge { display:inline-block; border-radius:999px; padding:3px 8px; font-size:.78rem; font-weight:700; background:#e2e8f0; color:#0f172a; }
     .crb-badge.open { background:#fff7ed; color:#9a3412; }
     .crb-badge.paid { background:#dcfce7; color:#166534; }
@@ -1820,28 +1841,25 @@ require '../../layout/header.php';
                 <button type="submit" name="acao" value="preparar_baixa" form="form-titulos-selecionados" class="crb-btn">Baixar titulos selecionados</button>
                 <button type="submit" name="acao" value="preparar_agrupamento" form="form-titulos-selecionados" class="crb-btn secondary">Agrupar selecionados</button>
             </div>
-            <div class="crb-table-wrap">
-                <table class="crb-table">
+            <div class="crb-table-wrap crb-lista-wrap">
+                <table class="crb-table crb-lista">
                     <thead>
                         <tr>
                             <th></th>
                             <th>CR</th>
-                            <th>Venda</th>
-                            <th>Vencimento</th>
+                            <th>Datas</th>
                             <th>Cliente</th>
                             <th>Documento</th>
                             <th>TIPOES</th>
-                            <th>Origem</th>
-                            <th>Valor</th>
-                            <th>Restante</th>
-                            <th>Status</th>
+                            <th>Valores</th>
+                            <th>Status / Quitacao</th>
                             <th>Acoes</th>
                         </tr>
                     </thead>
                     <tbody>
                         <?php if (!$titulos): ?>
                             <tr>
-                                <td colspan="12" style="text-align:center;color:#64748b;">Nenhum titulo encontrado.</td>
+                                <td colspan="9" style="text-align:center;color:#64748b;">Nenhum titulo encontrado.</td>
                             </tr>
                         <?php endif; ?>
                         <?php foreach ($titulos as $titulo): ?>
@@ -1870,19 +1888,23 @@ require '../../layout/header.php';
                                     <?php endif; ?>
                                 </td>
                                 <td><?= (int)$titulo['CRCONTADOR'] ?></td>
-                                <td><?= crbH(crbData($titulo['DTVENDA'])) ?></td>
-                                <td><?= crbH(crbData($titulo['DTVENC'])) ?></td>
+                                <td>
+                                    <div class="small text-muted">Venda</div><?= crbH(crbData($titulo['DTVENDA'])) ?>
+                                    <div class="small text-muted mt-1">Vencimento</div><strong><?= crbH(crbData($titulo['DTVENC'])) ?></strong>
+                                </td>
                                 <td><?= crbH(($titulo['CLICONTADOR'] ?? '') . ' - ' . ($titulo['cliente_nome'] ?? '')) ?></td>
                                 <td>
                                     <strong><?= crbH($titulo['TITULO'] ?? '') ?></strong>
                                     <?php if (!empty($titulo['NOTAFISCAL'])): ?>
                                         <div class="text-muted small">NF <?= crbH($titulo['NOTAFISCAL']) ?></div>
                                     <?php endif; ?>
+                                    <div class="text-muted small mt-1"><?= crbH($titulo['origem_titulo'] ?? '') ?></div>
                                 </td>
                                 <td><?= crbH(($titulo['TIPOES'] ?? '') . ' - ' . ($titulo['tipoes_desc'] ?? '')) ?></td>
-                                <td><?= crbH($titulo['origem_titulo'] ?? '') ?></td>
-                                <td><?= crbH(crbMoeda($titulo['VLRPARCELA'])) ?></td>
-                                <td><?= crbH(crbMoeda($titulo['VLRRESTANTE'])) ?></td>
+                                <td>
+                                    <div class="small text-muted">Valor</div><strong><?= crbH(crbMoeda($titulo['VLRPARCELA'])) ?></strong>
+                                    <div class="small text-muted mt-1">Restante</div><?= crbH(crbMoeda($titulo['VLRRESTANTE'])) ?>
+                                </td>
                                 <td>
                                     <span class="crb-badge <?= $statusLinha === 'QT' ? 'paid' : 'open' ?>">
                                         <?= crbH($statusLinha ?: 'SEM STATUS') ?>
@@ -1892,6 +1914,21 @@ require '../../layout/header.php';
                                             <span class="crb-badge paid">Acerto #<?= (int)$acertoIdLinha ?></span>
                                         </div>
                                     <?php endforeach; ?>
+                                    <?php if ($statusLinha === 'QT' && $baixasLinha): ?>
+                                        <?php foreach ($baixasLinha as $baixaLinha): ?>
+                                            <div class="small mt-2">
+                                                <strong><?= crbH(crbData($baixaLinha['DTMOV'] ?? '')) ?></strong><br>
+                                                <?= crbH(($baixaLinha['CBCONTADOR'] ?? '') . ' - ' . ($baixaLinha['conta_nome'] ?? '')) ?>
+                                            </div>
+                                        <?php endforeach; ?>
+                                    <?php elseif ($statusLinha === 'QT'): ?>
+                                        <div class="small">
+                                            <strong><?= crbH(crbData($titulo['DTPAGTO'] ?? '')) ?></strong><br>
+                                            <span class="text-muted">Conta nao localizada</span>
+                                        </div>
+                                    <?php else: ?>
+                                        <span class="text-muted">-</span>
+                                    <?php endif; ?>
                                 </td>
                                 <td>
                                     <?php if ($statusLinha === 'QT'): ?>
@@ -1923,7 +1960,7 @@ require '../../layout/header.php';
                             </tr>
                             <?php if ($agrupadosLinha): ?>
                                 <tr id="detalhe-agrupamento-<?= $crIdLinha ?>" class="crb-detalhe-baixa" style="display:none;">
-                                    <td colspan="12">
+                                    <td colspan="9">
                                         <div class="crb-table-wrap">
                                             <table class="crb-table" style="min-width:760px;">
                                                 <thead>
@@ -1966,7 +2003,7 @@ require '../../layout/header.php';
                             <?php endif; ?>
                             <?php if ($statusLinha === 'QT'): ?>
                                 <tr id="cheque-devolvido-<?= $crIdLinha ?>" class="crb-detalhe-baixa" style="display:none;">
-                                    <td colspan="12">
+                                    <td colspan="9">
                                         <form method="post" class="row g-2 align-items-end" onsubmit="return confirm('Registrar cheque devolvido e criar novo titulo em aberto para este cliente?');">
                                             <input type="hidden" name="acao" value="cheque_devolvido">
                                             <input type="hidden" name="crcontador" value="<?= $crIdLinha ?>">
@@ -1997,7 +2034,7 @@ require '../../layout/header.php';
                                 </tr>
                             <?php endif; ?>
                             <tr id="detalhe-baixa-<?= $crIdLinha ?>" class="crb-detalhe-baixa" style="display:none;">
-                                <td colspan="12">
+                                <td colspan="9">
                                     <?php if ($baixasLinha): ?>
                                         <div class="crb-table-wrap">
                                             <table class="crb-table" style="min-width:820px;">
