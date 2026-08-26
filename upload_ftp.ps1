@@ -48,7 +48,7 @@ function Send-FtpFile {
     $request.Method = [System.Net.WebRequestMethods+Ftp]::UploadFile
     $request.UsePassive = $true
     $request.UseBinary = $true
-    $request.EnableSsl = $true
+    $request.EnableSsl = $false
 
     $bytes = [System.IO.File]::ReadAllBytes($localPath)
     $request.ContentLength = $bytes.Length
