@@ -425,8 +425,9 @@ function mbValidarLancamento(PDO $pdo, $empresaId, $dados)
         $erros[] = 'Informe o historico.';
     }
 
+    $criarContrapAberta = !empty($dados['criar_contrap_aberta']);
     $contrapTipo = $tipo && !empty($tipo['CONTRAP_TIPOES']) ? (int)$tipo['CONTRAP_TIPOES'] : 0;
-    if ($contrapTipo > 0) {
+    if ($contrapTipo > 0 && !$criarContrapAberta) {
         $contrapConta = !empty($dados['contrap_cbcontador']) ? (int)$dados['contrap_cbcontador'] : (int)($tipo['CONTRAP_CBCONTADOR'] ?? 0);
         if ($contrapConta <= 0 || !mbBuscarConta($pdo, $empresaId, $contrapConta)) {
             $erros[] = 'Informe a conta da contrapartida.';
@@ -454,7 +455,7 @@ function mbSalvarLancamento(PDO $pdo, $empresaId, $usuarioId, $dados, $movcontad
     $tipoes = (int)$dados['tipoes'];
     $tipomov = strtoupper((string)$tipo['TIPOMOV']);
     $contrapTipoes = !empty($tipo['CONTRAP_TIPOES']) ? (int)$tipo['CONTRAP_TIPOES'] : 0;
-    $exigeContrap = $contrapTipoes > 0;
+    $exigeContrap = $contrapTipoes > 0 && empty($dados['criar_contrap_aberta']);
     $contrapCbcontador = $exigeContrap
         ? (int)($dados['contrap_cbcontador'] ?: ($tipo['CONTRAP_CBCONTADOR'] ?? 0))
         : null;
@@ -1660,15 +1661,19 @@ require_once __DIR__ . '/../../layout/header.php';
             contrapAbertaTipo.value = (tipomov || '').toUpperCase() === 'D' ? 'CR' : ((tipomov || '').toUpperCase() === 'C' ? 'CP' : '');
         }
 
-        if (contrap > 0) {
+        const criarTituloAberto = criarContrapAberta && criarContrapAberta.checked;
+
+        if (contrap > 0 && !criarTituloAberto) {
             contrapBox.classList.add('active');
             contrapSelect.required = true;
+            contrapSelect.disabled = false;
             if (contaPadrao && !contrapSelect.value) {
                 contrapSelect.value = contaPadrao;
             }
         } else {
             contrapBox.classList.remove('active');
             contrapSelect.required = false;
+            contrapSelect.disabled = criarTituloAberto;
             contrapSelect.value = '';
         }
     }
@@ -1683,6 +1688,7 @@ require_once __DIR__ . '/../../layout/header.php';
 
         const ativo = criarContrapAberta.checked;
         contrapAbertaBox.classList.toggle('active', ativo);
+        atualizarTipo();
 
         const option = tipoSelect.options[tipoSelect.selectedIndex];
         const tipomov = option ? (option.getAttribute('data-tipomov') || '').toUpperCase() : '';
