@@ -7,6 +7,7 @@ $empresa_id = (int)$_SESSION['empresa_id'];
 $dataIni = $_GET['data_ini'] ?? date('Y-m-01');
 $dataFim = $_GET['data_fim'] ?? date('Y-m-d');
 $fornecedor = trim($_GET['fornecedor'] ?? '');
+$produto = trim($_GET['produto'] ?? '');
 $documento = trim($_GET['documento'] ?? '');
 
 $where = [
@@ -22,6 +23,28 @@ if ($fornecedor !== '') {
     $params[] = "%$fornecedor%";
     $params[] = "%$fornecedor%";
     $params[] = ctype_digit($fornecedor) ? (int)$fornecedor : 0;
+}
+
+if ($produto !== '') {
+    $where[] = "EXISTS (
+        SELECT 1
+        FROM armazem_est006 item_filtro
+        LEFT JOIN armazem_est004 produto_filtro
+            ON produto_filtro.CONTAPRODUTO = item_filtro.PRODUTO
+           AND produto_filtro.EMPRESA = item_filtro.EMPRESA
+        WHERE item_filtro.EMPRESA = c.EMPRESA
+          AND item_filtro.ITEMCOMPRACONTADOR = c.COMPRACONTADOR
+          AND COALESCE(item_filtro.excluido_firebird, 'N') <> 'S'
+          AND COALESCE(item_filtro.CANCELADO, 'N') <> 'S'
+          AND (
+              produto_filtro.DESCPRODUTO LIKE ?
+              OR produto_filtro.CODPRODUTO LIKE ?
+              OR item_filtro.PRODUTO = ?
+          )
+    )";
+    $params[] = "%$produto%";
+    $params[] = "%$produto%";
+    $params[] = ctype_digit($produto) ? (int)$produto : 0;
 }
 
 if ($documento !== '') {
@@ -115,9 +138,13 @@ function numero($valor, int $casas = 2): string
                 <label class="form-label small text-muted">Data final</label>
                 <input type="date" name="data_fim" class="form-control" value="<?= htmlspecialchars($dataFim) ?>">
             </div>
-            <div class="col-md-4">
+            <div class="col-md-2">
                 <label class="form-label small text-muted">Fornecedor</label>
                 <input type="text" name="fornecedor" class="form-control" value="<?= htmlspecialchars($fornecedor) ?>">
+            </div>
+            <div class="col-md-2">
+                <label class="form-label small text-muted">Produto</label>
+                <input type="text" name="produto" class="form-control" value="<?= htmlspecialchars($produto) ?>" placeholder="Descricao ou codigo">
             </div>
             <div class="col-md-2">
                 <label class="form-label small text-muted">Documento</label>
@@ -143,7 +170,7 @@ function numero($valor, int $casas = 2): string
                 <tbody>
                     <?php if (empty($compras)): ?>
                         <tr>
-                            <td colspan="5" class="text-center text-muted py-4">Nenhuma compra encontrada.</td>
+                            <td colspan="6" class="text-center text-muted py-4">Nenhuma compra encontrada.</td>
                         </tr>
                     <?php endif; ?>
 
@@ -169,7 +196,7 @@ function numero($valor, int $casas = 2): string
                             </td>
                         </tr>
                         <tr class="collapse" id="<?= $collapseId ?>">
-                            <td colspan="5" class="bg-light">
+                            <td colspan="6" class="bg-light">
                                 <?php if (empty($itens)): ?>
                                     <div class="text-muted small">Nenhum item encontrado para a compra <?= $compraId ?>.</div>
                                 <?php else: ?>

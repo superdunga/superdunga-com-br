@@ -1325,7 +1325,7 @@ $stmtContas = $pdo_master->prepare("
     WHERE EMPRESA = ?
       AND COALESCE(excluido_firebird, 'N') <> 'S'
       AND COALESCE(CONTABLOQUEADA, 'N') <> 'S'
-      AND TRIM(COALESCE(CLASSIFICACAO, '')) IN ('1', '2')
+      AND TRIM(COALESCE(CONTACONTABIL, '')) = '01.01'
     ORDER BY nome_conta ASC, CBCONTADOR ASC
 ");
 $stmtContas->execute([$empresaId]);
@@ -1342,7 +1342,7 @@ if (empty($contas)) {
               WHERE EMPRESA = ?
                 AND COALESCE(excluido_firebird, 'N') <> 'S'
                 AND COALESCE(CONTABLOQUEADA, 'N') <> 'S'
-                AND TRIM(COALESCE(CLASSIFICACAO, '')) IN ('1', '2')
+                AND TRIM(COALESCE(CONTACONTABIL, '')) = '01.01'
           )
         ORDER BY CBCONTADOR
     ");
@@ -2698,7 +2698,7 @@ if (in_array($exportarExtrato, ['csv', 'pdf'], true)) {
             WHERE EMPRESA = ?
               AND COALESCE(excluido_firebird, 'N') <> 'S'
               AND COALESCE(CONTABLOQUEADA, 'N') <> 'S'
-              AND TRIM(COALESCE(CLASSIFICACAO, '')) IN ('1', '2')
+              AND TRIM(COALESCE(CONTACONTABIL, '')) = '01.01'
         ) c ON c.CBCONTADOR = e.cbcontador
         LEFT JOIN armazem_bnc001 b
           ON b.EMPRESA = COALESCE(e.bnc001_empresa, e.empresa_id)
@@ -2831,7 +2831,7 @@ $stmtExtrato = $pdo_master->prepare("
         WHERE EMPRESA = ?
           AND COALESCE(excluido_firebird, 'N') <> 'S'
           AND COALESCE(CONTABLOQUEADA, 'N') <> 'S'
-          AND TRIM(COALESCE(CLASSIFICACAO, '')) IN ('1', '2')
+          AND TRIM(COALESCE(CONTACONTABIL, '')) = '01.01'
     ) c ON c.CBCONTADOR = e.cbcontador
     LEFT JOIN armazem_bnc001 b
       ON b.EMPRESA = COALESCE(e.bnc001_empresa, e.empresa_id)
@@ -2908,7 +2908,7 @@ $stmtBnc = $pdo_master->prepare("
         WHERE EMPRESA = ?
           AND COALESCE(excluido_firebird, 'N') <> 'S'
           AND COALESCE(CONTABLOQUEADA, 'N') <> 'S'
-          AND TRIM(COALESCE(CLASSIFICACAO, '')) IN ('1', '2')
+          AND TRIM(COALESCE(CONTACONTABIL, '')) = '01.01'
     ) c ON c.CBCONTADOR = b.CBCONTADOR
     WHERE {$whereBncSql}
       AND NOT EXISTS (

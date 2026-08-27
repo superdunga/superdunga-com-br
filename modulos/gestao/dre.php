@@ -18,6 +18,7 @@ if ($nivelUsuario !== 'MASTER') {
 
 $inicioPeriodo = $mesFiltro . '-01';
 $fimPeriodo = date('Y-m-t', strtotime($inicioPeriodo . ' +1 month'));
+$fimMesBase = date('Y-m-t', strtotime($inicioPeriodo));
 $mesAtualLabel = date('m/Y', strtotime($inicioPeriodo));
 $mesSeguinteLabel = date('m/Y', strtotime($inicioPeriodo . ' +1 month'));
 $limiteVencimentoLabel = dataGestao($fimPeriodo);
@@ -118,24 +119,18 @@ $receberResumo = $stmtReceberResumo->fetch(PDO::FETCH_ASSOC) ?: ['qtd' => 0, 'to
 
 $stmtReceber = $pdo_master->prepare("
     SELECT
-        c.CRCONTADOR,
         c.CMCONTADOR,
-        c.CLICONTADOR,
-        COALESCE(cli.NOME, cli.APELIDO, CONCAT('Cliente ', c.CLICONTADOR)) AS cliente,
-        c.DTVENC,
-        c.VLRPARCELA,
-        c.VLRRESTANTE
+        COUNT(*) AS qtd,
+        COALESCE(SUM(c.VLRPARCELA), 0) AS total_parcela,
+        COALESCE(SUM(c.VLRRESTANTE), 0) AS total_restante
     FROM armazem_cr001 c
-    LEFT JOIN armazem_cr002 cli
-        ON cli.EMPRESA = c.EMPRESA
-       AND cli.CLICONTADOR = c.CLICONTADOR
     WHERE c.EMPRESA {$filtroEmpresaSql}
       AND (c.STATUS IS NULL OR c.STATUS <> 'QT')
       AND COALESCE(c.excluido_firebird, 'N') <> 'S'
       AND COALESCE(c.financeiro_verificado, 'N') <> 'S'
       AND DATE(c.DTVENC) <= ?
-    ORDER BY c.DTVENC ASC, cliente ASC, c.CRCONTADOR ASC
-    LIMIT 300
+    GROUP BY c.CMCONTADOR
+    ORDER BY c.CMCONTADOR
 ");
 $stmtReceber->execute(array_merge($paramEmpresa, [$fimPeriodo]));
 $receber = $stmtReceber->fetchAll(PDO::FETCH_ASSOC);
@@ -156,66 +151,160 @@ $pagarResumo = $stmtPagarResumo->fetch(PDO::FETCH_ASSOC) ?: ['qtd' => 0, 'total_
 
 $stmtPagar = $pdo_master->prepare("
     SELECT
-        cp.CPCONTADOR,
-        cp.FCONTADOR,
-        COALESCE(f.NOME, f.APELIDO, CONCAT('Fornecedor ', cp.FCONTADOR)) AS fornecedor,
-        cp.TIPODOCORIGEM,
-        cp.NUMDOCORIGEM,
         cp.TIPOES,
-        COALESCE(NULLIF(cp.TITULO, ''), NULLIF(cp.NOTAFISCAL, ''), NULLIF(cp.NUMCH, ''), cp.IDENTIFICACAO) AS documento,
-        cp.DTVENC,
-        cp.VLRPARCELA,
-        cp.VLRRESTANTE
+        COALESCE(NULLIF(t.DESCES, ''), 'Sem descricao') AS tipoes_descricao,
+        COUNT(*) AS qtd,
+        COALESCE(SUM(cp.VLRPARCELA), 0) AS total_parcela,
+        COALESCE(SUM(cp.VLRRESTANTE), 0) AS total_restante
     FROM armazem_cp001 cp
-    LEFT JOIN armazem_cp003 f
-        ON f.EMPRESA = cp.EMPRESA
-       AND f.FCONTADOR = cp.FCONTADOR
+    LEFT JOIN armazem_bnc005 t
+        ON t.EMPRESA = cp.EMPRESA
+       AND t.ESCONTADOR = cp.TIPOES
     WHERE cp.EMPRESA {$filtroEmpresaSql}
       AND (cp.STATUS IS NULL OR cp.STATUS <> 'QT')
       AND COALESCE(cp.excluido_firebird, 'N') <> 'S'
       AND COALESCE(cp.financeiro_verificado, 'N') <> 'S'
       AND DATE(cp.DTVENC) <= ?
-    ORDER BY cp.DTVENC ASC, fornecedor ASC, cp.CPCONTADOR ASC
-    LIMIT 300
+    GROUP BY cp.TIPOES, t.DESCES
+    ORDER BY cp.TIPOES
 ");
 $stmtPagar->execute(array_merge($paramEmpresa, [$fimPeriodo]));
 $pagar = $stmtPagar->fetchAll(PDO::FETCH_ASSOC);
 
+$stmtMovimentacaoTipoes = $pdo_master->prepare("
+    SELECT
+        COALESCE(t.GRUPOBNC, 0) AS GRUPOBNC,
+        COALESCE(b.TIPOES, 0) AS TIPOES,
+        COALESCE(NULLIF(t.DESCES, ''), 'Sem TIPOES') AS tipoes_descricao,
+        COUNT(*) AS qtd,
+        COALESCE(SUM(CASE WHEN b.TIPOMOV = 'C' THEN ABS(b.VALORMOV) ELSE 0 END), 0) AS creditos,
+        COALESCE(SUM(CASE WHEN b.TIPOMOV = 'D' THEN ABS(b.VALORMOV) ELSE 0 END), 0) AS debitos,
+        COALESCE(SUM(CASE
+            WHEN b.TIPOMOV = 'C' THEN ABS(b.VALORMOV)
+            WHEN b.TIPOMOV = 'D' THEN -ABS(b.VALORMOV)
+            ELSE 0
+        END), 0) AS saldo
+    FROM armazem_bnc001 b
+    LEFT JOIN armazem_bnc005 t
+        ON t.EMPRESA = b.EMPRESA
+       AND t.ESCONTADOR = b.TIPOES
+    WHERE b.EMPRESA {$filtroEmpresaSql}
+      AND COALESCE(b.deletado, 'N') <> 'S'
+      AND DATE(b.DTMOV) BETWEEN ? AND ?
+    GROUP BY COALESCE(t.GRUPOBNC, 0), COALESCE(b.TIPOES, 0), t.DESCES, t.ORDEMTIPO
+    ORDER BY COALESCE(t.GRUPOBNC, 999999), COALESCE(t.ORDEMTIPO, 999999), COALESCE(b.TIPOES, 0)
+");
+$stmtMovimentacaoTipoes->execute(array_merge($paramEmpresa, [$inicioPeriodo, $fimMesBase]));
+$movimentacaoTipoes = $stmtMovimentacaoTipoes->fetchAll(PDO::FETCH_ASSOC);
+$saldoMovimentacaoTipoes = array_sum(array_column($movimentacaoTipoes, 'saldo'));
+$subtotaisGrupoBnc = [];
+foreach ($movimentacaoTipoes as $linha) {
+    $grupoBnc = (int)$linha['GRUPOBNC'];
+    if (!isset($subtotaisGrupoBnc[$grupoBnc])) {
+        $subtotaisGrupoBnc[$grupoBnc] = [
+            'qtd' => 0,
+            'creditos' => 0.0,
+            'debitos' => 0.0,
+            'saldo' => 0.0,
+        ];
+    }
+    $subtotaisGrupoBnc[$grupoBnc]['qtd'] += (int)$linha['qtd'];
+    $subtotaisGrupoBnc[$grupoBnc]['creditos'] += (float)$linha['creditos'];
+    $subtotaisGrupoBnc[$grupoBnc]['debitos'] += (float)$linha['debitos'];
+    $subtotaisGrupoBnc[$grupoBnc]['saldo'] += (float)$linha['saldo'];
+}
+
 $stmtContas = $pdo_master->prepare("
     SELECT
+        COALESCE(NULLIF(TRIM(c.CLASSIFICACAO), ''), 'Sem classificacao') AS CLASSIFICACAO,
         c.CBCONTADOR,
         c.EMPRESA,
         emp.nome_fantasia AS empresa_nome,
         TRIM(COALESCE(NULLIF(c.TITULAR, ''), NULLIF(c.DESCABREV, ''), CONCAT('Conta ', c.CBCONTADOR))) AS nome_conta,
-        COALESCE(s.valor_saldo, 0) AS saldo_inicial,
-        s.data_saldo,
-        COALESCE((
-            SELECT SUM(CASE WHEN b.TIPOMOV = 'C' THEN ABS(b.VALORMOV) ELSE -ABS(b.VALORMOV) END)
-            FROM armazem_bnc001 b
-            WHERE b.EMPRESA = c.EMPRESA
-              AND b.CBCONTADOR = c.CBCONTADOR
-              AND COALESCE(b.deletado, 'N') <> 'S'
-              AND DATE(b.DTMOV) > COALESCE(s.data_saldo, '1900-01-01')
-              AND DATE(b.DTMOV) <= ?
-        ), 0) AS movimento
+        CASE
+            WHEN s.data_saldo IS NULL OR s.data_saldo < ? THEN
+                COALESCE(s.valor_saldo, 0) + COALESCE(SUM(CASE
+                    WHEN DATE(b.DTMOV) > COALESCE(s.data_saldo, '1900-01-01')
+                     AND DATE(b.DTMOV) < ?
+                    THEN CASE WHEN b.TIPOMOV = 'C' THEN ABS(b.VALORMOV) ELSE -ABS(b.VALORMOV) END
+                    ELSE 0
+                END), 0)
+            ELSE
+                COALESCE(s.valor_saldo, 0) - COALESCE(SUM(CASE
+                    WHEN DATE(b.DTMOV) >= ?
+                     AND DATE(b.DTMOV) <= s.data_saldo
+                    THEN CASE WHEN b.TIPOMOV = 'C' THEN ABS(b.VALORMOV) ELSE -ABS(b.VALORMOV) END
+                    ELSE 0
+                END), 0)
+        END AS saldo_anterior,
+        COALESCE(SUM(CASE
+            WHEN b.TIPOMOV = 'D' AND DATE(b.DTMOV) BETWEEN ? AND ? THEN ABS(b.VALORMOV)
+            ELSE 0
+        END), 0) AS debitos,
+        COALESCE(SUM(CASE
+            WHEN b.TIPOMOV = 'C' AND DATE(b.DTMOV) BETWEEN ? AND ? THEN ABS(b.VALORMOV)
+            ELSE 0
+        END), 0) AS creditos
     FROM armazem_bnc002 c
     LEFT JOIN empresas emp
         ON emp.id = c.EMPRESA
     LEFT JOIN financeiro_contas_saldos s
         ON s.empresa_id = c.EMPRESA
        AND s.cbcontador = c.CBCONTADOR
+    LEFT JOIN armazem_bnc001 b
+        ON b.EMPRESA = c.EMPRESA
+       AND b.CBCONTADOR = c.CBCONTADOR
+       AND COALESCE(b.deletado, 'N') <> 'S'
     WHERE c.EMPRESA {$filtroEmpresaSql}
       AND COALESCE(c.excluido_firebird, 'N') <> 'S'
       AND COALESCE(c.CONTABLOQUEADA, 'N') <> 'S'
-    ORDER BY nome_conta ASC, c.CBCONTADOR ASC
+    GROUP BY
+        c.CLASSIFICACAO,
+        c.CBCONTADOR,
+        c.EMPRESA,
+        emp.nome_fantasia,
+        c.TITULAR,
+        c.DESCABREV,
+        s.valor_saldo,
+        s.data_saldo
+    ORDER BY
+        CASE WHEN NULLIF(TRIM(c.CLASSIFICACAO), '') IS NULL THEN 1 ELSE 0 END,
+        c.CLASSIFICACAO ASC,
+        nome_conta ASC,
+        c.CBCONTADOR ASC
 ");
-$stmtContas->execute(array_merge([$fimPeriodo], $paramEmpresa));
+$stmtContas->execute(array_merge([
+    $inicioPeriodo,
+    $inicioPeriodo,
+    $inicioPeriodo,
+    $inicioPeriodo,
+    $fimMesBase,
+    $inicioPeriodo,
+    $fimMesBase,
+], $paramEmpresa));
 $contas = $stmtContas->fetchAll(PDO::FETCH_ASSOC);
 
 $saldoContasTotal = 0.0;
+$subtotaisClassificacao = [];
 foreach ($contas as &$conta) {
-    $conta['saldo'] = (float)$conta['saldo_inicial'] + (float)$conta['movimento'];
+    $conta['saldo_mes'] = (float)$conta['creditos'] - (float)$conta['debitos'];
+    $conta['saldo'] = (float)$conta['saldo_anterior'] + (float)$conta['saldo_mes'];
     $saldoContasTotal += (float)$conta['saldo'];
+    $classificacao = (string)$conta['CLASSIFICACAO'];
+    if (!isset($subtotaisClassificacao[$classificacao])) {
+        $subtotaisClassificacao[$classificacao] = [
+            'saldo_anterior' => 0.0,
+            'debitos' => 0.0,
+            'creditos' => 0.0,
+            'saldo_mes' => 0.0,
+            'saldo' => 0.0,
+        ];
+    }
+    $subtotaisClassificacao[$classificacao]['saldo_anterior'] += (float)$conta['saldo_anterior'];
+    $subtotaisClassificacao[$classificacao]['debitos'] += (float)$conta['debitos'];
+    $subtotaisClassificacao[$classificacao]['creditos'] += (float)$conta['creditos'];
+    $subtotaisClassificacao[$classificacao]['saldo_mes'] += (float)$conta['saldo_mes'];
+    $subtotaisClassificacao[$classificacao]['saldo'] += (float)$conta['saldo'];
 }
 unset($conta);
 
@@ -351,36 +440,97 @@ require '../../layout/header.php';
 </section>
 
 <section class="card shadow-sm mb-4">
-    <div class="card-header">
-        <h2 class="h5 mb-0">Contas a Receber</h2>
-        <small class="text-muted">Titulos em aberto com vencimento ate <?= dataGestao($fimPeriodo) ?>, verificado = nao.</small>
+    <div class="card-header d-flex flex-wrap justify-content-between align-items-center gap-2">
+        <div>
+            <h2 class="h5 mb-0">Movimentacao por TIPOES</h2>
+            <small class="text-muted">Movimentos entre <?= dataGestao($inicioPeriodo) ?> e <?= dataGestao($fimMesBase) ?>.</small>
+        </div>
+        <div class="text-end">
+            <div class="small text-muted">Saldo</div>
+            <div class="fw-bold <?= $saldoMovimentacaoTipoes < 0 ? 'text-danger' : 'text-success' ?>"><?= moedaGestao($saldoMovimentacaoTipoes) ?></div>
+        </div>
     </div>
     <div class="table-responsive">
         <table class="table table-sm table-striped align-middle">
             <thead>
                 <tr>
-                    <th>Venc.</th>
-                    <th>Cliente</th>
-                    <th class="text-end">CM</th>
-                    <th class="text-end">Parcela</th>
-                    <th class="text-end">Aberto</th>
+                    <th>GRUPOBNC</th>
+                    <th>TIPOES</th>
+                    <th>Descricao</th>
+                    <th class="text-end">Movimentos</th>
+                    <th class="text-end">Creditos</th>
+                    <th class="text-end">Debitos</th>
+                    <th class="text-end">Saldo</th>
+                </tr>
+            </thead>
+            <tbody>
+                <?php foreach ($movimentacaoTipoes as $indice => $linha): ?>
+                    <?php $grupoBnc = (int)$linha['GRUPOBNC']; ?>
+                    <tr>
+                        <td><?= $grupoBnc > 0 ? $grupoBnc : '-' ?></td>
+                        <td class="fw-semibold"><?= (int)$linha['TIPOES'] ?></td>
+                        <td><?= htmlspecialchars($linha['tipoes_descricao']) ?></td>
+                        <td class="text-end"><?= (int)$linha['qtd'] ?></td>
+                        <td class="text-end text-success"><?= moedaGestao($linha['creditos']) ?></td>
+                        <td class="text-end text-danger"><?= moedaGestao($linha['debitos']) ?></td>
+                        <td class="text-end fw-semibold <?= (float)$linha['saldo'] < 0 ? 'text-danger' : 'text-success' ?>"><?= moedaGestao($linha['saldo']) ?></td>
+                    </tr>
+                    <?php
+                    $proximoGrupoBnc = isset($movimentacaoTipoes[$indice + 1])
+                        ? (int)$movimentacaoTipoes[$indice + 1]['GRUPOBNC']
+                        : null;
+                    if ($proximoGrupoBnc !== $grupoBnc):
+                        $subtotalGrupo = $subtotaisGrupoBnc[$grupoBnc];
+                    ?>
+                        <tr class="table-secondary fw-bold">
+                            <td colspan="3">Subtotal GRUPOBNC <?= $grupoBnc > 0 ? $grupoBnc : 'sem grupo' ?></td>
+                            <td class="text-end"><?= (int)$subtotalGrupo['qtd'] ?></td>
+                            <td class="text-end text-success"><?= moedaGestao($subtotalGrupo['creditos']) ?></td>
+                            <td class="text-end text-danger"><?= moedaGestao($subtotalGrupo['debitos']) ?></td>
+                            <td class="text-end <?= (float)$subtotalGrupo['saldo'] < 0 ? 'text-danger' : 'text-success' ?>"><?= moedaGestao($subtotalGrupo['saldo']) ?></td>
+                        </tr>
+                    <?php endif; ?>
+                <?php endforeach; ?>
+                <?php if (empty($movimentacaoTipoes)): ?>
+                    <tr><td colspan="7" class="text-center text-muted py-4">Nenhuma movimentacao encontrada no mes-base.</td></tr>
+                <?php endif; ?>
+            </tbody>
+        </table>
+    </div>
+</section>
+
+<section class="card shadow-sm mb-4">
+    <div class="card-header d-flex flex-wrap justify-content-between align-items-center gap-2">
+        <div>
+            <h2 class="h5 mb-0">Contas a Receber por CM</h2>
+            <small class="text-muted">Resumo dos titulos em aberto com vencimento ate <?= dataGestao($fimPeriodo) ?>, verificado = nao.</small>
+        </div>
+        <div class="text-end">
+            <div class="small text-muted">Total em aberto</div>
+            <div class="fw-bold text-success"><?= moedaGestao($receberResumo['total_restante']) ?></div>
+        </div>
+    </div>
+    <div class="table-responsive">
+        <table class="table table-sm table-striped align-middle">
+            <thead>
+                <tr>
+                    <th>CM</th>
+                    <th class="text-end">Titulos</th>
+                    <th class="text-end">Total das parcelas</th>
+                    <th class="text-end">Saldo aberto</th>
                 </tr>
             </thead>
             <tbody>
                 <?php foreach ($receber as $linha): ?>
                     <tr>
-                        <td><?= dataGestao($linha['DTVENC']) ?></td>
-                        <td>
-                            <div class="fw-semibold"><?= htmlspecialchars($linha['cliente']) ?></div>
-                            <div class="small text-muted">CR <?= (int)$linha['CRCONTADOR'] ?></div>
-                        </td>
-                        <td class="text-end"><?= (int)$linha['CMCONTADOR'] ?></td>
-                        <td class="text-end"><?= moedaGestao($linha['VLRPARCELA']) ?></td>
-                        <td class="text-end fw-semibold"><?= moedaGestao($linha['VLRRESTANTE']) ?></td>
+                        <td class="fw-semibold"><?= (int)$linha['CMCONTADOR'] ?></td>
+                        <td class="text-end"><?= (int)$linha['qtd'] ?></td>
+                        <td class="text-end"><?= moedaGestao($linha['total_parcela']) ?></td>
+                        <td class="text-end fw-semibold"><?= moedaGestao($linha['total_restante']) ?></td>
                     </tr>
                 <?php endforeach; ?>
                 <?php if (empty($receber)): ?>
-                    <tr><td colspan="5" class="text-center text-muted py-4">Nenhum contas a receber pendente no periodo.</td></tr>
+                    <tr><td colspan="4" class="text-center text-muted py-4">Nenhum contas a receber pendente no periodo.</td></tr>
                 <?php endif; ?>
             </tbody>
         </table>
@@ -388,38 +538,39 @@ require '../../layout/header.php';
 </section>
 
 <section class="card shadow-sm mb-4">
-    <div class="card-header">
-        <h2 class="h5 mb-0">Contas a Pagar</h2>
-        <small class="text-muted">Titulos em aberto com vencimento ate <?= dataGestao($fimPeriodo) ?>, verificado = nao.</small>
+    <div class="card-header d-flex flex-wrap justify-content-between align-items-center gap-2">
+        <div>
+            <h2 class="h5 mb-0">Contas a Pagar por TIPOES</h2>
+            <small class="text-muted">Resumo dos titulos em aberto com vencimento ate <?= dataGestao($fimPeriodo) ?>, verificado = nao.</small>
+        </div>
+        <div class="text-end">
+            <div class="small text-muted">Total em aberto</div>
+            <div class="fw-bold text-danger"><?= moedaGestao($pagarResumo['total_restante']) ?></div>
+        </div>
     </div>
     <div class="table-responsive">
         <table class="table table-sm table-striped align-middle">
             <thead>
                 <tr>
-                    <th>Venc.</th>
-                    <th>Fornecedor</th>
-                    <th>Documento</th>
-                    <th class="text-end">TipoES</th>
-                    <th class="text-end">Parcela</th>
-                    <th class="text-end">Aberto</th>
+                    <th>TIPOES</th>
+                    <th>Descricao</th>
+                    <th class="text-end">Titulos</th>
+                    <th class="text-end">Total das parcelas</th>
+                    <th class="text-end">Saldo aberto</th>
                 </tr>
             </thead>
             <tbody>
                 <?php foreach ($pagar as $linha): ?>
                     <tr>
-                        <td><?= dataGestao($linha['DTVENC']) ?></td>
-                        <td>
-                            <div class="fw-semibold"><?= htmlspecialchars($linha['fornecedor']) ?></div>
-                            <div class="small text-muted">CP <?= (int)$linha['CPCONTADOR'] ?></div>
-                        </td>
-                        <td><?= htmlspecialchars((string)($linha['documento'] ?: $linha['NUMDOCORIGEM'])) ?></td>
-                        <td class="text-end"><?= (int)$linha['TIPOES'] ?></td>
-                        <td class="text-end"><?= moedaGestao($linha['VLRPARCELA']) ?></td>
-                        <td class="text-end fw-semibold"><?= moedaGestao($linha['VLRRESTANTE']) ?></td>
+                        <td class="fw-semibold"><?= (int)$linha['TIPOES'] ?></td>
+                        <td><?= htmlspecialchars($linha['tipoes_descricao']) ?></td>
+                        <td class="text-end"><?= (int)$linha['qtd'] ?></td>
+                        <td class="text-end"><?= moedaGestao($linha['total_parcela']) ?></td>
+                        <td class="text-end fw-semibold"><?= moedaGestao($linha['total_restante']) ?></td>
                     </tr>
                 <?php endforeach; ?>
                 <?php if (empty($pagar)): ?>
-                    <tr><td colspan="6" class="text-center text-muted py-4">Nenhum contas a pagar pendente no periodo.</td></tr>
+                    <tr><td colspan="5" class="text-center text-muted py-4">Nenhum contas a pagar pendente no periodo.</td></tr>
                 <?php endif; ?>
             </tbody>
         </table>
@@ -427,35 +578,68 @@ require '../../layout/header.php';
 </section>
 
 <section class="card shadow-sm mb-4">
-    <div class="card-header">
-        <h2 class="h5 mb-0">Saldo das Contas</h2>
-        <small class="text-muted">Contas nao bloqueadas com saldo atual calculado.</small>
+    <div class="card-header d-flex flex-wrap justify-content-between align-items-center gap-2">
+        <div>
+            <h2 class="h5 mb-0">Saldo das Contas</h2>
+            <small class="text-muted">Contas nao bloqueadas com saldo atual calculado.</small>
+        </div>
+        <div class="text-end">
+            <div class="small text-muted">Saldo total</div>
+            <div class="fw-bold <?= $saldoContasTotal < 0 ? 'text-danger' : 'text-success' ?>"><?= moedaGestao($saldoContasTotal) ?></div>
+        </div>
     </div>
     <div class="table-responsive">
         <table class="table table-sm table-striped align-middle">
             <thead>
                 <tr>
+                    <th>Classificacao</th>
                     <th>Conta</th>
                     <?php if ($empresaFiltro === 0): ?>
                         <th>Empresa</th>
                     <?php endif; ?>
                     <th>Nome</th>
-                    <th class="text-end">Saldo</th>
+                    <th class="text-end">Saldo Anterior</th>
+                    <th class="text-end">Debitos</th>
+                    <th class="text-end">Creditos</th>
+                    <th class="text-end">Saldo do mes</th>
+                    <th class="text-end">Saldo Atual</th>
                 </tr>
             </thead>
             <tbody>
-                <?php foreach ($contas as $conta): ?>
+                <?php foreach ($contas as $indice => $conta): ?>
+                    <?php $classificacao = (string)$conta['CLASSIFICACAO']; ?>
                     <tr>
+                        <td><?= htmlspecialchars($classificacao) ?></td>
                         <td><?= (int)$conta['CBCONTADOR'] ?></td>
                         <?php if ($empresaFiltro === 0): ?>
                             <td><?= htmlspecialchars($conta['empresa_nome'] ?: ('Empresa ' . (int)$conta['EMPRESA'])) ?></td>
                         <?php endif; ?>
                         <td><?= htmlspecialchars($conta['nome_conta']) ?></td>
+                        <td class="text-end fw-semibold <?= ((float)$conta['saldo_anterior']) < 0 ? 'text-danger' : 'text-success' ?>"><?= moedaGestao($conta['saldo_anterior']) ?></td>
+                        <td class="text-end text-danger"><?= moedaGestao($conta['debitos']) ?></td>
+                        <td class="text-end text-success"><?= moedaGestao($conta['creditos']) ?></td>
+                        <td class="text-end fw-semibold <?= ((float)$conta['saldo_mes']) < 0 ? 'text-danger' : 'text-success' ?>"><?= moedaGestao($conta['saldo_mes']) ?></td>
                         <td class="text-end fw-semibold <?= ((float)$conta['saldo']) < 0 ? 'text-danger' : 'text-success' ?>"><?= moedaGestao($conta['saldo']) ?></td>
                     </tr>
+                    <?php
+                    $proximaClassificacao = isset($contas[$indice + 1])
+                        ? (string)$contas[$indice + 1]['CLASSIFICACAO']
+                        : null;
+                    if ($proximaClassificacao !== $classificacao):
+                        $subtotalClassificacao = $subtotaisClassificacao[$classificacao];
+                    ?>
+                        <tr class="table-secondary fw-bold">
+                            <td colspan="<?= $empresaFiltro === 0 ? 4 : 3 ?>">Subtotal <?= htmlspecialchars($classificacao) ?></td>
+                            <td class="text-end <?= $subtotalClassificacao['saldo_anterior'] < 0 ? 'text-danger' : 'text-success' ?>"><?= moedaGestao($subtotalClassificacao['saldo_anterior']) ?></td>
+                            <td class="text-end text-danger"><?= moedaGestao($subtotalClassificacao['debitos']) ?></td>
+                            <td class="text-end text-success"><?= moedaGestao($subtotalClassificacao['creditos']) ?></td>
+                            <td class="text-end <?= $subtotalClassificacao['saldo_mes'] < 0 ? 'text-danger' : 'text-success' ?>"><?= moedaGestao($subtotalClassificacao['saldo_mes']) ?></td>
+                            <td class="text-end <?= $subtotalClassificacao['saldo'] < 0 ? 'text-danger' : 'text-success' ?>"><?= moedaGestao($subtotalClassificacao['saldo']) ?></td>
+                        </tr>
+                    <?php endif; ?>
                 <?php endforeach; ?>
                 <?php if (empty($contas)): ?>
-                    <tr><td colspan="<?= $empresaFiltro === 0 ? 4 : 3 ?>" class="text-center text-muted py-4">Nenhuma conta encontrada para este filtro.</td></tr>
+                    <tr><td colspan="<?= $empresaFiltro === 0 ? 9 : 8 ?>" class="text-center text-muted py-4">Nenhuma conta encontrada para este filtro.</td></tr>
                 <?php endif; ?>
             </tbody>
         </table>

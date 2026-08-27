@@ -16,6 +16,7 @@ $homeUrl = ($appBaseUrl ?: '') . '/index.php';
 $logoutUrl = ($appBaseUrl ?: '') . '/logout.php';
 $tesourariaUrl = ($appBaseUrl ?: '') . '/modulos/tesouraria/menu_tesouraria.php';
 $fechamentoUrl = ($appBaseUrl ?: '') . '/modulos/fechamentodecaixa/menu_fechamento.php';
+$auditoriaUrl = ($appBaseUrl ?: '') . '/modulos/auditoria/menu_auditoria.php';
 $financeiroUrl = ($appBaseUrl ?: '') . '/modulos/financeiro/menu_financeiro.php';
 $estoqueUrl = ($appBaseUrl ?: '') . '/modulos/estoque/menu_estoque.php';
 $gestaoUrl = ($appBaseUrl ?: '') . '/modulos/gestao/menu_gestao.php';
@@ -35,6 +36,7 @@ $empresaIdSessao = (int)($_SESSION['empresa_id'] ?? 0);
 $empresaNome = 'Empresa nao definida';
 $mostrarTesourariaTopbar = true;
 $mostrarFechamentoTopbar = true;
+$mostrarAuditoriaTopbar = true;
 $mostrarFinanceiroTopbar = true;
 $mostrarEstoqueTopbar = true;
 $mostrarGestaoTopbar = true;
@@ -77,6 +79,7 @@ if (!empty($_SESSION['empresa_nome'])) {
 if (isset($pdo_master) && function_exists('grupoPermitido') && function_exists('moduloPermitido')) {
     $mostrarTesourariaTopbar = grupoPermitido($pdo_master, $empresaIdSessao, 'Tesouraria', $nivelUsuario);
     $mostrarFechamentoTopbar = grupoPermitido($pdo_master, $empresaIdSessao, 'Fechamento', $nivelUsuario);
+    $mostrarAuditoriaTopbar = grupoPermitido($pdo_master, $empresaIdSessao, 'Auditoria', $nivelUsuario);
     $mostrarFinanceiroTopbar = grupoPermitido($pdo_master, $empresaIdSessao, 'Financeiro', $nivelUsuario);
     $mostrarEstoqueTopbar = grupoPermitido($pdo_master, $empresaIdSessao, 'Estoque', $nivelUsuario);
     $mostrarGestaoTopbar = grupoPermitido($pdo_master, $empresaIdSessao, 'Gestao', $nivelUsuario);
@@ -97,6 +100,7 @@ $backTopUrl = $homeUrl;
 $topbarModuleMenus = [
     '/modulos/tesouraria/' => $tesourariaUrl,
     '/modulos/fechamentodecaixa/' => $fechamentoUrl,
+    '/modulos/auditoria/' => $auditoriaUrl,
     '/modulos/financeiro/' => $financeiroUrl,
     '/modulos/estoque/' => $estoqueUrl,
     '/modulos/gestao/' => $gestaoUrl,
@@ -587,6 +591,11 @@ $bootstrapCssUrl = ($appBaseUrl ?: '') . '/assets/bootstrap/bootstrap.min.css';
                 <?php if ($mostrarFechamentoTopbar): ?>
                     <li class="nav-item">
                         <a class="nav-link" href="<?= htmlspecialchars($fechamentoUrl) ?>">Fechamento</a>
+                    </li>
+                <?php endif; ?>
+                <?php if ($mostrarAuditoriaTopbar): ?>
+                    <li class="nav-item">
+                        <a class="nav-link" href="<?= htmlspecialchars($auditoriaUrl) ?>">Auditoria</a>
                     </li>
                 <?php endif; ?>
                 <?php if ($mostrarFinanceiroTopbar): ?>
