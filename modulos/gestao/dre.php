@@ -285,10 +285,12 @@ $stmtContas->execute(array_merge([
 $contas = $stmtContas->fetchAll(PDO::FETCH_ASSOC);
 
 $saldoContasTotal = 0.0;
+$saldoMesContasTotal = 0.0;
 $subtotaisClassificacao = [];
 foreach ($contas as &$conta) {
     $conta['saldo_mes'] = (float)$conta['creditos'] - (float)$conta['debitos'];
     $conta['saldo'] = (float)$conta['saldo_anterior'] + (float)$conta['saldo_mes'];
+    $saldoMesContasTotal += (float)$conta['saldo_mes'];
     $saldoContasTotal += (float)$conta['saldo'];
     $classificacao = (string)$conta['CLASSIFICACAO'];
     if (!isset($subtotaisClassificacao[$classificacao])) {
@@ -583,9 +585,15 @@ require '../../layout/header.php';
             <h2 class="h5 mb-0">Saldo das Contas</h2>
             <small class="text-muted">Contas nao bloqueadas com saldo atual calculado.</small>
         </div>
-        <div class="text-end">
-            <div class="small text-muted">Saldo total</div>
-            <div class="fw-bold <?= $saldoContasTotal < 0 ? 'text-danger' : 'text-success' ?>"><?= moedaGestao($saldoContasTotal) ?></div>
+        <div class="d-flex gap-4 text-end">
+            <div>
+                <div class="small text-muted">Saldo do mes</div>
+                <div class="fw-bold <?= $saldoMesContasTotal < 0 ? 'text-danger' : 'text-success' ?>"><?= moedaGestao($saldoMesContasTotal) ?></div>
+            </div>
+            <div>
+                <div class="small text-muted">Saldo total</div>
+                <div class="fw-bold <?= $saldoContasTotal < 0 ? 'text-danger' : 'text-success' ?>"><?= moedaGestao($saldoContasTotal) ?></div>
+            </div>
         </div>
     </div>
     <div class="table-responsive">
