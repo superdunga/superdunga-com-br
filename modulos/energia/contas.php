@@ -52,8 +52,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $dados['valor_total'],
                 $dados['data_emissao'] ?: null,
                 $dados['consumo_kwh'],
-                0,
-                0,
+                $dados['valor_unitario_kw'],
+                $dados['franquia_minima'],
                 $dados['custo_disponibilidade'],
                 $dados['contribuicao_iluminacao'],
                 $texto,
@@ -72,7 +72,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
             $custoDisponibilidade = decimalPostEnergia((string)($_POST['custo_disponibilidade'] ?? '0'));
             $franquiaMinima = decimalPostEnergia((string)($_POST['franquia_minima'] ?? '0'));
-            $valorUnitarioKw = $franquiaMinima > 0 ? round($custoDisponibilidade / $franquiaMinima, 6) : 0.0;
+            $valorUnitarioKw = decimalPostEnergia((string)($_POST['valor_unitario_kw'] ?? '0'));
+            if ($valorUnitarioKw <= 0 && $franquiaMinima > 0) {
+                $valorUnitarioKw = round($custoDisponibilidade / $franquiaMinima, 6);
+            }
 
             $stmt = $pdo_master->prepare("
                 UPDATE energia_contas
@@ -247,8 +250,8 @@ require '../../layout/header.php';
                         </div>
                         <div class="col-md-4">
                             <label class="form-label small fw-semibold">Valor unitario do kW</label>
-                            <input type="text" name="valor_unitario_kw" id="valor_unitario_kw" inputmode="decimal" class="form-control" value="<?= number_format((float)($contaEditar['valor_unitario_kw'] ?? 0), 6, ',', '.') ?>" readonly>
-                            <div class="form-text">Calculado por custo de disponibilidade / franquia minima.</div>
+                            <input type="text" name="valor_unitario_kw" id="valor_unitario_kw" inputmode="decimal" class="form-control" value="<?= number_format((float)($contaEditar['valor_unitario_kw'] ?? 0), 6, ',', '.') ?>">
+                            <div class="form-text">Extraido da fatura e disponivel para conferencia manual.</div>
                         </div>
                         <div class="col-md-4">
                             <label class="form-label small fw-semibold">Franquia minima</label>
