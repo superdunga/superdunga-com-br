@@ -169,11 +169,13 @@ if ($editarId > 0) {
 }
 
 if (isset($_GET['ok'])) {
-    $mensagem = match ((string)$_GET['ok']) {
-        'importado' => 'Conta de energia importada. Confira os campos extraidos.',
-        'excluido' => 'Conta de energia excluida.',
-        default => 'Conta de energia atualizada.',
-    };
+    if ($_GET['ok'] === 'importado') {
+        $mensagem = 'Conta de energia importada. Confira os campos extraidos.';
+    } elseif ($_GET['ok'] === 'excluido') {
+        $mensagem = 'Conta de energia excluida.';
+    } else {
+        $mensagem = 'Conta de energia atualizada.';
+    }
 }
 
 $fReferencia = trim((string)($_GET['referencia'] ?? ''));
