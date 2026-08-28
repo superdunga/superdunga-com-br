@@ -112,6 +112,49 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             header('Location: contas.php?ok=salvo&id=' . $id);
             exit;
         }
+
+        if ($acao === 'excluir_conta') {
+            $id = (int)($_POST['id'] ?? 0);
+            if ($id <= 0) {
+                throw new RuntimeException('Conta de energia nao localizada.');
+            }
+
+            $stmtConta = $pdo_master->prepare("SELECT arquivo_caminho FROM energia_contas WHERE id = ? AND empresa_id = ?");
+            $stmtConta->execute([$id, $empresaId]);
+            $contaExcluir = $stmtConta->fetch(PDO::FETCH_ASSOC);
+            if (!$contaExcluir) {
+                throw new RuntimeException('Conta de energia nao localizada.');
+            }
+
+            $stmtExcluir = $pdo_master->prepare("
+                DELETE FROM energia_contas
+                WHERE id = ?
+                  AND empresa_id = ?
+                  AND NOT EXISTS (
+                      SELECT 1
+                      FROM energia_operacoes
+                      WHERE energia_operacoes.empresa_id = energia_contas.empresa_id
+                        AND energia_operacoes.conta_id = energia_contas.id
+                  )
+            ");
+            $stmtExcluir->execute([$id, $empresaId]);
+            if ($stmtExcluir->rowCount() !== 1) {
+                throw new RuntimeException('Esta conta possui operacao de energia e nao pode ser excluida.');
+            }
+
+            $baseUploads = realpath(__DIR__ . '/../../uploads/energia');
+            $arquivoCaminho = trim((string)($contaExcluir['arquivo_caminho'] ?? ''));
+            $arquivoAbsoluto = $arquivoCaminho !== '' ? realpath(__DIR__ . '/../../' . $arquivoCaminho) : false;
+            if ($baseUploads !== false
+                && $arquivoAbsoluto !== false
+                && strpos($arquivoAbsoluto, $baseUploads . DIRECTORY_SEPARATOR) === 0
+                && strtolower(pathinfo($arquivoAbsoluto, PATHINFO_EXTENSION)) === 'pdf') {
+                @unlink($arquivoAbsoluto);
+            }
+
+            header('Location: contas.php?ok=excluido');
+            exit;
+        }
     } catch (Throwable $e) {
         $erro = $e->getMessage();
     }
@@ -126,9 +169,11 @@ if ($editarId > 0) {
 }
 
 if (isset($_GET['ok'])) {
-    $mensagem = $_GET['ok'] === 'importado'
-        ? 'Conta de energia importada. Confira os campos extraidos.'
-        : 'Conta de energia atualizada.';
+    $mensagem = match ((string)$_GET['ok']) {
+        'importado' => 'Conta de energia importada. Confira os campos extraidos.',
+        'excluido' => 'Conta de energia excluida.',
+        default => 'Conta de energia atualizada.',
+    };
 }
 
 $fReferencia = trim((string)($_GET['referencia'] ?? ''));
@@ -156,7 +201,13 @@ if ($fVencFim !== '') {
 }
 
 $stmt = $pdo_master->prepare("
-    SELECT *
+    SELECT energia_contas.*,
+           EXISTS (
+               SELECT 1
+               FROM energia_operacoes
+               WHERE energia_operacoes.empresa_id = energia_contas.empresa_id
+                 AND energia_operacoes.conta_id = energia_contas.id
+           ) AS possui_operacao
     FROM energia_contas
     WHERE " . implode(' AND ', $where) . "
     ORDER BY COALESCE(vencimento, '9999-12-31') DESC, id DESC
@@ -344,8 +395,15 @@ require '../../layout/header.php';
                             <td class="text-end"><?= number_format((float)($conta['valor_unitario_kw'] ?? 0), 6, ',', '.') ?></td>
                             <td class="text-end"><?= number_format((float)($conta['franquia_minima'] ?? 0), 3, ',', '.') ?></td>
                             <td class="text-end">R$ <?= moedaEnergia((float)$conta['valor_total']) ?></td>
-                            <td class="text-end">
+                            <td class="text-end text-nowrap">
                                 <a class="btn btn-sm btn-outline-primary" href="contas.php?editar=<?= (int)$conta['id'] ?>">Conferir</a>
+                                <?php if (empty($conta['possui_operacao'])): ?>
+                                    <form method="post" class="d-inline" onsubmit="return confirm('Excluir esta conta de energia e o PDF importado?');">
+                                        <input type="hidden" name="acao" value="excluir_conta">
+                                        <input type="hidden" name="id" value="<?= (int)$conta['id'] ?>">
+                                        <button type="submit" class="btn btn-sm btn-outline-danger">Excluir</button>
+                                    </form>
+                                <?php endif; ?>
                             </td>
                         </tr>
                     <?php endforeach; ?>
