@@ -408,6 +408,15 @@ function parseContaEnergiaCemig(string $texto): array
         $dados['custo_disponibilidade'] = valorPtEnergia($m[3]);
     }
 
+    if ($dados['valor_unitario_kw'] <= 0
+        && preg_match('/Custo de Disponibilidade\s+([\d\.,]+)\s+([\d\.,]+)/i', $texto, $m)) {
+        $dados['valor_unitario_kw'] = valorPtEnergia($m[1]);
+        $dados['custo_disponibilidade'] = valorPtEnergia($m[2]);
+        if ($dados['valor_unitario_kw'] > 0) {
+            $dados['franquia_minima'] = round($dados['custo_disponibilidade'] / $dados['valor_unitario_kw']);
+        }
+    }
+
     if ($dados['custo_disponibilidade'] <= 0 && preg_match('/Custo de Disponibilidade\s+([\d\.,]+)/i', $texto, $m)) {
         $dados['custo_disponibilidade'] = valorPtEnergia($m[1]);
     }
