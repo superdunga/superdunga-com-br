@@ -314,6 +314,7 @@ $totalMesAnterior = array_sum(array_column($vendasMesAnterior, 'total'));
 $diasComparativo = count($comparativoDias);
 $mediaDiaAtual = $diasComparativo > 0 ? $totalAtualAteReferencia / $diasComparativo : 0.0;
 $ticketMedioAtualAteReferencia = $qtdVendasAtualAteReferencia > 0 ? $totalAtualAteReferencia / $qtdVendasAtualAteReferencia : 0.0;
+$ticketMedioAnteriorComparavel = $qtdVendasAnteriorComparavel > 0 ? $totalAnteriorComparavel / $qtdVendasAnteriorComparavel : 0.0;
 $totaisMesAnteriorPorDiaSemana = array_fill(0, 7, 0.0);
 $quantidadesMesAnteriorPorDiaSemana = array_fill(0, 7, 0);
 $cursorHistoricoPrevisao = strtotime($inicioMesAnterior);
@@ -442,8 +443,8 @@ require '../../layout/header.php';
                 </div>
             </form>
 
-            <div class="row g-3 mb-3">
-                <div class="col-md-6 col-xl-3">
+            <div class="row row-cols-1 row-cols-md-2 row-cols-xl-5 g-3 mb-3">
+                <div class="col">
                     <div class="border rounded-2 p-3 h-100">
                         <div class="text-muted small">
                             <?= $temDiasFechados ? 'Periodo filtrado' : 'Sem dias fechados no mes' ?>
@@ -452,7 +453,7 @@ require '../../layout/header.php';
                         <div class="small"><?= date('d/m', strtotime($filtroDataIni)) ?> ate <?= date('d/m', strtotime($filtroDataFim)) ?> | Meta: <?= $metaVendas > 0 ? moedaMetaVendas($metaVendas) : 'Nao informada' ?></div>
                     </div>
                 </div>
-                <div class="col-md-6 col-xl-3">
+                <div class="col">
                     <div class="border rounded-2 p-3 h-100">
                         <div class="text-muted small">Previsao versus mes anterior</div>
                         <div class="h4 mb-1 <?= $variacaoMesAnterior !== null && $variacaoMesAnterior < 0 ? 'text-danger' : 'text-success' ?>">
@@ -463,18 +464,28 @@ require '../../layout/header.php';
                         </div>
                     </div>
                 </div>
-                <div class="col-md-6 col-xl-3">
+                <div class="col">
                     <div class="border rounded-2 p-3 h-100">
                         <div class="text-muted small">Previsao de fechamento</div>
                         <div class="h4 mb-1"><?= moedaMetaVendas($previsaoFechamento) ?></div>
                         <div class="small">Acumulado mais a media, no mes anterior, dos mesmos dias da semana ainda restantes</div>
                     </div>
                 </div>
-                <div class="col-md-6 col-xl-3">
+                <div class="col">
                     <div class="border rounded-2 p-3 h-100">
                         <div class="text-muted small">Necessario por dia</div>
                         <div class="h4 mb-1"><?= $metaVendas > 0 ? moedaMetaVendas($mediaNecessaria) : '-' ?></div>
                         <div class="small">Para atingir a meta no fim do mes</div>
+                    </div>
+                </div>
+                <div class="col">
+                    <div class="border rounded-2 p-3 h-100">
+                        <div class="text-muted small d-flex justify-content-between gap-2">
+                            <span>Ticket medio</span>
+                            <span>Total de vendas: <?= numeroMetaVendas($qtdVendasAtualAteReferencia) ?></span>
+                        </div>
+                        <div class="h4 mb-1"><?= moedaMetaVendas($ticketMedioAtualAteReferencia) ?></div>
+                        <div class="small">Mes anterior equivalente: <?= moedaMetaVendas($ticketMedioAnteriorComparavel) ?></div>
                     </div>
                 </div>
             </div>
