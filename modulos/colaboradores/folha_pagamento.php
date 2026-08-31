@@ -121,6 +121,20 @@ function retanguloPdfFolha(float $x, float $y, float $w, float $h): string
     return number_format($x, 2, '.', '') . ' ' . number_format($y, 2, '.', '') . ' ' . number_format($w, 2, '.', '') . ' ' . number_format($h, 2, '.', '') . " re f\n";
 }
 
+function linhaPdfFolha(float $x1, float $y1, float $x2, float $y2, float $espessura = 0.5): string
+{
+    return number_format($espessura, 2, '.', '') . ' w '
+        . number_format($x1, 2, '.', '') . ' ' . number_format($y1, 2, '.', '') . ' m '
+        . number_format($x2, 2, '.', '') . ' ' . number_format($y2, 2, '.', '') . " l S\n";
+}
+
+function bordaRetanguloPdfFolha(float $x, float $y, float $w, float $h, float $espessura = 0.5): string
+{
+    return number_format($espessura, 2, '.', '') . ' w '
+        . number_format($x, 2, '.', '') . ' ' . number_format($y, 2, '.', '') . ' '
+        . number_format($w, 2, '.', '') . ' ' . number_format($h, 2, '.', '') . " re S\n";
+}
+
 function quebrarTextoFolha(string $texto, int $limite = 118): array
 {
     $texto = preg_replace('/\s+/', ' ', trim($texto));
@@ -204,27 +218,9 @@ function gerarPdfFolhaPagamento(array $recibos, string $referencia, string $data
     $paginas = [];
     $conteudo = '';
     $y = 0.0;
-    $margem = 26.0;
+    $margem = 34.0;
     $altura = 842.0;
-    $largura = 595.0;
-
-    $novaPagina = static function () use (&$conteudo, &$y, $margem, $altura, $largura, $referencia, $dataPagamento, $empresaNome, $empresaRazao, $empresaCnpj): void {
-        $conteudo = "0.07 0.20 0.42 rg\n";
-        $conteudo .= retanguloPdfFolha(0, $altura - 58, $largura, 58);
-        $conteudo .= "1 1 1 rg\n";
-        $conteudo .= textoCmdPdfFolha($margem, $altura - 21, 13, textoPdfFolha($empresaNome, 45), true);
-        if ($empresaRazao !== '' && $empresaRazao !== $empresaNome) {
-            $conteudo .= textoCmdPdfFolha($margem, $altura - 35, 8, textoPdfFolha($empresaRazao, 60));
-        }
-        if ($empresaCnpj !== '') {
-            $conteudo .= textoCmdPdfFolha($margem, $altura - 48, 8, textoPdfFolha('CNPJ: ' . $empresaCnpj, 60));
-        }
-        $conteudo .= textoCmdPdfFolha(386, $altura - 24, 12, textoPdfFolha('Recibo de Pagamento'), true);
-        $conteudo .= textoCmdPdfFolha(386, $altura - 39, 9, textoPdfFolha('Folha Mensal - ' . mesPorExtensoFolha($referencia)));
-        $conteudo .= textoCmdPdfFolha(386, $altura - 52, 8, textoPdfFolha('Pagamento: ' . dataFolha($dataPagamento)));
-        $conteudo .= "0 0 0 rg\n";
-        $y = $altura - 82;
-    };
+    $larguraUtil = 527.0;
 
     $salvarPagina = static function () use (&$paginas, &$conteudo): void {
         if ($conteudo !== '') {
@@ -232,61 +228,172 @@ function gerarPdfFolhaPagamento(array $recibos, string $referencia, string $data
         }
     };
 
-    $linha = static function (string $texto, int $tamanho = 7, bool $negrito = false) use (&$conteudo, &$y, $margem, $novaPagina, $salvarPagina): void {
-        if ($y < 44) {
-            $salvarPagina();
-            $novaPagina();
+    $novaPagina = static function (bool $continuacao = false) use (&$conteudo, &$y, $margem, $altura, $larguraUtil, $referencia, $dataPagamento, $empresaNome, $empresaRazao, $empresaCnpj): void {
+        $conteudo = "0.10 0.25 0.47 rg\n" . retanguloPdfFolha($margem, 770, $larguraUtil, 48);
+        $conteudo .= "1 1 1 rg\n";
+        $conteudo .= textoCmdPdfFolha($margem + 10, 798, 12, textoPdfFolha($empresaNome, 48), true);
+        if ($empresaRazao !== '' && $empresaRazao !== $empresaNome) {
+            $conteudo .= textoCmdPdfFolha($margem + 10, 786, 7, textoPdfFolha($empresaRazao, 62));
         }
-        $conteudo .= textoCmdPdfFolha($margem, $y, $tamanho, textoPdfFolha($texto, 128), $negrito);
-        $y -= $tamanho + 5;
+        $conteudo .= textoCmdPdfFolha($margem + 10, 776, 7, textoPdfFolha('CNPJ: ' . $empresaCnpj, 45));
+        $conteudo .= textoCmdPdfFolha(420, 797, 11, textoPdfFolha('RECIBO DE PAGAMENTO'), true);
+        $conteudo .= textoCmdPdfFolha(420, 783, 7, textoPdfFolha(($continuacao ? 'CONTINUACAO - ' : '') . mesPorExtensoFolha($referencia)));
+        $conteudo .= textoCmdPdfFolha(420, 773, 7, textoPdfFolha('Pagamento: ' . dataFolha($dataPagamento)));
+        $conteudo .= "0 0 0 rg\n";
+        $y = 754.0;
     };
 
-    $novaPagina();
+    $novaPaginaDetalhe = static function () use (&$conteudo, &$y, $salvarPagina, $novaPagina): void {
+        $salvarPagina();
+        $novaPagina(true);
+    };
+
     foreach ($recibos as $idx => $recibo) {
         if ($idx > 0) {
             $salvarPagina();
-            $novaPagina();
+        }
+        $novaPagina(false);
+        $funcionario = $recibo['funcionario'];
+
+        $conteudo .= "0.91 0.94 0.97 rg\n" . retanguloPdfFolha($margem, $y - 38, $larguraUtil, 38) . "0 0 0 rg\n";
+        $conteudo .= bordaRetanguloPdfFolha($margem, $y - 38, $larguraUtil, 38);
+        $conteudo .= linhaPdfFolha($margem + 176, $y - 38, $margem + 176, $y);
+        $conteudo .= linhaPdfFolha($margem + 352, $y - 38, $margem + 352, $y);
+        $conteudo .= textoCmdPdfFolha($margem + 8, $y - 14, 7, textoPdfFolha('Competencia'), true);
+        $conteudo .= textoCmdPdfFolha($margem + 8, $y - 28, 9, textoPdfFolha(mesPorExtensoFolha($referencia)));
+        $conteudo .= textoCmdPdfFolha($margem + 184, $y - 14, 7, textoPdfFolha('Data de pagamento'), true);
+        $conteudo .= textoCmdPdfFolha($margem + 184, $y - 28, 9, textoPdfFolha(dataFolha($dataPagamento)));
+        $conteudo .= textoCmdPdfFolha($margem + 360, $y - 14, 7, textoPdfFolha('Tipo'), true);
+        $conteudo .= textoCmdPdfFolha($margem + 360, $y - 28, 9, textoPdfFolha('Folha mensal'));
+        $y -= 50;
+
+        $conteudo .= bordaRetanguloPdfFolha($margem, $y - 48, $larguraUtil, 48);
+        $conteudo .= linhaPdfFolha($margem + 350, $y - 48, $margem + 350, $y);
+        $conteudo .= linhaPdfFolha($margem, $y - 24, $margem + $larguraUtil, $y - 24);
+        $conteudo .= textoCmdPdfFolha($margem + 8, $y - 11, 7, textoPdfFolha('Funcionario'), true);
+        $conteudo .= textoCmdPdfFolha($margem + 8, $y - 21, 8, textoPdfFolha((int)$funcionario['FUNCCONTADOR'] . ' - ' . (string)$funcionario['NOMEFUNC'], 58));
+        $conteudo .= textoCmdPdfFolha($margem + 358, $y - 11, 7, textoPdfFolha('CPF'), true);
+        $conteudo .= textoCmdPdfFolha($margem + 358, $y - 21, 8, textoPdfFolha((string)($funcionario['CPF'] ?? '')));
+        $conteudo .= textoCmdPdfFolha($margem + 8, $y - 35, 7, textoPdfFolha('Admissao'), true);
+        $conteudo .= textoCmdPdfFolha($margem + 8, $y - 45, 8, textoPdfFolha(dataFolha($funcionario['DTADMISSAO'] ?? '')));
+        $conteudo .= textoCmdPdfFolha($margem + 358, $y - 35, 7, textoPdfFolha('Departamento'), true);
+        $conteudo .= textoCmdPdfFolha($margem + 358, $y - 45, 8, textoPdfFolha((string)($funcionario['DEPARTAMENTO'] ?? '')));
+        $y -= 60;
+
+        $colunas = [70.0, 205.0, 92.0, 80.0, 80.0];
+        $cabecalhos = ['COD.', 'DESCRICAO', 'REFERENCIA', 'VENCIMENTOS', 'DESCONTOS'];
+        $conteudo .= "0.10 0.25 0.47 rg\n" . retanguloPdfFolha($margem, $y - 22, $larguraUtil, 22) . "1 1 1 rg\n";
+        $x = $margem;
+        foreach ($cabecalhos as $i => $cabecalho) {
+            $conteudo .= textoCmdPdfFolha($x + 5, $y - 15, 6, textoPdfFolha($cabecalho), true);
+            $x += $colunas[$i];
+        }
+        $conteudo .= "0 0 0 rg\n" . bordaRetanguloPdfFolha($margem, $y - 22, $larguraUtil, 22);
+        $y -= 22;
+
+        $eventos = [];
+        foreach ($recibo['vencimentos'] as $item) {
+            $eventos[] = [$item, true];
+        }
+        foreach ($recibo['descontos'] as $item) {
+            $eventos[] = [$item, false];
+        }
+        foreach ($eventos as [$item, $vencimento]) {
+            $conteudo .= bordaRetanguloPdfFolha($margem, $y - 20, $larguraUtil, 20, 0.35);
+            $x = $margem;
+            foreach ($colunas as $larguraColuna) {
+                $x += $larguraColuna;
+                if ($x < $margem + $larguraUtil) {
+                    $conteudo .= linhaPdfFolha($x, $y - 20, $x, $y, 0.35);
+                }
+            }
+            $conteudo .= textoCmdPdfFolha($margem + 5, $y - 13, 7, textoPdfFolha((string)$item['codigo'], 14));
+            $conteudo .= textoCmdPdfFolha($margem + 75, $y - 13, 7, textoPdfFolha((string)$item['descricao'], 40));
+            $conteudo .= textoCmdPdfFolha($margem + 280, $y - 13, 7, textoPdfFolha((string)$item['referencia'], 18));
+            $conteudo .= textoCmdPdfFolha($margem + ($vencimento ? 372 : 452), $y - 13, 7, textoPdfFolha(moedaFolha($item['valor'])));
+            $y -= 20;
         }
 
-        $funcionario = $recibo['funcionario'];
-        $linha('Funcionario: ' . (int)$funcionario['FUNCCONTADOR'] . ' - ' . (string)$funcionario['NOMEFUNC'], 10, true);
-        $linha('Admissao: ' . dataFolha($funcionario['DTADMISSAO'] ?? '') . ' | Cargo: ' . (string)($funcionario['CARGO'] ?? '') . ' | Cliente CR: ' . (string)($funcionario['DEPARTAMENTO'] ?? ''), 7);
-        $linha('VENCIMENTOS', 8, true);
-        foreach ($recibo['vencimentos'] as $item) {
-            $linha((string)$item['codigo'] . ' | ' . (string)$item['descricao'] . ' | ' . (string)$item['referencia'] . ' | ' . moedaFolha($item['valor']), 7);
+        $conteudo .= "0.95 0.96 0.97 rg\n" . retanguloPdfFolha($margem, $y - 22, $larguraUtil, 22) . "0 0 0 rg\n";
+        $conteudo .= bordaRetanguloPdfFolha($margem, $y - 22, $larguraUtil, 22);
+        $conteudo .= textoCmdPdfFolha($margem + 260, $y - 15, 7, textoPdfFolha('TOTAIS'), true);
+        $conteudo .= textoCmdPdfFolha($margem + 372, $y - 15, 7, textoPdfFolha(moedaFolha($recibo['total_vencimentos'])), true);
+        $conteudo .= textoCmdPdfFolha($margem + 452, $y - 15, 7, textoPdfFolha(moedaFolha($recibo['total_descontos'])), true);
+        $y -= 22;
+        $conteudo .= "0.91 0.97 0.94 rg\n" . retanguloPdfFolha($margem, $y - 30, $larguraUtil, 30) . "0 0 0 rg\n";
+        $conteudo .= bordaRetanguloPdfFolha($margem, $y - 30, $larguraUtil, 30, 0.8);
+        $conteudo .= textoCmdPdfFolha($margem + 8, $y - 19, 8, textoPdfFolha('VALOR LIQUIDO'), true);
+        $conteudo .= textoCmdPdfFolha($margem + 430, $y - 20, 12, textoPdfFolha(moedaFolha($recibo['valor_receber'])), true);
+        $y -= 42;
+
+        $titulos = !empty($recibo['compras_pagas']) ? $recibo['compras_pagas'] : $recibo['compras_aberto'];
+        $totalTitulos = 0.0;
+        foreach ($titulos as $titulo) {
+            $totalTitulos += (float)($titulo['VLRPAGO'] ?? $titulo['VLRRESTANTE'] ?? $titulo['VLRPARCELA'] ?? 0);
         }
-        $linha('DESCONTOS', 8, true);
-        foreach ($recibo['descontos'] as $item) {
-            $linha((string)$item['codigo'] . ' | ' . (string)$item['descricao'] . ' | ' . (string)$item['referencia'] . ' | ' . moedaFolha($item['valor']), 7);
-        }
-        $linha('Total de Vencimentos: ' . moedaFolha($recibo['total_vencimentos']) . ' | Total de Descontos: ' . moedaFolha($recibo['total_descontos']) . ' | Valor a Receber: ' . moedaFolha($recibo['valor_receber']), 8, true);
-        $linha('INFORMACOES DO RECIBO', 8, true);
-        $rodapes = [
-            'Compras em aberto - VENDA: ' . linhaCompraRodape(linhasCompraPorTipoFolha($recibo['compras_aberto'], 'VENDA')),
-            'Compras em aberto - CRAP: ' . linhaCompraRodape(linhasCompraPorTipoFolha($recibo['compras_aberto'], 'CRAP')),
-            'Compras pagas na data do pagamento - VENDA: ' . linhaCompraRodape($recibo['compras_pagas_venda']),
-            'Compras pagas na data do pagamento - CRAP: ' . linhaCompraRodape($recibo['compras_pagas']),
-        ];
-        foreach ($rodapes as $rodape) {
-            foreach (quebrarTextoFolha($rodape, 126) as $parte) {
-                $linha($parte, 6);
+        $conteudo .= "0.91 0.94 0.97 rg\n" . retanguloPdfFolha($margem, $y - 22, $larguraUtil, 22) . "0 0 0 rg\n";
+        $conteudo .= bordaRetanguloPdfFolha($margem, $y - 22, $larguraUtil, 22);
+        $conteudo .= textoCmdPdfFolha($margem + 8, $y - 15, 8, textoPdfFolha('DEMONSTRATIVO COMPLEMENTAR'), true);
+        $y -= 22;
+
+        $desenharGrade = static function (string $tituloSecao, array $itens, callable $formatar) use (&$conteudo, &$y, $margem, $larguraUtil, $novaPaginaDetalhe): void {
+            $totalLinhas = max(1, (int)ceil(count($itens) / 4));
+            if ($y - 18 - ($totalLinhas * 12) < 90) {
+                $novaPaginaDetalhe();
             }
-        }
-        if (!empty($recibo['vales'])) {
-            $valesPartes = [];
-            $totalVales = 0.0;
-            foreach ($recibo['vales'] as $vale) {
-                $dcVale = strtoupper((string)($vale['DEBCRED'] ?? 'D'));
-                $valorVale = (float)($vale['VALOR'] ?? 0);
-                $totalVales += $dcVale === 'C' ? -$valorVale : $valorVale;
-                $valesPartes[] = '#' . (int)($vale['VALECONTADOR'] ?? 0) . ' ' . dataFolha($vale['DATA'] ?? $vale['DTLANC'] ?? '') . ' ' . ($dcVale === 'C' ? '-' : '') . moedaFolha($valorVale);
+            $conteudo .= textoCmdPdfFolha($margem + 6, $y - 12, 6, textoPdfFolha($tituloSecao, 100), true);
+            $y -= 18;
+            if (!$itens) {
+                $conteudo .= bordaRetanguloPdfFolha($margem, $y - 14, $larguraUtil, 14, 0.35);
+                $conteudo .= textoCmdPdfFolha($margem + 5, $y - 10, 6, textoPdfFolha('Sem lancamentos.'));
+                $y -= 14;
+                return;
             }
-            foreach (quebrarTextoFolha('Vales FUNC001 da referencia: ' . implode(' | ', $valesPartes) . ' | Total = ' . moedaFolha($totalVales), 126) as $parte) {
-                $linha($parte, 6);
+            $larguraCelula = $larguraUtil / 4;
+            foreach (array_chunk($itens, 4) as $grupo) {
+                $conteudo .= bordaRetanguloPdfFolha($margem, $y - 12, $larguraUtil, 12, 0.25);
+                for ($i = 1; $i < 4; $i++) {
+                    $conteudo .= linhaPdfFolha($margem + ($larguraCelula * $i), $y - 12, $margem + ($larguraCelula * $i), $y, 0.25);
+                }
+                foreach ($grupo as $i => $item) {
+                    $conteudo .= textoCmdPdfFolha($margem + ($larguraCelula * $i) + 4, $y - 8, 6, textoPdfFolha($formatar($item), 34), true);
+                }
+                $y -= 12;
             }
-        } else {
-            $linha('Vales FUNC001 da referencia: Sem lancamentos.', 6);
+        };
+
+        $desenharGrade(
+            'Titulos descontados - ' . count($titulos) . ' documento(s) - Total ' . moedaFolha($totalTitulos),
+            $titulos,
+            static function (array $titulo): string {
+                $id = (int)($titulo['CRCONTADOR'] ?? 0);
+                $data = dataFolha($titulo['DTEMISSAO'] ?? '');
+                $valor = (float)($titulo['VLRPAGO'] ?? $titulo['VLRRESTANTE'] ?? $titulo['VLRPARCELA'] ?? 0);
+                return 'CR ' . $id . '  ' . substr($data, 0, 5) . '  ' . moedaFolha($valor);
+            }
+        );
+        $desenharGrade(
+            'Vales descontados',
+            $recibo['vales'] ?? [],
+            static function (array $vale): string {
+                $id = (int)($vale['VALECONTADOR'] ?? 0);
+                $data = dataFolha($vale['DATA'] ?? $vale['DTLANC'] ?? '');
+                $valor = (float)($vale['VALOR'] ?? 0);
+                $sinal = strtoupper((string)($vale['DEBCRED'] ?? 'D')) === 'C' ? '-' : '';
+                return 'Vale ' . $id . '  ' . substr($data, 0, 5) . '  ' . $sinal . moedaFolha($valor);
+            }
+        );
+
+        if ($y < 105) {
+            $novaPaginaDetalhe();
         }
+        $y -= 14;
+        $conteudo .= textoCmdPdfFolha($margem, $y, 7, textoPdfFolha('Declaro ter recebido o valor liquido indicado neste recibo de pagamento.'));
+        $y -= 42;
+        $conteudo .= linhaPdfFolha($margem + 50, $y, $margem + 190, $y);
+        $conteudo .= linhaPdfFolha($margem + 270, $y, $margem + 500, $y);
+        $conteudo .= textoCmdPdfFolha($margem + 100, $y - 12, 7, textoPdfFolha('Data'));
+        $conteudo .= textoCmdPdfFolha($margem + 330, $y - 12, 7, textoPdfFolha('Assinatura do funcionario'));
     }
 
     $salvarPagina();
