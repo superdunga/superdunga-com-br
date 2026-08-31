@@ -314,10 +314,33 @@ $totalMesAnterior = array_sum(array_column($vendasMesAnterior, 'total'));
 $diasComparativo = count($comparativoDias);
 $mediaDiaAtual = $diasComparativo > 0 ? $totalAtualAteReferencia / $diasComparativo : 0.0;
 $ticketMedioAtualAteReferencia = $qtdVendasAtualAteReferencia > 0 ? $totalAtualAteReferencia / $qtdVendasAtualAteReferencia : 0.0;
-$previsaoFechamento = $totalAnteriorComparavel > 0
-    ? ($totalAtualAteReferencia / $totalAnteriorComparavel) * $totalMesAnterior
-    : $mediaDiaAtual * $diasMesAtual;
+$totaisMesAnteriorPorDiaSemana = array_fill(0, 7, 0.0);
+$quantidadesMesAnteriorPorDiaSemana = array_fill(0, 7, 0);
+$cursorHistoricoPrevisao = strtotime($inicioMesAnterior);
+$fimHistoricoPrevisao = strtotime($fimMesAnterior);
+while ($cursorHistoricoPrevisao <= $fimHistoricoPrevisao) {
+    $dataHistorica = date('Y-m-d', $cursorHistoricoPrevisao);
+    $diaSemanaHistorico = (int)date('w', $cursorHistoricoPrevisao);
+    $totaisMesAnteriorPorDiaSemana[$diaSemanaHistorico] += (float)($vendasMesAnterior[$dataHistorica]['total'] ?? 0.0);
+    $quantidadesMesAnteriorPorDiaSemana[$diaSemanaHistorico]++;
+    $cursorHistoricoPrevisao = strtotime('+1 day', $cursorHistoricoPrevisao);
+}
+$previsaoDiasRestantes = 0.0;
+$cursorPrevisao = strtotime($filtroDataFim . ' +1 day');
+$fimPrevisao = strtotime($fimMesAtual);
+while ($cursorPrevisao <= $fimPrevisao) {
+    $diaSemanaPrevisao = (int)date('w', $cursorPrevisao);
+    if (in_array($diaSemanaPrevisao, $diasSelecionados, true)) {
+        $quantidadeOcorrencias = $quantidadesMesAnteriorPorDiaSemana[$diaSemanaPrevisao];
+        if ($quantidadeOcorrencias > 0) {
+            $previsaoDiasRestantes += $totaisMesAnteriorPorDiaSemana[$diaSemanaPrevisao] / $quantidadeOcorrencias;
+        }
+    }
+    $cursorPrevisao = strtotime('+1 day', $cursorPrevisao);
+}
+$previsaoFechamento = $totalAtualAteReferencia + $previsaoDiasRestantes;
 $variacaoComparavel = $totalAnteriorComparavel > 0 ? (($totalAtualAteReferencia / $totalAnteriorComparavel) - 1) * 100 : null;
+$variacaoMesAnterior = $totalMesAnterior > 0 ? (($previsaoFechamento / $totalMesAnterior) - 1) * 100 : null;
 $percentualMeta = $metaVendas > 0 ? min(100, ($totalAtualAteReferencia / $metaVendas) * 100) : 0;
 $faltanteMeta = max(0, $metaVendas - $totalAtualAteReferencia);
 $mediaNecessaria = $metaVendas > 0
@@ -431,18 +454,20 @@ require '../../layout/header.php';
                 </div>
                 <div class="col-md-6 col-xl-3">
                     <div class="border rounded-2 p-3 h-100">
-                        <div class="text-muted small">Comparavel ao mes anterior</div>
-                        <div class="h4 mb-1 <?= $variacaoComparavel !== null && $variacaoComparavel < 0 ? 'text-danger' : 'text-success' ?>">
-                            <?= percentualMetaVendas($variacaoComparavel) ?>
+                        <div class="text-muted small">Previsao versus mes anterior</div>
+                        <div class="h4 mb-1 <?= $variacaoMesAnterior !== null && $variacaoMesAnterior < 0 ? 'text-danger' : 'text-success' ?>">
+                            <?= percentualMetaVendas($variacaoMesAnterior) ?>
                         </div>
-                        <div class="small"><?= moedaMetaVendas($totalAtualAteReferencia - $totalAnteriorComparavel) ?> sobre os mesmos dias</div>
+                        <div class="small">
+                            <?= moedaMetaVendas($previsaoFechamento - $totalMesAnterior) ?> sobre <?= moedaMetaVendas($totalMesAnterior) ?> faturados no mes anterior
+                        </div>
                     </div>
                 </div>
                 <div class="col-md-6 col-xl-3">
                     <div class="border rounded-2 p-3 h-100">
                         <div class="text-muted small">Previsao de fechamento</div>
                         <div class="h4 mb-1"><?= moedaMetaVendas($previsaoFechamento) ?></div>
-                        <div class="small">Baseada no ritmo versus <?= date('m/Y', strtotime($inicioMesAnterior)) ?></div>
+                        <div class="small">Acumulado mais a media, no mes anterior, dos mesmos dias da semana ainda restantes</div>
                     </div>
                 </div>
                 <div class="col-md-6 col-xl-3">
