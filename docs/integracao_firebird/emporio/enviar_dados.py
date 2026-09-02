@@ -10,6 +10,7 @@ FIREBIRD_EMPRESA_ORIGEM = int(sys.argv[2]) if len(sys.argv) > 2 else 1
 EMPRESA_DESTINO = int(sys.argv[3]) if len(sys.argv) > 3 else 4
 BASE_SITE = "https://www.superdunga.com.br"
 MAPEAMENTOS_PERMITIDOS = {(1, 4), (6, 5)}
+EST008_ITEM_INICIO = 55908 if FIREBIRD_EMPRESA_ORIGEM == 1 else 1
 
 if (FIREBIRD_EMPRESA_ORIGEM, EMPRESA_DESTINO) not in MAPEAMENTOS_PERMITIDOS:
     raise SystemExit(
@@ -345,7 +346,7 @@ def verificar_est008_ativos_lotes(tamanho_lote=1000):
         url_api = "http://127.0.0.1:5000/dados/est008_ativos"
         url_php = f"{BASE_SITE}/modulos/tesouraria/receber_firebird.php"
         sync_id = f"est008_{datetime.datetime.now().strftime('%Y%m%d%H%M%S')}_{uuid.uuid4().hex[:8]}"
-        item_inicio = 55908
+        item_inicio = EST008_ITEM_INICIO
         offset = 0
         total = 0
         lote_numero = 1
@@ -673,7 +674,7 @@ try:
         "http://127.0.0.1:5000/dados/est008",
         "est008",
         5000,
-        params_api={"item_inicio": 55908}
+        params_api={"item_inicio": EST008_ITEM_INICIO}
     )
 
     if EXECUTAR_COMPLETO:
