@@ -1351,6 +1351,9 @@ if (empty($contas)) {
 }
 
 $cbcontador = (int)($_GET['cbcontador'] ?? ($_POST['cbcontador'] ?? 0));
+if ($cbcontador <= 0 && !empty($contas)) {
+    $cbcontador = (int)$contas[0]['CBCONTADOR'];
+}
 $dataIni = trim($_GET['data_ini'] ?? date('Y-m-01'));
 $dataFim = trim($_GET['data_fim'] ?? date('Y-m-d'));
 $dcFiltro = strtoupper(trim((string)($_GET['dc'] ?? '')));
