@@ -9,7 +9,7 @@ $empresaId = (int)($_SESSION['empresa_id'] ?? 0);
 $opcoes = [
     [
         'titulo' => 'Posicao de Estoque',
-        'descricao' => 'Consulte saldo inicial, entradas, saidas, saldo atual, custo final e valor de estoque por produto.',
+        'descricao' => 'Consulte estoque geral, reservado, disponivel, custo final e valor de estoque por produto.',
         'href' => 'posicao_estoque.php',
         'modulo' => 'estoque_posicao',
         'icone' => 'PE',

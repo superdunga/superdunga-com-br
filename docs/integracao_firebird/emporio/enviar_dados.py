@@ -6,13 +6,27 @@ import sys
 
 MODO = (sys.argv[1] if len(sys.argv) > 1 else "rapido").lower()
 EXECUTAR_COMPLETO = MODO in ["completo", "full", "diario"]
-EMPRESA_DESTINO = 4
-FIREBIRD_EMPRESA_ORIGEM = 1
+FIREBIRD_EMPRESA_ORIGEM = int(sys.argv[2]) if len(sys.argv) > 2 else 1
+EMPRESA_DESTINO = int(sys.argv[3]) if len(sys.argv) > 3 else 4
 BASE_SITE = "https://www.superdunga.com.br"
+MAPEAMENTOS_PERMITIDOS = {(1, 4), (6, 5)}
+
+if (FIREBIRD_EMPRESA_ORIGEM, EMPRESA_DESTINO) not in MAPEAMENTOS_PERMITIDOS:
+    raise SystemExit(
+        "Mapeamento de empresas invalido. Permitidos: Firebird 1 -> SuperDunga 4; "
+        "Firebird 6 -> SuperDunga 5."
+    )
 
 
 def params_site(params=None):
     base = {"empresa": EMPRESA_DESTINO}
+    if params:
+        base.update(params)
+    return base
+
+
+def params_firebird(params=None):
+    base = {"empresa": FIREBIRD_EMPRESA_ORIGEM}
     if params:
         base.update(params)
     return base
@@ -78,13 +92,11 @@ def processar_tabela(nome, url_api, tabela_php, forcar_completo=False):
         if forcar_completo:
             print("Carga completa forcada para manter o espelho igual ao Firebird.")
 
-        params_api = {"ultima_regstamp": ultima_regstamp}
-        if tabela_php in ["rep001", "func001"]:
-            params_api["empresa"] = FIREBIRD_EMPRESA_ORIGEM
+        parametros_api = params_firebird({"ultima_regstamp": ultima_regstamp})
 
         resposta = requests.get(
             url_api,
-            params=params_api,
+            params=parametros_api,
             timeout=300
         )
         resposta.raise_for_status()
@@ -143,7 +155,7 @@ def processar_tabela(nome, url_api, tabela_php, forcar_completo=False):
 def processar_tabela_paginada(nome, url_api, tabela_php, tamanho_lote=1000, params_api=None):
     try:
         print(f"\nProcessando {nome} em lotes...")
-        params_api = params_api or {}
+        parametros_extras_api = params_api or {}
 
         url_ultima = f"{BASE_SITE}/modulos/tesouraria/ultimo_regstamp.php"
 
@@ -162,12 +174,12 @@ def processar_tabela_paginada(nome, url_api, tabela_php, tamanho_lote=1000, para
         while True:
             resposta = requests.get(
                 url_api,
-                params={
+                params=params_firebird({
                     "ultima_regstamp": ultima_regstamp,
                     "limit": tamanho_lote,
                     "offset": offset,
-                    **params_api
-                },
+                    **parametros_extras_api
+                }),
                 timeout=300
             )
             resposta.raise_for_status()
@@ -220,10 +232,10 @@ def enviar_cr001_ativos():
 
         resposta = requests.get(
             url_api,
-            params={
+            params=params_firebird({
                 "inicio": inicio_str,
                 "fim": fim_str
-            },
+            }),
             timeout=300
         )
         resposta.raise_for_status()
@@ -262,10 +274,10 @@ def enviar_cr001_ativos():
 def enviar_ativos(nome, url_api, tabela_php, tamanho_lote=1000, params_api=None, params_php=None):
     try:
         print(f"\nVerificando {nome} excluidos no Firebird...")
-        params_api = params_api or {}
+        parametros_api = params_api or {}
         params_php = params_php or {}
 
-        resposta = requests.get(url_api, params=params_api, timeout=300)
+        resposta = requests.get(url_api, params=params_firebird(parametros_api), timeout=300)
         resposta.raise_for_status()
 
         ids = resposta.json()
@@ -341,11 +353,11 @@ def verificar_est008_ativos_lotes(tamanho_lote=1000):
         while True:
             resposta = requests.get(
                 url_api,
-                params={
+                params=params_firebird({
                     "limit": tamanho_lote,
                     "offset": offset,
                     "item_inicio": item_inicio
-                },
+                }),
                 timeout=300
             )
             resposta.raise_for_status()
@@ -490,6 +502,7 @@ def verificar_tabelas_ativos():
 
 print("INICIANDO ENVIO FIREBIRD PARA MYSQL")
 print(f"Modo de sincronizacao: {MODO}")
+print(f"Mapeamento: Firebird empresa {FIREBIRD_EMPRESA_ORIGEM} -> SuperDunga empresa {EMPRESA_DESTINO}")
 
 try:
     print("\nProcessando BNC001...")
@@ -506,7 +519,7 @@ try:
     url_api = "http://127.0.0.1:5000/dados/bnc001"
     resposta = requests.get(
         url_api,
-        params={"ultima_regstamp": ultima_regstamp},
+        params=params_firebird({"ultima_regstamp": ultima_regstamp}),
         timeout=300
     )
     resposta.raise_for_status()
@@ -554,7 +567,7 @@ try:
             print("\nBuscando todos MOVCONTADOR para detectar deletados...")
 
             url_ids = "http://127.0.0.1:5000/dados/bnc001_ids"
-            resp_ids = requests.get(url_ids, timeout=300)
+            resp_ids = requests.get(url_ids, params=params_firebird(), timeout=300)
             resp_ids.raise_for_status()
 
             ids = resp_ids.json()

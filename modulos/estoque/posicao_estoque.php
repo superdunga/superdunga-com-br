@@ -8,6 +8,23 @@ $descricao = trim($_GET['descricao'] ?? '');
 $saldoFiltro = $_GET['saldo'] ?? 'com_saldo';
 $exportar = $_GET['exportar'] ?? '';
 
+$colunasEstoque = [
+    'ESTOQUE_GERAL' => "ALTER TABLE armazem_est004 ADD ESTOQUE_GERAL DECIMAL(18,4) NULL",
+    'ESTOQUE_RESERVADO' => "ALTER TABLE armazem_est004 ADD ESTOQUE_RESERVADO DECIMAL(18,4) NULL",
+    'ESTOQUE_DISPONIVEL' => "ALTER TABLE armazem_est004 ADD ESTOQUE_DISPONIVEL DECIMAL(18,4) NULL",
+    'ESTOQUE_CALCULADO_EM' => "ALTER TABLE armazem_est004 ADD ESTOQUE_CALCULADO_EM DATETIME NULL",
+];
+$verificarColuna = $pdo_master->prepare("
+    SELECT COUNT(*) FROM information_schema.COLUMNS
+    WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'armazem_est004' AND COLUMN_NAME = ?
+");
+foreach ($colunasEstoque as $coluna => $ddl) {
+    $verificarColuna->execute([$coluna]);
+    if ((int)$verificarColuna->fetchColumn() === 0) {
+        $pdo_master->exec($ddl);
+    }
+}
+
 if (!in_array($saldoFiltro, ['todos', 'com_saldo', 'positivo', 'negativo'], true)) {
     $saldoFiltro = 'com_saldo';
 }
@@ -55,22 +72,30 @@ $stmt = $pdo_master->prepare("
         p.CODPRODUTO,
         p.CONTAPRODUTO,
         p.DESCPRODUTO,
-        COALESCE(p.ESTINICIAL, 0) AS saldoinicial,
-        COALESCE(e.qtd_entrada, 0) AS qtd_entrada,
-        COALESCE(s.qtd_saida, 0) AS qtd_saida,
-        (COALESCE(p.ESTINICIAL, 0) + COALESCE(e.qtd_entrada, 0) - COALESCE(s.qtd_saida, 0)) AS qtd_saldo,
+        CASE
+            WHEN p.ESTOQUE_CALCULADO_EM IS NOT NULL THEN COALESCE(p.ESTOQUE_GERAL, 0)
+            ELSE COALESCE(p.ESTINICIAL, 0) + COALESCE(e.qtd_entrada, 0) - COALESCE(s.qtd_saida, 0)
+        END AS estoque_geral,
+        CASE
+            WHEN p.ESTOQUE_CALCULADO_EM IS NOT NULL THEN COALESCE(p.ESTOQUE_RESERVADO, 0)
+            ELSE 0
+        END AS estoque_reservado,
+        CASE
+            WHEN p.ESTOQUE_CALCULADO_EM IS NOT NULL THEN COALESCE(p.ESTOQUE_DISPONIVEL, 0)
+            ELSE COALESCE(p.ESTINICIAL, 0) + COALESCE(e.qtd_entrada, 0) - COALESCE(s.qtd_saida, 0)
+        END AS qtd_saldo,
         COALESCE(p.PRECOFINAL, 0) AS precofinal,
-        ((COALESCE(p.ESTINICIAL, 0) + COALESCE(e.qtd_entrada, 0) - COALESCE(s.qtd_saida, 0)) * COALESCE(p.PRECOFINAL, 0)) AS valor_estoque
+        (CASE
+            WHEN p.ESTOQUE_CALCULADO_EM IS NOT NULL THEN COALESCE(p.ESTOQUE_DISPONIVEL, 0)
+            ELSE COALESCE(p.ESTINICIAL, 0) + COALESCE(e.qtd_entrada, 0) - COALESCE(s.qtd_saida, 0)
+        END * COALESCE(p.PRECOFINAL, 0)) AS valor_estoque,
+        p.ESTOQUE_CALCULADO_EM
     FROM armazem_est004 p
     LEFT JOIN (
-        SELECT
-            i.EMPRESA,
-            i.PRODUTO,
-            SUM(COALESCE(i.QTDE, 0)) AS qtd_entrada
+        SELECT i.EMPRESA, i.PRODUTO, SUM(COALESCE(i.QTDE, 0)) AS qtd_entrada
         FROM armazem_est006 i
         LEFT JOIN armazem_est005 c
-            ON c.EMPRESA = i.EMPRESA
-           AND c.COMPRACONTADOR = i.COMPRACONTA
+            ON c.EMPRESA = i.EMPRESA AND c.COMPRACONTADOR = i.COMPRACONTA
         WHERE i.EMPRESA = ?
           AND COALESCE(i.excluido_firebird, 'N') <> 'S'
           AND COALESCE(i.CANCELADO, 'N') <> 'S'
@@ -79,20 +104,15 @@ $stmt = $pdo_master->prepare("
           AND COALESCE(c.CANCELADO, 'N') <> 'S'
           AND COALESCE(c.BAIXAESTOQUE, 'S') <> 'N'
         GROUP BY i.EMPRESA, i.PRODUTO
-    ) e ON e.EMPRESA = p.EMPRESA
-       AND e.PRODUTO = p.CONTAPRODUTO
+    ) e ON e.EMPRESA = p.EMPRESA AND e.PRODUTO = p.CONTAPRODUTO
     LEFT JOIN (
-        SELECT
-            i.EMPRESA,
-            i.PRODUTO,
-            SUM(COALESCE(i.QTDE, 0)) AS qtd_saida
+        SELECT i.EMPRESA, i.PRODUTO, SUM(COALESCE(i.QTDE, 0)) AS qtd_saida
         FROM armazem_est008 i
         WHERE i.EMPRESA = ?
           AND COALESCE(i.CANCELADO, 'N') <> 'S'
           AND i.MOVESTOQUE = 'S'
         GROUP BY i.EMPRESA, i.PRODUTO
-    ) s ON s.EMPRESA = p.EMPRESA
-       AND s.PRODUTO = p.CONTAPRODUTO
+    ) s ON s.EMPRESA = p.EMPRESA AND s.PRODUTO = p.CONTAPRODUTO
     WHERE {$whereSql}
     {$having}
     ORDER BY qtd_saida DESC, p.DESCPRODUTO ASC, p.CODPRODUTO ASC
@@ -102,11 +122,13 @@ $stmt->execute(array_merge([$empresaId, $empresaId], $params));
 $produtos = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
 $totalProdutos = count($produtos);
-$totalSaida = 0.0;
+$totalGeral = 0.0;
+$totalReservado = 0.0;
 $totalSaldo = 0.0;
 $totalValor = 0.0;
 foreach ($produtos as $produto) {
-    $totalSaida += (float)$produto['qtd_saida'];
+    $totalGeral += (float)$produto['estoque_geral'];
+    $totalReservado += (float)$produto['estoque_reservado'];
     $totalSaldo += (float)$produto['qtd_saldo'];
     $totalValor += (float)$produto['valor_estoque'];
 }
@@ -155,7 +177,9 @@ if ($exportar === 'excel') {
             Saldo: <?= htmlspecialchars($saldoFiltro) ?> |
             Saida: MOVESTOQUE = S |
             Produtos: <?= (int)$totalProdutos ?> |
-            Qtd saida: <?= htmlspecialchars(qtdEstoque($totalSaida)) ?> |
+            Estoque geral: <?= htmlspecialchars(qtdEstoque($totalGeral)) ?> |
+            Reservado: <?= htmlspecialchars(qtdEstoque($totalReservado)) ?> |
+            Disponivel: <?= htmlspecialchars(qtdEstoque($totalSaldo)) ?> |
             Valor estoque: <?= htmlspecialchars(moedaEstoque($totalValor)) ?>
         </p>
         <table>
@@ -163,10 +187,9 @@ if ($exportar === 'excel') {
                 <tr>
                     <th>CODPRODUTO</th>
                     <th>DESCPRODUTO</th>
-                    <th class="num">SALDOINICIAL</th>
-                    <th class="num">QTD ENTRADA</th>
-                    <th class="num">QTD SAIDA</th>
-                    <th class="num">QTD SALDO</th>
+                    <th class="num">ESTOQUE GERAL</th>
+                    <th class="num">RESERVADO</th>
+                    <th class="num">DISPONIVEL</th>
                     <th class="num">PRECOFINAL</th>
                     <th class="num">VALOR ESTOQUE</th>
                 </tr>
@@ -176,9 +199,8 @@ if ($exportar === 'excel') {
                     <tr>
                         <td><?= htmlspecialchars($produto['CODPRODUTO']) ?></td>
                         <td><?= htmlspecialchars($produto['DESCPRODUTO']) ?></td>
-                        <td class="num"><?= number_format((float)$produto['saldoinicial'], 3, ',', '.') ?></td>
-                        <td class="num"><?= number_format((float)$produto['qtd_entrada'], 3, ',', '.') ?></td>
-                        <td class="num"><?= number_format((float)$produto['qtd_saida'], 3, ',', '.') ?></td>
+                        <td class="num"><?= number_format((float)$produto['estoque_geral'], 3, ',', '.') ?></td>
+                        <td class="num"><?= number_format((float)$produto['estoque_reservado'], 3, ',', '.') ?></td>
                         <td class="num"><?= number_format((float)$produto['qtd_saldo'], 3, ',', '.') ?></td>
                         <td class="num"><?= number_format((float)$produto['precofinal'], 2, ',', '.') ?></td>
                         <td class="num"><?= number_format((float)$produto['valor_estoque'], 2, ',', '.') ?></td>
@@ -262,7 +284,7 @@ require '../../layout/header.php';
             <div class="col-lg-8">
                 <span class="badge text-bg-success mb-3">Estoque</span>
                 <h1 class="h3 fw-bold mb-2">Posicao de Estoque</h1>
-                <p class="text-muted mb-0">Saldo inicial, entradas, saidas, saldo atual, custo final e valor em estoque por produto.</p>
+                <p class="text-muted mb-0">Estoque geral, reservado e disponivel calculados pelas procedures oficiais do Firebird.</p>
             </div>
             <div class="col-lg-4 text-lg-end">
                 <a href="menu_estoque.php" class="btn btn-outline-secondary">Voltar ao estoque</a>
@@ -302,25 +324,31 @@ require '../../layout/header.php';
 
 <section class="mb-3">
     <div class="row g-3">
-        <div class="col-md-3">
+        <div class="col-md">
             <div class="bg-white border rounded-2 shadow-sm p-3 h-100">
                 <div class="small text-muted">Produtos</div>
                 <div class="h5 fw-bold mb-0"><?= (int)$totalProdutos ?></div>
             </div>
         </div>
-        <div class="col-md-3">
+        <div class="col-md">
             <div class="bg-white border rounded-2 shadow-sm p-3 h-100">
-                <div class="small text-muted">Qtd saida</div>
-                <div class="h5 fw-bold mb-0"><?= qtdEstoque($totalSaida) ?></div>
+                <div class="small text-muted">Estoque geral</div>
+                <div class="h5 fw-bold mb-0"><?= qtdEstoque($totalGeral) ?></div>
             </div>
         </div>
-        <div class="col-md-3">
+        <div class="col-md">
             <div class="bg-white border rounded-2 shadow-sm p-3 h-100">
-                <div class="small text-muted">Qtd saldo</div>
+                <div class="small text-muted">Reservado</div>
+                <div class="h5 fw-bold mb-0"><?= qtdEstoque($totalReservado) ?></div>
+            </div>
+        </div>
+        <div class="col-md">
+            <div class="bg-white border rounded-2 shadow-sm p-3 h-100">
+                <div class="small text-muted">Disponivel</div>
                 <div class="h5 fw-bold mb-0"><?= qtdEstoque($totalSaldo) ?></div>
             </div>
         </div>
-        <div class="col-md-3">
+        <div class="col-md">
             <div class="bg-white border rounded-2 shadow-sm p-3 h-100">
                 <div class="small text-muted">Valor estoque</div>
                 <div class="h5 fw-bold mb-0"><?= moedaEstoque($totalValor) ?></div>
@@ -328,7 +356,7 @@ require '../../layout/header.php';
         </div>
     </div>
     <div class="small text-muted mt-2">
-        A coluna Qtd saida considera somente itens de venda com MOVESTOQUE = S e CANCELADO diferente de S.
+        Valores sincronizados das procedures SP_CALCESTOQUE_LOJA e SP_CALCESTOQUE_RESERVA do Firebird.
     </div>
 </section>
 
@@ -340,10 +368,9 @@ require '../../layout/header.php';
                     <tr>
                         <th class="col-code">Codproduto</th>
                         <th>Descproduto</th>
-                        <th class="text-end col-qtd">Saldo inicial</th>
-                        <th class="text-end col-qtd">Qtd entrada</th>
-                        <th class="text-end col-qtd">Qtd saida</th>
-                        <th class="text-end col-qtd">Qtd saldo</th>
+                        <th class="text-end col-qtd">Estoque geral</th>
+                        <th class="text-end col-qtd">Reservado</th>
+                        <th class="text-end col-qtd">Disponivel</th>
                         <th class="text-end col-money">Precofinal</th>
                         <th class="text-end col-money">Valor estoque</th>
                     </tr>
@@ -353,17 +380,16 @@ require '../../layout/header.php';
                         <tr>
                             <td data-label="Codigo" class="col-code"><?= htmlspecialchars($produto['CODPRODUTO']) ?></td>
                             <td data-label="Produto" class="produto-desc"><?= htmlspecialchars($produto['DESCPRODUTO']) ?></td>
-                            <td data-label="Saldo inicial" class="text-end col-qtd"><?= qtdEstoque($produto['saldoinicial']) ?></td>
-                            <td data-label="Entrada" class="text-end col-qtd"><?= qtdEstoque($produto['qtd_entrada']) ?></td>
-                            <td data-label="Saida" class="text-end col-qtd"><?= qtdEstoque($produto['qtd_saida']) ?></td>
-                            <td data-label="Saldo" class="text-end fw-semibold col-qtd"><?= qtdEstoque($produto['qtd_saldo']) ?></td>
+                            <td data-label="Estoque geral" class="text-end col-qtd"><?= qtdEstoque($produto['estoque_geral']) ?></td>
+                            <td data-label="Reservado" class="text-end col-qtd"><?= qtdEstoque($produto['estoque_reservado']) ?></td>
+                            <td data-label="Disponivel" class="text-end fw-semibold col-qtd"><?= qtdEstoque($produto['qtd_saldo']) ?></td>
                             <td data-label="Preco final" class="text-end col-money"><?= moedaEstoque($produto['precofinal']) ?></td>
                             <td data-label="Valor estoque" class="text-end fw-semibold col-money"><?= moedaEstoque($produto['valor_estoque']) ?></td>
                         </tr>
                     <?php endforeach; ?>
                     <?php if (empty($produtos)): ?>
                         <tr>
-                            <td colspan="8" class="text-center text-muted py-4">Nenhum produto encontrado com os filtros informados.</td>
+                            <td colspan="7" class="text-center text-muted py-4">Nenhum produto encontrado com os filtros informados.</td>
                         </tr>
                     <?php endif; ?>
                 </tbody>

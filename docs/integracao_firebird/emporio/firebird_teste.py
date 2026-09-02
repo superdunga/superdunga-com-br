@@ -38,7 +38,11 @@ def tratar_valor(valor):
     return valor
 
 
-def buscar_ativos(tabela, colunas, order_by=None, limit=None, offset=0):
+def empresa_requisitada():
+    return request.args.get("empresa", default=None, type=int)
+
+
+def buscar_ativos(tabela, colunas, order_by=None, limit=None, offset=0, empresa=None):
     con = conectar()
     cursor = con.cursor()
 
@@ -53,12 +57,16 @@ def buscar_ativos(tabela, colunas, order_by=None, limit=None, offset=0):
         fim = offset + limit
         rows_sql = f" ROWS {inicio} TO {fim}"
 
+    filtro_empresa = " WHERE EMPRESA = ?" if empresa is not None else ""
+    parametros = (int(empresa),) if empresa is not None else ()
+
     cursor.execute(f"""
         SELECT {colunas_sql}
         FROM {tabela}
+        {filtro_empresa}
         ORDER BY {order_sql}
         {rows_sql}
-    """)
+    """, parametros)
 
     dados = []
     for row in cursor.fetchall():
@@ -145,7 +153,11 @@ def bnc001_ids():
         con = conectar()
         cursor = con.cursor()
 
-        cursor.execute("SELECT MOVCONTADOR FROM BNC001")
+        empresa = empresa_requisitada()
+        if empresa is None:
+            cursor.execute("SELECT MOVCONTADOR FROM BNC001")
+        else:
+            cursor.execute("SELECT MOVCONTADOR FROM BNC001 WHERE EMPRESA = ?", (empresa,))
         dados = [row[0] for row in cursor.fetchall()]
 
         con.close()
@@ -158,7 +170,7 @@ def bnc001_ids():
 @app.route("/dados/bnc005_ativos", methods=["GET"])
 def dados_bnc005_ativos():
     try:
-        return jsonify(buscar_ativos("BNC005", ["ESCONTADOR"]))
+        return jsonify(buscar_ativos("BNC005", ["ESCONTADOR"], empresa=empresa_requisitada()))
     except Exception as e:
         return jsonify({"erro": str(e)}), 500
 
@@ -166,7 +178,7 @@ def dados_bnc005_ativos():
 @app.route("/dados/bnc002_ativos", methods=["GET"])
 def dados_bnc002_ativos():
     try:
-        return jsonify(buscar_ativos("BNC002", ["CBCONTADOR"]))
+        return jsonify(buscar_ativos("BNC002", ["CBCONTADOR"], empresa=empresa_requisitada()))
     except Exception as e:
         return jsonify({"erro": str(e)}), 500
 
@@ -240,7 +252,7 @@ def dados_bnc002():
 @app.route("/dados/cp001_ativos", methods=["GET"])
 def dados_cp001_ativos():
     try:
-        return jsonify(buscar_ativos("CP001", ["CPCONTADOR"]))
+        return jsonify(buscar_ativos("CP001", ["CPCONTADOR"], empresa=empresa_requisitada()))
     except Exception as e:
         return jsonify({"erro": str(e)}), 500
 
@@ -248,7 +260,7 @@ def dados_cp001_ativos():
 @app.route("/dados/cp003_ativos", methods=["GET"])
 def dados_cp003_ativos():
     try:
-        return jsonify(buscar_ativos("CP003", ["FCONTADOR"]))
+        return jsonify(buscar_ativos("CP003", ["FCONTADOR"], empresa=empresa_requisitada()))
     except Exception as e:
         return jsonify({"erro": str(e)}), 500
 
@@ -256,7 +268,7 @@ def dados_cp003_ativos():
 @app.route("/dados/cp004_ativos", methods=["GET"])
 def dados_cp004_ativos():
     try:
-        return jsonify(buscar_ativos("CP004", ["QTCPCONTADOR"]))
+        return jsonify(buscar_ativos("CP004", ["QTCPCONTADOR"], empresa=empresa_requisitada()))
     except Exception as e:
         return jsonify({"erro": str(e)}), 500
 
@@ -264,7 +276,7 @@ def dados_cp004_ativos():
 @app.route("/dados/cr002_ativos", methods=["GET"])
 def dados_cr002_ativos():
     try:
-        return jsonify(buscar_ativos("CR002", ["CLICONTADOR"]))
+        return jsonify(buscar_ativos("CR002", ["CLICONTADOR"], empresa=empresa_requisitada()))
     except Exception as e:
         return jsonify({"erro": str(e)}), 500
 
@@ -388,7 +400,7 @@ def dados_cp004():
 @app.route("/dados/est004_ativos", methods=["GET"])
 def dados_est004_ativos():
     try:
-        return jsonify(buscar_ativos("EST004", ["CODPRODUTO"]))
+        return jsonify(buscar_ativos("EST004", ["CODPRODUTO"], empresa=empresa_requisitada()))
     except Exception as e:
         return jsonify({"erro": str(e)}), 500
 
@@ -396,7 +408,7 @@ def dados_est004_ativos():
 @app.route("/dados/est005_ativos", methods=["GET"])
 def dados_est005_ativos():
     try:
-        return jsonify(buscar_ativos("EST005", ["COMPRACONTADOR"]))
+        return jsonify(buscar_ativos("EST005", ["COMPRACONTADOR"], empresa=empresa_requisitada()))
     except Exception as e:
         return jsonify({"erro": str(e)}), 500
 
@@ -404,7 +416,7 @@ def dados_est005_ativos():
 @app.route("/dados/est006_ativos", methods=["GET"])
 def dados_est006_ativos():
     try:
-        return jsonify(buscar_ativos("EST006", ["ITEMCOMPRACONTADOR", "COMPRACONTA"]))
+        return jsonify(buscar_ativos("EST006", ["ITEMCOMPRACONTADOR", "COMPRACONTA"], empresa=empresa_requisitada()))
     except Exception as e:
         return jsonify({"erro": str(e)}), 500
 
@@ -415,12 +427,16 @@ def dados_zconfig005_ativos():
         con = conectar()
         cursor = con.cursor()
 
-        cursor.execute("""
+        empresa = empresa_requisitada()
+        filtro_empresa = " AND EMPRESA = ?" if empresa is not None else ""
+        parametros = (empresa,) if empresa is not None else ()
+        cursor.execute(f"""
             SELECT CODUSER
             FROM ZCONFIG005
             WHERE DESATIVADO = '0'
+            {filtro_empresa}
             ORDER BY CODUSER
-        """)
+        """, parametros)
 
         dados = [row[0] for row in cursor.fetchall()]
 
@@ -503,6 +519,7 @@ def dados_est008_ativos():
         limit = request.args.get("limit", default=1000, type=int)
         offset = request.args.get("offset", default=0, type=int)
         item_inicio = request.args.get("item_inicio", default=55908, type=int)
+        empresa = empresa_requisitada()
 
         limit = max(1, int(limit))
         offset = max(0, int(offset))
@@ -512,13 +529,18 @@ def dados_est008_ativos():
         con = conectar()
         cursor = con.cursor()
 
+        filtro_empresa = " AND EMPRESA = ?" if empresa is not None else ""
+        parametros = [item_inicio]
+        if empresa is not None:
+            parametros.append(empresa)
         cursor.execute(f"""
             SELECT EMPRESA, ITEMVENDACONTADOR, VENDACONTA, PRODUTO
             FROM EST008
             WHERE ITEMVENDACONTADOR >= ?
+            {filtro_empresa}
             ORDER BY EMPRESA, ITEMVENDACONTADOR, VENDACONTA, PRODUTO
             ROWS {inicio} TO {fim}
-        """, (item_inicio,))
+        """, tuple(parametros))
 
         colunas = [desc[0] for desc in cursor.description]
         dados = []
@@ -540,6 +562,7 @@ def dados_est007_ativos():
     try:
         inicio = request.args.get("inicio", type=str)
         fim = request.args.get("fim", type=str)
+        empresa = empresa_requisitada()
 
         if not inicio or not fim:
             return jsonify({"erro": "Informe inicio e fim"}), 400
@@ -547,12 +570,17 @@ def dados_est007_ativos():
         con = conectar()
         cursor = con.cursor()
 
-        cursor.execute("""
+        filtro_empresa = " AND EMPRESA = ?" if empresa is not None else ""
+        parametros = [inicio, fim]
+        if empresa is not None:
+            parametros.append(empresa)
+        cursor.execute(f"""
             SELECT VENDACONTADOR
             FROM EST007
             WHERE DTEMISSAO BETWEEN ? AND ?
+            {filtro_empresa}
             ORDER BY VENDACONTADOR
-        """, (inicio, fim))
+        """, tuple(parametros))
 
         dados = [row[0] for row in cursor.fetchall()]
 
@@ -592,6 +620,57 @@ def dados_est004():
         con.close()
         return jsonify(dados)
 
+    except Exception as e:
+        return jsonify({"erro": str(e)}), 500
+
+
+@app.route("/dados/estoque_calculado", methods=["GET"])
+def dados_estoque_calculado():
+    try:
+        empresa = request.args.get("empresa", type=int)
+        limit = max(1, min(500, request.args.get("limit", default=100, type=int)))
+        offset = max(0, request.args.get("offset", default=0, type=int))
+
+        if empresa is None:
+            return jsonify({"erro": "Informe a empresa"}), 400
+
+        inicio = offset + 1
+        fim = offset + limit
+        con = conectar()
+        cursor = con.cursor()
+        cursor.execute(f"""
+            SELECT
+                E.EMPRESA,
+                E.CODPRODUTO,
+                COALESCE((
+                    SELECT L.ZTOTALESTOQUE
+                    FROM SP_CALCESTOQUE_LOJA(
+                        E.EMPRESA, '31.12.3333', '01.01.1000', E.CODPRODUTO
+                    ) L
+                ), 0) AS ESTOQUE_GERAL,
+                COALESCE((
+                    SELECT R.ZTOTALESTOQUE
+                    FROM SP_CALCESTOQUE_RESERVA(
+                        E.EMPRESA, '01.01.3333', E.CODPRODUTO
+                    ) R
+                ), 0) AS ESTOQUE_RESERVADO
+            FROM EST004 E
+            WHERE E.EMPRESA = ?
+            ORDER BY E.CODPRODUTO
+            ROWS {inicio} TO {fim}
+        """, (empresa,))
+
+        colunas = [desc[0] for desc in cursor.description]
+        dados = []
+        for row in cursor.fetchall():
+            registro = {colunas[i]: tratar_valor(valor) for i, valor in enumerate(row)}
+            geral = float(registro.get("ESTOQUE_GERAL") or 0)
+            reservado = float(registro.get("ESTOQUE_RESERVADO") or 0)
+            registro["ESTOQUE_DISPONIVEL"] = geral - reservado
+            dados.append(registro)
+
+        con.close()
+        return jsonify(dados)
     except Exception as e:
         return jsonify({"erro": str(e)}), 500
 
@@ -677,6 +756,7 @@ def dados_cr001_ativos():
     try:
         inicio = request.args.get("inicio", type=str)
         fim = request.args.get("fim", type=str)
+        empresa = empresa_requisitada()
 
         if not inicio or not fim:
             return jsonify({"erro": "Informe inicio e fim"}), 400
@@ -684,14 +764,19 @@ def dados_cr001_ativos():
         con = conectar()
         cursor = con.cursor()
 
-        sql = """
+        filtro_empresa = " AND EMPRESA = ?" if empresa is not None else ""
+        sql = f"""
             SELECT CRCONTADOR
             FROM CR001
             WHERE DTLANC BETWEEN ? AND ?
+            {filtro_empresa}
             ORDER BY CRCONTADOR
         """
 
-        cursor.execute(sql, (inicio, fim))
+        parametros = [inicio, fim]
+        if empresa is not None:
+            parametros.append(empresa)
+        cursor.execute(sql, tuple(parametros))
         dados = [row[0] for row in cursor.fetchall()]
 
         con.close()
@@ -820,18 +905,19 @@ def update_cr001():
             for item in dados:
 
                 crcontador = item.get("CRCONTADOR")
+                empresa = item.get("FIREBIRD_EMPRESA")
                 chave = item.get("CHAVEINTEGRACAO")
                 cm = item.get("CMCONTADOR")
                 dtvenc = item.get("DTVENC")
 
-                if not crcontador:
+                if not crcontador or empresa is None:
                     continue
 
                 cursor.execute("""
                     SELECT CHAVEINTEGRACAO, DTVENC
                     FROM CR001
-                    WHERE CRCONTADOR = ?
-                """, (crcontador,))
+                    WHERE CRCONTADOR = ? AND EMPRESA = ?
+                """, (crcontador, int(empresa)))
                 atual = cursor.fetchone()
 
                 if not atual:
@@ -857,9 +943,9 @@ def update_cr001():
                 if not campos:
                     continue
 
-                valores.append(crcontador)
+                valores.extend([crcontador, int(empresa)])
 
-                sql = f"UPDATE CR001 SET {', '.join(campos)} WHERE CRCONTADOR = ?"
+                sql = f"UPDATE CR001 SET {', '.join(campos)} WHERE CRCONTADOR = ? AND EMPRESA = ?"
                 cursor.execute(sql, tuple(valores))
 
                 atualizados += 1

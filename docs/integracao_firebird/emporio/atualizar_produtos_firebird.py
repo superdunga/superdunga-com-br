@@ -44,11 +44,11 @@ def aplicar_janela(ultima_regstamp, janela_dias):
     return (data - timedelta(days=janela_dias)).strftime("%Y-%m-%d %H:%M:%S")
 
 
-def buscar_registros(api_url, tabela, ultima_regstamp):
+def buscar_registros(api_url, tabela, ultima_regstamp, firebird_empresa):
     url = f"{api_url.rstrip('/')}/dados/{tabela}"
     resposta = requests.get(
         url,
-        params={"ultima_regstamp": ultima_regstamp},
+        params={"ultima_regstamp": ultima_regstamp, "empresa": firebird_empresa},
         timeout=300,
     )
     resposta.raise_for_status()
@@ -116,7 +116,7 @@ def processar_tabela(args, tabela, firebird_empresa):
     print(f"Ultima REGSTAMP no SuperDunga: {ultima_regstamp}")
     print(f"Consultando Firebird a partir de: {regstamp_consulta}")
 
-    dados = buscar_registros(args.api_url, tabela, regstamp_consulta)
+    dados = buscar_registros(args.api_url, tabela, regstamp_consulta, firebird_empresa)
     registros = preparar_registros(dados, args.empresa, firebird_empresa)
 
     print(f"Registros retornados pela API: {len(dados)}")
