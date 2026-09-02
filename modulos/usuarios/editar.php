@@ -49,7 +49,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $status = $_POST['status'] ?? '';
     $senha  = $_POST['senha'] ?? '';
 
-    if ($nome === '' || $login === '' || ($status !== 'ATIVO' && $status !== 'INATIVO')) {
+    if ($nome === '' || $login === '' || ($status !== 'ATIVO' && $status !== 'BLOQUEADO')) {
         $erro = "Preencha nome, login e status corretamente.";
     } else {
 
@@ -164,7 +164,7 @@ require __DIR__ . '/../../layout/header.php';
                 <label class="form-label">Status</label>
                 <select name="status" class="form-select" required>
                     <option value="ATIVO" <?= $usuario['status'] === 'ATIVO' ? 'selected' : '' ?>>ATIVO</option>
-                    <option value="INATIVO" <?= $usuario['status'] === 'INATIVO' ? 'selected' : '' ?>>INATIVO</option>
+                    <option value="BLOQUEADO" <?= $usuario['status'] === 'BLOQUEADO' ? 'selected' : '' ?>>BLOQUEADO</option>
                 </select>
             </div>
 
