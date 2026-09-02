@@ -646,6 +646,57 @@ def dados_est004():
         return jsonify({"erro": str(e)}), 500
 
 
+@app.route("/dados/estoque_calculado", methods=["GET"])
+def dados_estoque_calculado():
+    try:
+        empresa = request.args.get("empresa", type=int)
+        limit = max(1, min(500, request.args.get("limit", default=100, type=int)))
+        offset = max(0, request.args.get("offset", default=0, type=int))
+
+        if empresa is None:
+            return jsonify({"erro": "Informe a empresa"}), 400
+
+        inicio = offset + 1
+        fim = offset + limit
+        con = conectar()
+        cursor = con.cursor()
+        cursor.execute(f"""
+            SELECT
+                E.EMPRESA,
+                E.CODPRODUTO,
+                COALESCE((
+                    SELECT L.ZTOTALESTOQUE
+                    FROM SP_CALCESTOQUE_LOJA(
+                        E.EMPRESA, '31.12.3333', '01.01.1000', E.CODPRODUTO
+                    ) L
+                ), 0) AS ESTOQUE_GERAL,
+                COALESCE((
+                    SELECT R.ZTOTALESTOQUE
+                    FROM SP_CALCESTOQUE_RESERVA(
+                        E.EMPRESA, '01.01.3333', E.CODPRODUTO
+                    ) R
+                ), 0) AS ESTOQUE_RESERVADO
+            FROM EST004 E
+            WHERE E.EMPRESA = ?
+            ORDER BY E.CODPRODUTO
+            ROWS {inicio} TO {fim}
+        """, (empresa,))
+
+        colunas = [desc[0] for desc in cursor.description]
+        dados = []
+        for row in cursor.fetchall():
+            registro = {colunas[i]: tratar_valor(valor) for i, valor in enumerate(row)}
+            geral = float(registro.get("ESTOQUE_GERAL") or 0)
+            reservado = float(registro.get("ESTOQUE_RESERVADO") or 0)
+            registro["ESTOQUE_DISPONIVEL"] = geral - reservado
+            dados.append(registro)
+
+        con.close()
+        return jsonify(dados)
+    except Exception as e:
+        return jsonify({"erro": str(e)}), 500
+
+
 @app.route("/dados/est008", methods=["GET"])
 def dados_est008():
     try:

@@ -38,6 +38,7 @@ Etapas:
 1. `enviar_dados.py` em modo padrao rapido.
 2. `atualizar_embalagens_firebird.py --empresa 1 --firebird-empresa 1`.
 3. `atualizar_produtos_firebird.py --empresa 1 --firebird-empresa 1`.
+4. `sincronizar_estoque_calculado.py --empresa 1 --firebird-empresa 1`.
 
 ## Rotina completa
 
@@ -52,6 +53,9 @@ Comando principal:
 ```bat
 "C:\Users\armuser03\AppData\Local\Programs\Python\Python314\python.exe" -u "C:\integracao_superdunga\enviar_dados.py" completo
 ```
+
+Ao final, a rotina completa tambem executa `sincronizar_estoque_calculado.py`
+para atualizar estoque geral, reservado e disponivel pelas procedures oficiais.
 
 ## Testes uteis
 
@@ -71,6 +75,12 @@ Set-Location "C:\integracao_superdunga"
 & "C:\Users\armuser03\AppData\Local\Programs\Python\Python314\python.exe" -u "C:\integracao_superdunga\atualizar_produtos_firebird.py" --empresa 1 --firebird-empresa 1
 ```
 
+Executar estoque calculado isoladamente:
+
+```powershell
+& "C:\Users\armuser03\AppData\Local\Programs\Python\Python314\python.exe" -u "C:\integracao_superdunga\sincronizar_estoque_calculado.py" --empresa 1 --firebird-empresa 1
+```
+
 Executar rotina completa:
 
 ```powershell
@@ -83,6 +93,7 @@ Get-Content C:\integracao_superdunga\logs\sincronizacao_completa.log -Tail 200
 
 - A rapida do `enviar_dados.py` pula `EST004`, `EST005` e `EST006`.
 - Por isso, `atualizar_produtos_firebird.py` foi adicionada ao final da rapida para atualizar produtos, compras e itens alterados sem esperar a completa.
+- Os saldos oficiais usam `SP_CALCESTOQUE_LOJA` e `SP_CALCESTOQUE_RESERVA`; o disponivel e geral menos reservado.
 - `REP001` e `FUNC001` entram na rotina rapida porque sao tabelas pequenas e com `REGSTAMP`.
 - `REP001` grava no SuperDunga como `armazem_REP001`.
 - `FUNC001` grava no SuperDunga como `armazem_FUNC001`.

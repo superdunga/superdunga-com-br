@@ -12,4 +12,8 @@ echo Atualizando produtos/compras Firebird...
 
 "C:\Users\armuser03\AppData\Local\Programs\Python\Python314\python.exe" -u "C:\integracao_superdunga\atualizar_produtos_firebird.py" --empresa 1 --firebird-empresa 1 >> "C:\integracao_superdunga\logs\atualizar_produtos.log" 2>&1
 
+echo Atualizando saldos oficiais de estoque...
+
+"C:\Users\armuser03\AppData\Local\Programs\Python\Python314\python.exe" -u "C:\integracao_superdunga\sincronizar_estoque_calculado.py" --empresa 1 --firebird-empresa 1 >> "C:\integracao_superdunga\logs\sincronizacao_estoque.log" 2>&1
+
 echo Finalizado.

@@ -5,7 +5,7 @@ require '../../config/conexao.php';
 exigirNivel('OPERADOR');
 
 $empresa_id = (int)$_SESSION['empresa_id'];
-$cbcontador_tesouraria = ($empresa_id === 4) ? 5 : 8;
+$cbcontador_tesouraria = in_array($empresa_id, [4, 5], true) ? 5 : 8;
 $filtro_movcontador_firebird = ($empresa_id === 4) ? 'AND f.MOVCONTADOR > 233704' : '';
 $filtro_movcontador_firebird_sem_alias = ($empresa_id === 4) ? 'AND MOVCONTADOR > 233704' : '';
 $linhas_afetadas = 0;
