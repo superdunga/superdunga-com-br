@@ -32,7 +32,7 @@ function granitoDataHora($valor) {
     return $dt ? $dt->format('Y-m-d H:i:s') : null;
 }
 
-function identificarGrupoGranitoPosPorRecebiveis(PDO $pdo, int $empresaId, string $arquivo): array
+function identificarGrupoGranitoPosPorRecebiveis(PDO $pdo, int $empresaId, string $arquivo, string $grupoSelecionado): array
 {
     $handle = fopen($arquivo, 'r');
     if (!$handle) {
@@ -86,6 +86,25 @@ function identificarGrupoGranitoPosPorRecebiveis(PDO $pdo, int $empresaId, strin
         );
     }
     if ($qtdComercial === 0 && $qtdOutros === 0) {
+        $stmtHistorico = $pdo->prepare("
+            SELECT COUNT(*)
+            FROM armazem_conciliacao_recebimentos
+            WHERE empresa_id = ?
+              AND origem IN ('GRANITO_POS_COMERCIAL', 'GRANITO_POS_OUTROS')
+        ");
+        $stmtHistorico->execute([$empresaId]);
+
+        if ((int)$stmtHistorico->fetchColumn() === 0) {
+            return [
+                'grupo' => $grupoSelecionado,
+                'comercial' => 0,
+                'outros' => 0,
+                'sem_correspondencia' => count($idsGranito),
+                'total_ids' => count($idsGranito),
+                'primeira_importacao' => true,
+            ];
+        }
+
         throw new RuntimeException(
             'Importacao bloqueada: nenhum ID Granito do arquivo foi encontrado nos recebiveis POS ja importados.'
         );
@@ -99,6 +118,7 @@ function identificarGrupoGranitoPosPorRecebiveis(PDO $pdo, int $empresaId, strin
         'outros' => $qtdOutros,
         'sem_correspondencia' => $qtdSemCorrespondencia,
         'total_ids' => count($idsGranito),
+        'primeira_importacao' => false,
     ];
 }
 
@@ -122,7 +142,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['arquivo'])) {
         }
 
         try {
-            $identificacaoPos = identificarGrupoGranitoPosPorRecebiveis($pdo_master, $empresa_id, $arquivo);
+            $identificacaoPos = identificarGrupoGranitoPosPorRecebiveis($pdo_master, $empresa_id, $arquivo, $grupoSelecionado);
         } catch (Throwable $e) {
             echo "<div class='alert alert-danger'>" . htmlspecialchars($e->getMessage()) . "</div>";
             require '../../layout/footer.php';
@@ -221,9 +241,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['arquivo'])) {
             fclose($handle);
             $qtdCorrespondencias = (int)$identificacaoPos['comercial'] + (int)$identificacaoPos['outros'];
             $qtdNovas = (int)$identificacaoPos['sem_correspondencia'];
+            $criterioIdentificacao = !empty($identificacaoPos['primeira_importacao'])
+                ? ' pela regra selecionada, pois esta e a primeira importacao POS da empresa.'
+                : " por <strong>{$qtdCorrespondencias}</strong> recebiveis anteriores.";
             echo "<div class='alert alert-success'>Arquivo confirmado como Granito "
                 . htmlspecialchars(ucfirst(strtolower($identificacaoPos['grupo'])))
-                . " por <strong>{$qtdCorrespondencias}</strong> recebiveis anteriores. IDs novos identificados: <strong>{$qtdNovas}</strong>. Importacao concluida! Registros importados: <strong>{$importados}</strong>. Duplicados: <strong>{$duplicados}</strong>. Atualizados com agenda: <strong>{$atualizadosComAgenda}</strong>.</div>";
+                . $criterioIdentificacao
+                . " IDs novos identificados: <strong>{$qtdNovas}</strong>. Importacao concluida! Registros importados: <strong>{$importados}</strong>. Duplicados: <strong>{$duplicados}</strong>. Atualizados com agenda: <strong>{$atualizadosComAgenda}</strong>.</div>";
         }
     }
 }
