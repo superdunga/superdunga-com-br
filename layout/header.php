@@ -29,6 +29,7 @@ $valeComprasUrl = ($appBaseUrl ?: '') . '/modulos/vale_compras/cadastro.php';
 $movimentacaoBaixaUrl = ($appBaseUrl ?: '') . '/modulos/movimentacao_baixa/menu_movimentacao_baixa.php';
 $whatsappUrl = ($appBaseUrl ?: '') . '/modulos/whatsapp/index.php';
 $usuariosUrl = ($appBaseUrl ?: '') . '/modulos/usuarios/listar.php';
+$minhaSenhaUrl = ($appBaseUrl ?: '') . '/modulos/usuarios/minha_senha.php';
 $empresasUrl = ($appBaseUrl ?: '') . '/modulos/empresas/listar.php';
 $usuarioNome = $_SESSION['usuario_nome'] ?? 'Usuario';
 $nivelUsuario = $_SESSION['nivel'] ?? '';
@@ -126,6 +127,10 @@ foreach ($topbarModuleMenus as $modulePath => $menuUrl) {
     break;
 }
 
+if (substr($scriptNameTopbar, -strlen('/modulos/usuarios/minha_senha.php')) === '/modulos/usuarios/minha_senha.php') {
+    $backTopUrl = $homeUrl;
+}
+
 $bootstrapCssUrl = ($appBaseUrl ?: '') . '/assets/bootstrap/bootstrap.min.css';
 ?>
 <!DOCTYPE html>
@@ -191,6 +196,7 @@ $bootstrapCssUrl = ($appBaseUrl ?: '') . '/assets/bootstrap/bootstrap.min.css';
         }
 
         .user-chip {
+            display: block;
             background: rgba(255, 255, 255, .12);
             border: 1px solid rgba(255, 255, 255, .2);
             color: #fff;
@@ -200,6 +206,13 @@ $bootstrapCssUrl = ($appBaseUrl ?: '') . '/assets/bootstrap/bootstrap.min.css';
             line-height: 1.15;
             max-width: 240px;
             min-width: 0;
+            text-decoration: none;
+        }
+
+        .user-chip:hover,
+        .user-chip:focus {
+            background: rgba(255, 255, 255, .2);
+            color: #fff;
         }
 
         .user-chip .user-chip-label {
@@ -666,7 +679,7 @@ $bootstrapCssUrl = ($appBaseUrl ?: '') . '/assets/bootstrap/bootstrap.min.css';
             </ul>
 
             <div class="d-flex flex-column flex-lg-row align-items-lg-center gap-2">
-                <span class="user-chip">
+                <a class="user-chip" href="<?= htmlspecialchars($minhaSenhaUrl) ?>" title="Alterar minha senha">
                     <span class="d-block user-chip-label">Usuario</span>
                     <span class="d-block user-chip-value">
                         <?= htmlspecialchars($usuarioNome) ?>
@@ -676,7 +689,8 @@ $bootstrapCssUrl = ($appBaseUrl ?: '') . '/assets/bootstrap/bootstrap.min.css';
                     </span>
                     <span class="d-block user-chip-label mt-1">Empresa</span>
                     <span class="d-block user-chip-value"><?= htmlspecialchars($empresaNome) ?></span>
-                </span>
+                    <span class="d-block user-chip-label mt-1">Alterar senha</span>
+                </a>
                 <a href="<?= htmlspecialchars($logoutUrl) ?>" class="btn btn-warning btn-sm fw-semibold">Sair</a>
             </div>
         </div>

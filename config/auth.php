@@ -87,6 +87,7 @@ function redirecionarPendenciasOperador(): void
         '/modulos/rotinas_operacionais/menu_rotinas_operacionais.php',
         '/modulos/rotinas_operacionais/recebimento_mercadorias.php',
         '/modulos/rotinas_operacionais/lista_recebimentos.php',
+        '/modulos/usuarios/minha_senha.php',
         '/logout.php',
         '/login.php',
     ];
