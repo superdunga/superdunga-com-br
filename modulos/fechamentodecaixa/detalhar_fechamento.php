@@ -253,6 +253,7 @@ $stmt->execute([$data_inicio, $data_fim, $usuario, $empresa_id]);
 $vendas = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
 $itensPorVenda = [];
+$recebiveisPorVenda = [];
 $vendasIds = array_values(array_filter(array_map(function ($venda) {
     return (int)($venda['VENDACONTADOR'] ?? 0);
 }, $vendas)));
@@ -276,12 +277,35 @@ if (!empty($vendasIds)) {
            AND p.EMPRESA = i.EMPRESA
         WHERE i.ITEMVENDACONTADOR IN ($placeholders)
           AND i.EMPRESA = ?
+          AND COALESCE(i.excluido_firebird, 'N') <> 'S'
         ORDER BY i.ITEMVENDACONTADOR, i.VENDACONTA
     ");
     $stmtItens->execute(array_merge($vendasIds, [$empresa_id]));
 
-while ($item = $stmtItens->fetch(PDO::FETCH_ASSOC)) {
+    while ($item = $stmtItens->fetch(PDO::FETCH_ASSOC)) {
         $itensPorVenda[(int)$item['ITEMVENDACONTADOR']][] = $item;
+    }
+
+    $stmtRecebiveis = $pdo_master->prepare("
+        SELECT
+            CRCONTADOR,
+            NUMDOCORIGEM,
+            DTLANC,
+            DTVENC,
+            VLRPARCELA,
+            CMCONTADOR,
+            STATUS,
+            recebimento_id
+        FROM armazem_cr001
+        WHERE NUMDOCORIGEM IN ($placeholders)
+          AND EMPRESA = ?
+          AND COALESCE(excluido_firebird, 'N') <> 'S'
+        ORDER BY NUMDOCORIGEM, DTVENC, CRCONTADOR
+    ");
+    $stmtRecebiveis->execute(array_merge($vendasIds, [$empresa_id]));
+
+    while ($recebivel = $stmtRecebiveis->fetch(PDO::FETCH_ASSOC)) {
+        $recebiveisPorVenda[(int)$recebivel['NUMDOCORIGEM']][] = $recebivel;
     }
 }
 
@@ -594,7 +618,9 @@ if (empty($vendasRelatorio)) {
 foreach ($vendasRelatorio as $v) {
     $vendaId = (int)$v['VENDACONTADOR'];
     $collapseId = 'itens-venda-' . $vendaId;
+    $collapseRecebiveisId = 'recebiveis-venda-' . $vendaId;
     $itens = $itensPorVenda[$vendaId] ?? [];
+    $recebiveis = $recebiveisPorVenda[$vendaId] ?? [];
 ?>
 <tr>
     <td><?= $vendaId ?></td>
@@ -611,6 +637,15 @@ foreach ($vendasRelatorio as $v) {
                     data-bs-target="#<?= $collapseId ?>">
                 Detalhe
             </button>
+            <button class="btn btn-sm btn-outline-dark"
+                    type="button"
+                    data-bs-toggle="collapse"
+                    data-bs-target="#<?= $collapseRecebiveisId ?>"
+                    aria-controls="<?= $collapseRecebiveisId ?>"
+                    aria-expanded="false"
+                    title="Ver contas a receber da venda">
+                &#128269;
+            </button>
             <a
                 href="detalhar_fechamento.php?data=<?= urlencode($data) ?>&user=<?= urlencode($usuario) ?>&exportar_vendas=pdf&venda=<?= $vendaId ?>"
                 class="btn btn-sm btn-outline-success"
@@ -618,6 +653,51 @@ foreach ($vendasRelatorio as $v) {
                 PDF
             </a>
         </div>
+    </td>
+</tr>
+<tr class="collapse" id="<?= $collapseRecebiveisId ?>">
+    <td colspan="7" class="bg-light">
+        <div class="fw-semibold mb-2">Contas a receber da venda <?= $vendaId ?></div>
+        <?php if (empty($recebiveis)): ?>
+            <div class="text-muted small">Nenhum lancamento de contas a receber encontrado para esta venda.</div>
+        <?php else: ?>
+            <div class="table-responsive">
+                <table class="table table-sm table-bordered align-middle mb-0">
+                    <thead>
+                        <tr>
+                            <th>CR</th>
+                            <th>Data</th>
+                            <th>Vencimento</th>
+                            <th>CM</th>
+                            <th>Status</th>
+                            <th>Valor</th>
+                            <th>Conciliação</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <?php foreach ($recebiveis as $recebivel): ?>
+                            <?php $conciliado = !empty($recebivel['recebimento_id']); ?>
+                            <tr>
+                                <td><?= (int)$recebivel['CRCONTADOR'] ?></td>
+                                <td><?= dataHoraDetalheCaixa($recebivel['DTLANC'] ?? '') ?></td>
+                                <td><?= !empty($recebivel['DTVENC']) ? date('d/m/Y', strtotime($recebivel['DTVENC'])) : '-' ?></td>
+                                <td><?= htmlspecialchars((string)($recebivel['CMCONTADOR'] ?? '')) ?></td>
+                                <td><?= htmlspecialchars((string)($recebivel['STATUS'] ?? '')) ?></td>
+                                <td><?= moedaDetalheCaixa($recebivel['VLRPARCELA'] ?? 0) ?></td>
+                                <td>
+                                    <span class="badge bg-<?= $conciliado ? 'success' : 'warning' ?> text-<?= $conciliado ? 'white' : 'dark' ?>">
+                                        <?= $conciliado ? 'Conciliado' : 'Nao conciliado' ?>
+                                    </span>
+                                    <?php if ($conciliado): ?>
+                                        <span class="small text-muted ms-1">#<?= (int)$recebivel['recebimento_id'] ?></span>
+                                    <?php endif; ?>
+                                </td>
+                            </tr>
+                        <?php endforeach; ?>
+                    </tbody>
+                </table>
+            </div>
+        <?php endif; ?>
     </td>
 </tr>
 <tr class="collapse" id="<?= $collapseId ?>">

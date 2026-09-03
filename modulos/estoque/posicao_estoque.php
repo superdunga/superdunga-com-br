@@ -110,6 +110,7 @@ $stmt = $pdo_master->prepare("
         FROM armazem_est008 i
         WHERE i.EMPRESA = ?
           AND COALESCE(i.CANCELADO, 'N') <> 'S'
+          AND COALESCE(i.excluido_firebird, 'N') <> 'S'
           AND i.MOVESTOQUE = 'S'
         GROUP BY i.EMPRESA, i.PRODUTO
     ) s ON s.EMPRESA = p.EMPRESA AND s.PRODUTO = p.CONTAPRODUTO

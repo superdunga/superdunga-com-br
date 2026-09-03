@@ -128,6 +128,7 @@ if (!empty($vendasCR001)) {
            AND p.CONTAPRODUTO = i.PRODUTO
         WHERE i.EMPRESA = ?
           AND i.ITEMVENDACONTADOR IN ($placeholders)
+          AND COALESCE(i.excluido_firebird, 'N') <> 'S'
         ORDER BY i.ITEMVENDACONTADOR ASC, i.VENDACONTA ASC
     ");
     $stmtItensVenda->execute(array_merge([$empresa_id], $idsVenda));

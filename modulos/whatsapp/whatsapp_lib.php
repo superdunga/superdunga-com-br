@@ -1279,6 +1279,7 @@ function whatsappMensagemResumoDiario(PDO $pdo, int $empresaId = 1): string
           AND v.EMPRESA = ?
           AND v.CANCELADO = 'N'
           AND COALESCE(i.CANCELADO, 'N') = 'N'
+          AND COALESCE(i.excluido_firebird, 'N') <> 'S'
         GROUP BY i.PRODUTO, descricao
         ORDER BY quantidade DESC
         LIMIT 10
@@ -1302,6 +1303,7 @@ function whatsappMensagemResumoDiario(PDO $pdo, int $empresaId = 1): string
           AND v.EMPRESA = ?
           AND v.CANCELADO = 'N'
           AND COALESCE(i.CANCELADO, 'N') = 'N'
+          AND COALESCE(i.excluido_firebird, 'N') <> 'S'
         GROUP BY i.PRODUTO, descricao
         ORDER BY total DESC
         LIMIT 10

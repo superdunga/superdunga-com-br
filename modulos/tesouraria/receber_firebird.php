@@ -1417,12 +1417,30 @@ elseif ($tabela === 'est004') {
     ";
 
     $stmt = $pdo_master->prepare($sql);
+    $stmtInvalidarVersaoAnterior = $pdo_master->prepare("
+        UPDATE armazem_est008
+        SET excluido_firebird = 'S',
+            data_exclusao_firebird = NOW(),
+            motivo_sync = 'Item substituido na mesma linha da venda'
+        WHERE EMPRESA = ?
+          AND ITEMVENDACONTADOR = ?
+          AND VENDACONTA = ?
+          AND PRODUTO <> ?
+          AND COALESCE(excluido_firebird, 'N') <> 'S'
+    ");
     $pdo_master->beginTransaction();
 
     foreach ($dados as $d) {
         if (empty($d['CODPRODUTO'])) {
             continue;
         }
+
+        $stmtInvalidarVersaoAnterior->execute([
+            $d['EMPRESA'],
+            $d['ITEMVENDACONTADOR'],
+            $d['VENDACONTA'],
+            $d['PRODUTO'],
+        ]);
 
         $stmt->execute([
             ':EMPRESA' => $d['EMPRESA'] ?? null,
