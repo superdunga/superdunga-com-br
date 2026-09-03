@@ -210,6 +210,18 @@ $filtroGrupo = strtoupper(trim((string)($_GET['grupo'] ?? '')));
 $filtroTipo = strtoupper(trim((string)($_GET['tipo'] ?? '')));
 $filtroBandeira = strtoupper(trim((string)($_GET['bandeira'] ?? '')));
 $filtroSituacao = $_GET['situacao'] ?? 'todos';
+$filtroAgendaVenc = trim((string)($_GET['agenda_venc'] ?? ''));
+$filtroAgendaData = trim((string)($_GET['agenda_data'] ?? ''));
+$filtroAgendaGrupo = strtoupper(trim((string)($_GET['agenda_grupo'] ?? '')));
+$filtroAgendaTipo = strtoupper(trim((string)($_GET['agenda_tipo'] ?? '')));
+
+$paramsLimparAgenda = $_GET;
+unset(
+    $paramsLimparAgenda['agenda_venc'],
+    $paramsLimparAgenda['agenda_data'],
+    $paramsLimparAgenda['agenda_grupo'],
+    $paramsLimparAgenda['agenda_tipo']
+);
 
 if (isset($_GET['ok_historico'])) {
     $mensagem = 'Regra de historico do extrato salva com sucesso.';
@@ -301,6 +313,26 @@ if ($filtroBandeira !== '') {
     $paramsAgenda[] = $filtroBandeira;
 }
 
+if ($filtroAgendaVenc !== '') {
+    $whereAgenda[] = "DATE(data_pagamento) = ?";
+    $paramsAgenda[] = $filtroAgendaVenc;
+}
+
+if ($filtroAgendaData !== '') {
+    $whereAgenda[] = "DATE(data_transacao) = ?";
+    $paramsAgenda[] = $filtroAgendaData;
+}
+
+if ($filtroAgendaGrupo !== '') {
+    $whereAgenda[] = "grupo = ?";
+    $paramsAgenda[] = $filtroAgendaGrupo;
+}
+
+if ($filtroAgendaTipo !== '') {
+    $whereAgenda[] = "tipo_operacao = ?";
+    $paramsAgenda[] = $filtroAgendaTipo;
+}
+
 $stmtBandeiras = $pdo_master->prepare("
     SELECT DISTINCT bandeira
     FROM (
@@ -380,6 +412,15 @@ $sqlTransacoes = "
         descricao,
         pagador,
         criado_em AS importado_em,
+        COALESCE(
+            CRCONTADOR,
+            (
+                SELECT MIN(cr.CRCONTADOR)
+                FROM armazem_cr001 cr
+                WHERE cr.EMPRESA = armazem_conciliacao_recebimentos.empresa_id
+                  AND cr.recebimento_id = armazem_conciliacao_recebimentos.id
+            )
+        ) AS cr_conciliado,
         (
             SELECT COUNT(*)
             FROM fechamento_granito_agenda_taxas ag
@@ -489,11 +530,19 @@ function situacaoTaxaRelatorio(array $relatorio, array $taxasAtivas): array
 
     $esperada = (float)$taxaEsperada['taxa_percentual'];
     $tolerancia = (float)$taxaEsperada['tolerancia_percentual'];
-    $divergente = abs($taxaMedia - $esperada) > $tolerancia;
+    $classe = 'success';
+    $texto = 'OK';
+    if ($taxaMedia > $esperada + $tolerancia) {
+        $classe = 'danger';
+        $texto = 'Maior';
+    } elseif ($taxaMedia < $esperada - $tolerancia) {
+        $classe = 'warning';
+        $texto = 'Menor';
+    }
 
     return [
-        'classe' => $divergente ? 'danger' : 'success',
-        'texto' => $divergente ? 'Divergente' : 'OK',
+        'classe' => $classe,
+        'texto' => $texto,
         'taxa_media' => $taxaMedia,
         'esperada' => $taxaEsperada,
     ];
@@ -507,7 +556,7 @@ $transacoes = array_values(array_filter($transacoes, function ($transacao) use (
     $situacao = situacaoTaxaRelatorio($transacao, $taxasAtivas);
     switch ($filtroSituacao) {
         case 'divergentes':
-            return $situacao['texto'] === 'Divergente';
+            return in_array($situacao['texto'], ['Maior', 'Menor'], true);
         case 'sem_taxa':
             return $situacao['texto'] === 'Sem taxa cadastrada';
         case 'sem_taxa_demonstrada':
@@ -692,6 +741,23 @@ if (!empty($mapasConferencia)) {
 
 require '../../layout/header.php';
 ?>
+
+<style>
+    .recebimentos-grid {
+        overflow: visible;
+    }
+
+    .recebimentos-grid .table {
+        width: 100%;
+        font-size: 0.78rem;
+    }
+
+    .recebimentos-grid th,
+    .recebimentos-grid td {
+        white-space: normal;
+        overflow-wrap: anywhere;
+    }
+</style>
 
 <section class="mb-4">
     <div class="p-4 p-lg-5 bg-white border rounded-2 shadow-sm">
@@ -990,13 +1056,14 @@ require '../../layout/header.php';
                 </div>
             </div>
         <?php endif; ?>
-        <div class="table-responsive">
+        <div class="recebimentos-grid">
             <table class="table table-sm table-hover align-middle mb-0">
                 <thead class="table-dark">
                     <tr>
                         <th>Venc./Pagto.</th>
                         <th>Data</th>
                         <th>Transacao</th>
+                        <th>Conciliada</th>
                         <th>Adq.</th>
                         <th>Grupo</th>
                         <th>Tipo</th>
@@ -1028,6 +1095,14 @@ require '../../layout/header.php';
                             <td class="small"><?= $dataPagamento ? date('d/m/Y', strtotime($dataPagamento)) : '<span class="text-muted">Sem agenda</span>' ?></td>
                             <td class="small"><?= date('d/m/Y H:i', strtotime($transacao['data_venda'])) ?></td>
                             <td class="small"><?= htmlspecialchars(numeroTransacaoRecebimento($transacao)) ?></td>
+                            <td>
+                                <?php if (!empty($transacao['cr_conciliado'])): ?>
+                                    <span class="badge text-bg-success">Sim</span>
+                                    <span class="small text-muted">CR <?= (int)$transacao['cr_conciliado'] ?></span>
+                                <?php else: ?>
+                                    <span class="badge text-bg-secondary">Nao</span>
+                                <?php endif; ?>
+                            </td>
                             <td><?= htmlspecialchars($transacao['adquirente']) ?></td>
                             <td><?= htmlspecialchars($transacao['grupo']) ?></td>
                             <td><?= htmlspecialchars(rotuloTipoOperacao((string)$transacao['tipo_operacao'])) ?></td>
@@ -1050,7 +1125,7 @@ require '../../layout/header.php';
                         </tr>
                     <?php endforeach; ?>
                     <?php if (empty($transacoes)): ?>
-                        <tr><td colspan="16" class="text-center text-muted py-4">Nenhuma transacao encontrada para os filtros.</td></tr>
+                        <tr><td colspan="17" class="text-center text-muted py-4">Nenhuma transacao encontrada para os filtros.</td></tr>
                     <?php endif; ?>
                 </tbody>
             </table>
@@ -1068,6 +1143,45 @@ require '../../layout/header.php';
                 </div>
                 <div class="text-muted small align-self-lg-center">Este bloco nao gera recebivel automaticamente para itens financeiros como aluguel de POS.</div>
             </div>
+        </div>
+        <div class="card-body border-bottom bg-light-subtle">
+            <form method="get" class="row g-2 align-items-end">
+                <?php foreach ($_GET as $nomeParametro => $valorParametro): ?>
+                    <?php if (!in_array($nomeParametro, ['agenda_venc', 'agenda_data', 'agenda_grupo', 'agenda_tipo'], true) && !is_array($valorParametro)): ?>
+                        <input type="hidden" name="<?= htmlspecialchars((string)$nomeParametro) ?>" value="<?= htmlspecialchars((string)$valorParametro) ?>">
+                    <?php endif; ?>
+                <?php endforeach; ?>
+                <div class="col-md-2">
+                    <label class="form-label">Venc./Pagto.</label>
+                    <input type="date" name="agenda_venc" value="<?= htmlspecialchars($filtroAgendaVenc) ?>" class="form-control">
+                </div>
+                <div class="col-md-2">
+                    <label class="form-label">Data</label>
+                    <input type="date" name="agenda_data" value="<?= htmlspecialchars($filtroAgendaData) ?>" class="form-control">
+                </div>
+                <div class="col-md-3">
+                    <label class="form-label">Grupo</label>
+                    <select name="agenda_grupo" class="form-select">
+                        <option value="">Todos</option>
+                        <?php foreach ($grupos as $grupo): ?>
+                            <option value="<?= htmlspecialchars($grupo) ?>" <?= $filtroAgendaGrupo === $grupo ? 'selected' : '' ?>><?= htmlspecialchars($grupo) ?></option>
+                        <?php endforeach; ?>
+                    </select>
+                </div>
+                <div class="col-md-2">
+                    <label class="form-label">Tipo</label>
+                    <select name="agenda_tipo" class="form-select">
+                        <option value="">Todos</option>
+                        <option value="D" <?= $filtroAgendaTipo === 'D' ? 'selected' : '' ?>>Debito</option>
+                        <option value="C" <?= $filtroAgendaTipo === 'C' ? 'selected' : '' ?>>Credito</option>
+                        <option value="P" <?= $filtroAgendaTipo === 'P' ? 'selected' : '' ?>>Pix</option>
+                    </select>
+                </div>
+                <div class="col-md-3 d-flex gap-2">
+                    <button class="btn btn-primary flex-grow-1">Filtrar agenda</button>
+                    <a href="importacao_recebimentos.php<?= $paramsLimparAgenda ? '?' . htmlspecialchars(http_build_query($paramsLimparAgenda)) : '' ?>" class="btn btn-outline-secondary">Limpar</a>
+                </div>
+            </form>
         </div>
         <div class="card-body border-bottom">
             <div class="row g-3">
@@ -1103,7 +1217,7 @@ require '../../layout/header.php';
                 </div>
             </div>
         </div>
-        <div class="table-responsive">
+        <div class="recebimentos-grid">
             <table class="table table-sm table-hover align-middle mb-0">
                 <thead class="table-dark">
                     <tr>
