@@ -197,7 +197,6 @@ function buscarDadosExportacaoCaixa(PDO $pdo, int $empresaId, string $dataOperac
             WHERE i.EMPRESA = ?
               AND i.ITEMVENDACONTADOR IN ($placeholders)
               AND COALESCE(i.CANCELADO, 'N') <> 'S'
-              AND COALESCE(i.excluido_firebird, 'N') <> 'S'
             ORDER BY i.ITEMVENDACONTADOR ASC, i.VENDACONTA ASC
         ");
         $stmtItens->execute(array_merge([$empresaId], $idsVenda));

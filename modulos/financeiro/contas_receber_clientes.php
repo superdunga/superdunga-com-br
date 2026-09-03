@@ -373,7 +373,6 @@ if ($visao === 'analitico' && !empty($vendasIds) && !in_array($exportar, ['excel
         WHERE i.EMPRESA = ?
           AND i.ITEMVENDACONTADOR IN ($placeholdersVendas)
           AND COALESCE(i.CANCELADO, 'N') <> 'S'
-          AND COALESCE(i.excluido_firebird, 'N') <> 'S'
         ORDER BY i.ITEMVENDACONTADOR ASC, i.VENDACONTA ASC
     ");
     $stmtItensVenda->execute(array_merge([$empresaId], $vendasIds));
