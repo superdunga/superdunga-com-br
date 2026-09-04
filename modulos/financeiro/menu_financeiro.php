@@ -40,6 +40,14 @@ $opcoes = [
         'botao' => 'btn-warning',
     ],
     [
+        'titulo' => 'Conciliacao de Cartao de Credito',
+        'descricao' => 'Importe faturas, vincule despesas existentes e crie somente os lancamentos que estiverem faltando.',
+        'href' => 'conciliacao_cartao_credito.php',
+        'modulo' => 'financeiro_conciliacao_cartao',
+        'icone' => 'NC',
+        'botao' => 'btn-primary',
+    ],
+    [
         'titulo' => 'Cartao de Credito',
         'descricao' => 'Controle de faturas, lancamentos e conferencias de cartoes de credito.',
         'href' => 'cartao_credito.php',
