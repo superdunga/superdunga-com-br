@@ -141,7 +141,7 @@ function granitoAgendaParcela(string $parcelaTexto): array {
     return [max(1, $parcela), max(1, $total)];
 }
 
-function identificarGrupoAgendaGranito(PDO $pdo, int $empresaId, string $arquivo): array
+function identificarGrupoAgendaGranito(PDO $pdo, int $empresaId, string $arquivo, string $grupoSelecionado): array
 {
     $handle = fopen($arquivo, 'r');
     if (!$handle) {
@@ -200,6 +200,28 @@ function identificarGrupoAgendaGranito(PDO $pdo, int $empresaId, string $arquivo
         );
     }
     if ($qtdComercial === 0 && $qtdOutros === 0) {
+        $origemSelecionada = $grupoSelecionado === 'OUTROS'
+            ? 'GRANITO_PIX_OUTROS'
+            : 'GRANITO_PIX_COMERCIAL';
+        $stmtHistorico = $pdo->prepare("
+            SELECT COUNT(*)
+            FROM armazem_conciliacao_recebimentos
+            WHERE empresa_id = ?
+              AND origem = ?
+        ");
+        $stmtHistorico->execute([$empresaId, $origemSelecionada]);
+
+        if ((int)$stmtHistorico->fetchColumn() === 0) {
+            return [
+                'grupo' => $grupoSelecionado,
+                'comercial' => 0,
+                'outros' => 0,
+                'sem_correspondencia' => count($idsPosPagos),
+                'total_pos_pagos' => count($idsPosPagos),
+                'primeira_importacao' => true,
+            ];
+        }
+
         throw new RuntimeException(
             'Importacao bloqueada: nenhuma transacao POS paga da agenda foi encontrada nas importacoes Granito POS.'
         );
@@ -211,6 +233,7 @@ function identificarGrupoAgendaGranito(PDO $pdo, int $empresaId, string $arquivo
         'outros' => $qtdOutros,
         'sem_correspondencia' => $qtdSemCorrespondencia,
         'total_pos_pagos' => count($idsPosPagos),
+        'primeira_importacao' => false,
     ];
 }
 
@@ -546,7 +569,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['acao'] ?? '') === 'upload_
         }
 
         try {
-            $identificacaoAgenda = identificarGrupoAgendaGranito($pdo_master, $empresa_id, $arquivo);
+            $identificacaoAgenda = identificarGrupoAgendaGranito($pdo_master, $empresa_id, $arquivo, $grupoSelecionado);
         } catch (Throwable $e) {
             $identificacaoAgenda = null;
             $mensagens[] = ['tipo' => 'danger', 'texto' => $e->getMessage()];

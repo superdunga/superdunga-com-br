@@ -86,13 +86,16 @@ function identificarGrupoGranitoPosPorRecebiveis(PDO $pdo, int $empresaId, strin
         );
     }
     if ($qtdComercial === 0 && $qtdOutros === 0) {
+        $origemSelecionada = $grupoSelecionado === 'OUTROS'
+            ? 'GRANITO_POS_OUTROS'
+            : 'GRANITO_POS_COMERCIAL';
         $stmtHistorico = $pdo->prepare("
             SELECT COUNT(*)
             FROM armazem_conciliacao_recebimentos
             WHERE empresa_id = ?
-              AND origem IN ('GRANITO_POS_COMERCIAL', 'GRANITO_POS_OUTROS')
+              AND origem = ?
         ");
-        $stmtHistorico->execute([$empresaId]);
+        $stmtHistorico->execute([$empresaId, $origemSelecionada]);
 
         if ((int)$stmtHistorico->fetchColumn() === 0) {
             return [
