@@ -148,7 +148,7 @@ function identificarGrupoAgendaGranito(PDO $pdo, int $empresaId, string $arquivo
         throw new RuntimeException('Nao foi possivel abrir a agenda para validar o grupo.');
     }
 
-    $idsPosPagos = [];
+    $idsPosIdentificacao = [];
     $linha = 0;
     while (($dados = fgetcsv($handle, 0, ';')) !== false) {
         $linha++;
@@ -159,18 +159,19 @@ function identificarGrupoAgendaGranito(PDO $pdo, int $empresaId, string $arquivo
         $idTransacao = trim((string)($dados[0] ?? ''));
         $status = trim((string)($dados[3] ?? ''));
         $tipoOperacao = granitoAgendaTipoOperacao((string)($dados[2] ?? ''));
-        if ($idTransacao !== '' && strcasecmp($status, 'Pago') === 0 && in_array($tipoOperacao, ['D', 'C'], true)) {
-            $idsPosPagos[$idTransacao] = true;
+        $statusIdentificacao = strtoupper($status);
+        if ($idTransacao !== '' && in_array($statusIdentificacao, ['PAGO', 'ENVIADO'], true) && in_array($tipoOperacao, ['D', 'C'], true)) {
+            $idsPosIdentificacao[$idTransacao] = true;
         }
     }
     fclose($handle);
 
-    if (!$idsPosPagos) {
-        throw new RuntimeException('Importacao bloqueada: a agenda nao possui transacoes POS pagas para identificar se pertence a Comercial ou Outros.');
+    if (!$idsPosIdentificacao) {
+        throw new RuntimeException('Importacao bloqueada: a agenda nao possui transacoes POS pagas ou enviadas para identificar se pertence a Comercial ou Outros.');
     }
 
     $correspondencias = ['COMERCIAL' => [], 'OUTROS' => []];
-    foreach (array_chunk(array_keys($idsPosPagos), 500) as $ids) {
+    foreach (array_chunk(array_keys($idsPosIdentificacao), 500) as $ids) {
         $placeholders = implode(',', array_fill(0, count($ids), '?'));
         $stmt = $pdo->prepare("
             SELECT id_transacao, origem
@@ -189,7 +190,7 @@ function identificarGrupoAgendaGranito(PDO $pdo, int $empresaId, string $arquivo
     $qtdComercial = count($correspondencias['COMERCIAL']);
     $qtdOutros = count($correspondencias['OUTROS']);
     $qtdSemCorrespondencia = count(array_diff(
-        array_keys($idsPosPagos),
+        array_keys($idsPosIdentificacao),
         array_keys($correspondencias['COMERCIAL']),
         array_keys($correspondencias['OUTROS'])
     ));
@@ -216,14 +217,14 @@ function identificarGrupoAgendaGranito(PDO $pdo, int $empresaId, string $arquivo
                 'grupo' => $grupoSelecionado,
                 'comercial' => 0,
                 'outros' => 0,
-                'sem_correspondencia' => count($idsPosPagos),
-                'total_pos_pagos' => count($idsPosPagos),
+                'sem_correspondencia' => count($idsPosIdentificacao),
+                'total_pos_identificacao' => count($idsPosIdentificacao),
                 'primeira_importacao' => true,
             ];
         }
 
         throw new RuntimeException(
-            'Importacao bloqueada: nenhuma transacao POS paga da agenda foi encontrada nas importacoes Granito POS.'
+            'Importacao bloqueada: nenhuma transacao POS paga ou enviada da agenda foi encontrada nas importacoes Granito POS.'
         );
     }
 
@@ -232,7 +233,7 @@ function identificarGrupoAgendaGranito(PDO $pdo, int $empresaId, string $arquivo
         'comercial' => $qtdComercial,
         'outros' => $qtdOutros,
         'sem_correspondencia' => $qtdSemCorrespondencia,
-        'total_pos_pagos' => count($idsPosPagos),
+        'total_pos_identificacao' => count($idsPosIdentificacao),
         'primeira_importacao' => false,
     ];
 }
