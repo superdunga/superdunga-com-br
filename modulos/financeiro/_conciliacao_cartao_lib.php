@@ -19,6 +19,73 @@ function lerCsvConciliacaoCartao(string $arquivo): array
     $linhas=lerCsvFaturaCartao($arquivo);foreach($linhas as &$l){$d=normalizarDescricaoCartao($l['descricao']);if(strpos($d,'PAGTO DEBITO AUTOMATICO')!==false||strpos($d,'PAGAMENTO DE FATURA')!==false||strpos($d,'PAGAMENTO FATURA')!==false)$l['natureza']='P';}unset($l);return $linhas;
 }
 
+function lerPdfMercadoPagoPayload(string $json, string $arquivo, string $competencia, string $vencimentoEsperado): array
+{
+    $dados = json_decode($json, true);
+    if (!is_array($dados) || ($dados['origem'] ?? '') !== 'MERCADO_PAGO_PDF') {
+        throw new RuntimeException('Dados da fatura Mercado Pago ausentes ou invalidos.');
+    }
+    if (!hash_equals(hash_file('sha256', $arquivo), (string)($dados['hash_arquivo'] ?? ''))) {
+        throw new RuntimeException('O PDF enviado nao corresponde aos dados extraidos.');
+    }
+    if (($dados['competencia'] ?? '') !== $competencia || ($dados['vencimento'] ?? '') !== $vencimentoEsperado) {
+        throw new RuntimeException('Competencia ou vencimento do PDF diverge do cadastro do cartao.');
+    }
+
+    $linhas = [];
+    foreach (($dados['itens'] ?? []) as $item) {
+        $data = trim((string)($item['data_compra'] ?? ''));
+        $descricao = trim((string)($item['descricao'] ?? ''));
+        $natureza = strtoupper(trim((string)($item['natureza'] ?? '')));
+        $valor = round((float)($item['valor'] ?? 0), 2);
+        if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $data) || $descricao === '' || !in_array($natureza, ['D', 'C', 'P', 'S'], true) || $valor < 0) {
+            throw new RuntimeException('O PDF contem um lancamento invalido.');
+        }
+        if ($valor == 0.0) {
+            continue;
+        }
+        $linhas[] = [
+            'data_compra' => $data,
+            'descricao' => mb_substr($descricao, 0, 255),
+            'categoria' => mb_substr(trim((string)($item['categoria'] ?? '')), 0, 120),
+            'tipo_lancamento' => mb_substr(trim((string)($item['tipo_lancamento'] ?? '')), 0, 120),
+            'valor' => $valor,
+            'natureza' => $natureza,
+        ];
+    }
+    if (!$linhas) {
+        throw new RuntimeException('Nenhum lancamento foi identificado no PDF.');
+    }
+
+    $debitos = $creditos = $saldo = $compras = $encargos = 0.0;
+    foreach ($linhas as $linha) {
+        if ($linha['natureza'] === 'D') {
+            $debitos += $linha['valor'];
+            if ($linha['categoria'] === 'COMPRAS') $compras += $linha['valor'];
+            if ($linha['categoria'] === 'ENCARGOS') $encargos += $linha['valor'];
+        }
+        if (in_array($linha['natureza'], ['C', 'P'], true)) $creditos += $linha['valor'];
+        if ($linha['natureza'] === 'S') $saldo += $linha['valor'];
+    }
+    $resumo = is_array($dados['resumo'] ?? null) ? $dados['resumo'] : [];
+    $esperados = [
+        [$saldo, (float)($resumo['saldo_anterior'] ?? 0), 'saldo anterior'],
+        [$compras, (float)($resumo['consumos'] ?? 0), 'total de compras'],
+        [$encargos, (float)($resumo['tarifas'] ?? 0) + (float)($resumo['juros'] ?? 0), 'encargos'],
+        [$creditos, (float)($resumo['creditos'] ?? 0), 'pagamentos e creditos'],
+    ];
+    foreach ($esperados as $validacao) {
+        if (abs(round($validacao[0], 2) - round($validacao[1], 2)) >= 0.02) {
+            throw new RuntimeException('Os itens nao fecham com o ' . $validacao[2] . ' informado no PDF.');
+        }
+    }
+    $total = round((float)($dados['total'] ?? 0), 2);
+    if (abs(round($saldo + $debitos - $creditos, 2) - $total) >= 0.02) {
+        throw new RuntimeException('A composicao dos lancamentos nao fecha com o total do PDF.');
+    }
+    return ['linhas' => $linhas, 'debitos' => $debitos, 'creditos' => $creditos, 'total' => $total];
+}
+
 function cccCandidatos(PDO $pdo, array $item, string $vencimento): array
 {
     $sql="SELECT cp.CPCONTADOR,cp.DTCOMPRA,cp.DTVENC,cp.TITULO,COALESCE(NULLIF(cp.VLRRESTANTE,0),cp.VLRPARCELA,cp.VALORCOMPRA) valor,COALESCE(NULLIF(f.APELIDO,''),f.NOME) fornecedor FROM armazem_cp001 cp LEFT JOIN armazem_cp003 f ON f.EMPRESA=cp.EMPRESA AND f.FCONTADOR=cp.FCONTADOR WHERE cp.EMPRESA=? AND cp.STATUS<>'QT' AND cp.DTPAGTO IS NULL AND COALESCE(cp.VLRPAGO,0)=0 AND COALESCE(cp.excluido_firebird,'N')<>'S' AND ABS(COALESCE(NULLIF(cp.VLRRESTANTE,0),cp.VLRPARCELA,cp.VALORCOMPRA)-?)<0.01 AND (DATE(cp.DTCOMPRA) BETWEEN DATE_SUB(?,INTERVAL 45 DAY) AND DATE_ADD(?,INTERVAL 45 DAY) OR DATE(cp.DTVENC) BETWEEN DATE_SUB(?,INTERVAL 45 DAY) AND DATE_ADD(?,INTERVAL 45 DAY)) AND NOT EXISTS(SELECT 1 FROM financeiro_cc_itens x WHERE x.empresa_id=cp.EMPRESA AND x.cpcontador=cp.CPCONTADOR AND x.id<>?) ORDER BY LEAST(ABS(DATEDIFF(DATE(cp.DTCOMPRA),?)),ABS(DATEDIFF(DATE(cp.DTVENC),?))),cp.CPCONTADOR LIMIT 12";

@@ -212,6 +212,7 @@ $stmt = $pdo_master->prepare("
         COALESCE(f.NOME, f.APELIDO, CONCAT('Fornecedor ', cp.FCONTADOR)) AS fornecedor_nome,
         cp.TIPODOCORIGEM,
         cp.NUMDOCORIGEM,
+        cp.NUMCH,
         cp.TIPOES,
         COALESCE(NULLIF(cp.TITULO, ''), NULLIF(cp.NOTAFISCAL, ''), NULLIF(cp.IDENTIFICACAO, ''), NULLIF(cp.NUMCH, ''), '') AS documento,
         cp.VLRPARCELA,
@@ -552,6 +553,7 @@ if (in_array($exportar, ['excel', 'pdf'], true)) {
                     <th>Fornecedor</th>
                     <th>TipoDocOrigem</th>
                     <th>NumDocOrigem</th>
+                    <th>NUMCH</th>
                     <th>TipoES</th>
                     <th>Documento</th>
                     <th class="num">Valor parcela</th>
@@ -571,6 +573,7 @@ if (in_array($exportar, ['excel', 'pdf'], true)) {
                         <td><?= escapeExcelContasPagar($registro['fornecedor_nome']) ?></td>
                         <td><?= escapeExcelContasPagar($registro['TIPODOCORIGEM']) ?></td>
                         <td><?= escapeExcelContasPagar($registro['NUMDOCORIGEM']) ?></td>
+                        <td><?= escapeExcelContasPagar($registro['NUMCH']) ?></td>
                         <td><?= escapeExcelContasPagar($registro['TIPOES']) ?></td>
                         <td><?= escapeExcelContasPagar($registro['documento']) ?></td>
                         <td class="num"><?= number_format((float)$registro['VLRPARCELA'], 2, ',', '.') ?></td>
