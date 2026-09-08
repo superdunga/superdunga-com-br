@@ -901,6 +901,7 @@ def update_cr001():
             cursor = con.cursor()
 
             atualizados = 0
+            resultados = []
 
             for item in dados:
 
@@ -909,6 +910,8 @@ def update_cr001():
                 chave = item.get("CHAVEINTEGRACAO")
                 cm = item.get("CMCONTADOR")
                 dtvenc = item.get("DTVENC")
+                operacao = str(item.get("OPERACAO") or "").upper()
+                fila_id = item.get("FILA_ID")
 
                 if not crcontador or empresa is None:
                     continue
@@ -921,9 +924,34 @@ def update_cr001():
                 atual = cursor.fetchone()
 
                 if not atual:
+                    if operacao == "DESVINCULAR":
+                        resultados.append({
+                            "FILA_ID": fila_id,
+                            "status": "OBSOLETO",
+                            "erro": "CR001 nao encontrado no Firebird"
+                        })
                     continue
 
                 chave_atual, _ = atual
+
+                if operacao == "DESVINCULAR":
+                    esperado = item.get("CHAVEINTEGRACAO_ANTERIOR")
+                    if chave_atual is None:
+                        resultados.append({"FILA_ID": fila_id, "status": "SINCRONIZADO"})
+                    elif str(chave_atual) == str(esperado):
+                        cursor.execute("""
+                            UPDATE CR001 SET CHAVEINTEGRACAO = NULL
+                            WHERE CRCONTADOR = ? AND EMPRESA = ? AND CHAVEINTEGRACAO = ?
+                        """, (crcontador, int(empresa), chave_atual))
+                        atualizados += cursor.rowcount
+                        resultados.append({"FILA_ID": fila_id, "status": "SINCRONIZADO"})
+                    else:
+                        resultados.append({
+                            "FILA_ID": fila_id,
+                            "status": "OBSOLETO",
+                            "erro": "CHAVEINTEGRACAO foi alterada apos o desvinculo"
+                        })
+                    continue
 
                 campos = []
                 valores = []
@@ -955,7 +983,8 @@ def update_cr001():
 
             return jsonify({
                 "status": "ok",
-                "atualizados": atualizados
+                "atualizados": atualizados,
+                "resultados": resultados
             })
 
         crcontador = dados.get("CRCONTADOR")

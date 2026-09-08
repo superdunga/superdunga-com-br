@@ -621,7 +621,8 @@ try:
     processar_tabela(
         "CR001",
         "http://127.0.0.1:5000/dados/cr001",
-        "cr001"
+        "cr001",
+        forcar_completo=EXECUTAR_COMPLETO
     )
 
     if EXECUTAR_COMPLETO:

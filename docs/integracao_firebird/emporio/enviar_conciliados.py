@@ -58,6 +58,37 @@ def enviar_para_firebird(registros, firebird_empresa):
     return int(dados.get("atualizados", 0))
 
 
+def processar_desvinculos(empresa_destino, firebird_empresa):
+    resposta = requests.get(
+        f"{BASE_SITE}/modulos/tesouraria/listar_desvinculos_firebird.php",
+        params={"token": TOKEN_SITE, "empresa": empresa_destino, "limit": TAMANHO_LOTE},
+        timeout=120,
+    )
+    resposta.raise_for_status()
+    registros = resposta.json().get("registros", [])
+    if not registros:
+        return 0
+
+    envio = []
+    for registro in registros:
+        item = dict(registro)
+        item["OPERACAO"] = "DESVINCULAR"
+        item["FIREBIRD_EMPRESA"] = firebird_empresa
+        envio.append(item)
+
+    resposta = requests.post(f"{API_LOCAL}/update/cr001", json=envio, timeout=300)
+    resposta.raise_for_status()
+    resultados = resposta.json().get("resultados", [])
+
+    confirmacao = requests.post(
+        f"{BASE_SITE}/modulos/tesouraria/marcar_desvinculos_firebird.php",
+        json={"token": TOKEN_SITE, "empresa": empresa_destino, "resultados": resultados},
+        timeout=120,
+    )
+    confirmacao.raise_for_status()
+    return len(resultados)
+
+
 print("INICIANDO ENVIO DE CONCILIADOS PARA FIREBIRD EMPORIO/CMX")
 
 for mapeamento in MAPEAMENTOS:
@@ -86,5 +117,7 @@ for mapeamento in MAPEAMENTOS:
 
     print(f"Total lidos no site: {total_lidos}")
     print(f"Total atualizados no Firebird: {total_atualizados}")
+    desvinculos = processar_desvinculos(mapeamento["superdunga"], mapeamento["firebird"])
+    print(f"Desvinculos processados: {desvinculos}")
 
 print("FINALIZADO")

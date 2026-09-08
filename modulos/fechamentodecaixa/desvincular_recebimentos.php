@@ -29,6 +29,22 @@ function garantirLogDesvinculoRecebimentos(PDO $pdo): void
             INDEX idx_desvinculo_crcontador (crcontador)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
     ");
+
+    $pdo->exec("
+        CREATE TABLE IF NOT EXISTS conciliacao_recebimentos_desvinculos_firebird (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            empresa_id INT NOT NULL,
+            recebimento_id INT NOT NULL,
+            crcontador INT NOT NULL,
+            status VARCHAR(20) NOT NULL DEFAULT 'PENDENTE',
+            tentativas INT NOT NULL DEFAULT 0,
+            ultimo_erro TEXT NULL,
+            criado_em DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            sincronizado_em DATETIME NULL,
+            INDEX idx_desvinculo_fb_fila (empresa_id, status, id),
+            INDEX idx_desvinculo_fb_cr (empresa_id, crcontador)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    ");
 }
 
 garantirLogDesvinculoRecebimentos($pdo_master);
@@ -205,6 +221,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['acao'] ?? '') === 'desvinc
                 $motivo !== '' ? $motivo : null,
             ]);
 
+            $stmtFila = $pdo_master->prepare("
+                INSERT INTO conciliacao_recebimentos_desvinculos_firebird
+                    (empresa_id, recebimento_id, crcontador)
+                VALUES (?, ?, ?)
+            ");
+            $stmtFila->execute([$empresaId, $recebimentoId, $crcontador]);
+
             $pdo_master->commit();
 
             $query = queryDesvinculo(['ok' => '1']);
@@ -220,7 +243,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['acao'] ?? '') === 'desvinc
 }
 
 if (($_GET['ok'] ?? '') === '1') {
-    $mensagemOk = 'Vinculo desfeito com sucesso.';
+    $mensagemOk = 'Vinculo desfeito. A limpeza no Firebird foi colocada na fila de sincronizacao.';
 }
 
 $where = [
@@ -312,6 +335,16 @@ if (in_array($tipoMatchFiltro, $tiposMatchValidos, true)) {
     }));
 }
 
+$stmtFilaStatus = $pdo_master->prepare("
+    SELECT recebimento_id, crcontador, status, tentativas, ultimo_erro, criado_em, sincronizado_em
+    FROM conciliacao_recebimentos_desvinculos_firebird
+    WHERE empresa_id = ?
+    ORDER BY id DESC
+    LIMIT 20
+");
+$stmtFilaStatus->execute([$empresaId]);
+$filaStatus = $stmtFilaStatus->fetchAll(PDO::FETCH_ASSOC);
+
 require '../../layout/header.php';
 ?>
 
@@ -336,6 +369,46 @@ require '../../layout/header.php';
 
 <?php if ($mensagemErro): ?>
     <div class="alert alert-danger"><?= htmlspecialchars($mensagemErro) ?></div>
+<?php endif; ?>
+
+<?php if ($filaStatus): ?>
+<section class="mb-3">
+    <div class="bg-white border rounded-2 shadow-sm overflow-hidden">
+        <div class="px-3 py-2 border-bottom fw-semibold">Sincronizacao dos desvinculos com o Firebird</div>
+        <div class="table-responsive">
+            <table class="table table-sm align-middle mb-0">
+                <thead class="table-light">
+                    <tr>
+                        <th>Recebivel</th>
+                        <th>CR001</th>
+                        <th>Status</th>
+                        <th>Tentativas</th>
+                        <th>Criado em</th>
+                        <th>Processado em</th>
+                        <th>Detalhe</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <?php foreach ($filaStatus as $itemFila): ?>
+                        <?php
+                            $statusFila = (string)$itemFila['status'];
+                            $classeFila = $statusFila === 'SINCRONIZADO' ? 'success' : ($statusFila === 'PENDENTE' ? 'warning' : ($statusFila === 'ERRO' ? 'danger' : 'secondary'));
+                        ?>
+                        <tr>
+                            <td><?= (int)$itemFila['recebimento_id'] ?></td>
+                            <td><?= (int)$itemFila['crcontador'] ?></td>
+                            <td><span class="badge text-bg-<?= $classeFila ?>"><?= htmlspecialchars($statusFila) ?></span></td>
+                            <td><?= (int)$itemFila['tentativas'] ?></td>
+                            <td><?= dataHoraDesvinculo($itemFila['criado_em']) ?></td>
+                            <td><?= dataHoraDesvinculo($itemFila['sincronizado_em']) ?></td>
+                            <td><?= htmlspecialchars($itemFila['ultimo_erro'] ?: '-') ?></td>
+                        </tr>
+                    <?php endforeach; ?>
+                </tbody>
+            </table>
+        </div>
+    </div>
+</section>
 <?php endif; ?>
 
 <section class="mb-3">
