@@ -42,7 +42,7 @@ $stmtDatas = $pdo_master->prepare("
             END AS data_base
         FROM armazem_cr001
         WHERE EMPRESA = ?
-          AND CMCONTADOR <> 9
+          AND (CMCONTADOR <> 9 OR (CMCONTADOR = 9 AND CLICONTADOR = 1))
           AND COALESCE(STATUS, '') <> 'QT'
           AND COALESCE(excluido_firebird, 'N') = 'N'
           AND (
@@ -161,7 +161,7 @@ $datas = $stmtDatas->fetchAll(PDO::FETCH_COLUMN);
                     FROM armazem_cr001 c
                     WHERE c.DTLANC BETWEEN ? AND ?
                       AND c.EMPRESA = $empresa_id
-                      AND c.CMCONTADOR <> 9
+                      AND (c.CMCONTADOR <> 9 OR (c.CMCONTADOR = 9 AND c.CLICONTADOR = 1))
                       AND c.recebimento_id IS NULL
                       AND COALESCE(c.STATUS, '') <> 'QT'
                       AND COALESCE(c.excluido_firebird, 'N') = 'N'

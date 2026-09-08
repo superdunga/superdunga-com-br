@@ -50,7 +50,7 @@ $stmtPendCR = $pdo_master->prepare("
        AND cli.CLICONTADOR = c.CLICONTADOR
     WHERE c.DTLANC BETWEEN ? AND ?
       AND c.EMPRESA = ?
-      AND c.CMCONTADOR <> 9
+      AND (c.CMCONTADOR <> 9 OR (c.CMCONTADOR = 9 AND c.CLICONTADOR = 1))
       AND c.recebimento_id IS NULL
       AND COALESCE(c.STATUS, '') <> 'QT'
       AND COALESCE(c.excluido_firebird, 'N') = 'N'
