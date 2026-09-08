@@ -16,7 +16,7 @@ function cccVencimento(string $competencia, int $dia): string
 
 function lerCsvConciliacaoCartao(string $arquivo): array
 {
-    $linhas=lerCsvFaturaCartao($arquivo);foreach($linhas as &$l){$d=normalizarDescricaoCartao($l['descricao']);if(str_contains($d,'PAGTO DEBITO AUTOMATICO')||str_contains($d,'PAGAMENTO DE FATURA')||str_contains($d,'PAGAMENTO FATURA'))$l['natureza']='P';}unset($l);return $linhas;
+    $linhas=lerCsvFaturaCartao($arquivo);foreach($linhas as &$l){$d=normalizarDescricaoCartao($l['descricao']);if(strpos($d,'PAGTO DEBITO AUTOMATICO')!==false||strpos($d,'PAGAMENTO DE FATURA')!==false||strpos($d,'PAGAMENTO FATURA')!==false)$l['natureza']='P';}unset($l);return $linhas;
 }
 
 function cccCandidatos(PDO $pdo, array $item, string $vencimento): array
@@ -27,8 +27,8 @@ function cccCandidatos(PDO $pdo, array $item, string $vencimento): array
 
 function cccCandidatosSeguros(array $item,array $candidatos): array
 {
-    $d=normalizarDescricaoCartao($item['descricao']);$p=array_filter(preg_split('/\s+/',$d)?:[],static fn($v)=>mb_strlen($v)>=4&&!in_array($v,['COMPRA','CARTAO','PARCELA'],true));
-    return array_values(array_filter($candidatos,static function($c)use($p){$a=normalizarDescricaoCartao(($c['TITULO']??'').' '.($c['fornecedor']??''));foreach($p as $v)if(str_contains($a,$v))return true;return false;}));
+    $d=normalizarDescricaoCartao($item['descricao']);$p=array_filter(preg_split('/\s+/',$d)?:[],static function($v){return mb_strlen($v)>=4&&!in_array($v,['COMPRA','CARTAO','PARCELA'],true);});
+    return array_values(array_filter($candidatos,static function($c)use($p){$a=normalizarDescricaoCartao(($c['TITULO']??'').' '.($c['fornecedor']??''));foreach($p as $v)if(strpos($a,$v)!==false)return true;return false;}));
 }
 
 function cccVincular(PDO $pdo,int $empresaId,int $itemId,int $cp,int $usuarioId): void
