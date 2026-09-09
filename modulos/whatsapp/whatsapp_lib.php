@@ -25,6 +25,22 @@ function whatsappEnsureTables(PDO $pdo): void
     ");
 
     $pdo->exec("
+        CREATE TABLE IF NOT EXISTS whatsapp_gerencial_config (
+            id TINYINT UNSIGNED NOT NULL PRIMARY KEY,
+            nome VARCHAR(100) NOT NULL DEFAULT 'Gerencial',
+            provedor VARCHAR(20) NOT NULL DEFAULT 'EVOLUTION',
+            token VARCHAR(255) NOT NULL DEFAULT '',
+            api_base_url VARCHAR(255) NOT NULL DEFAULT 'https://api-whatsapp.wascript.com.br/api/enviar-texto',
+            evolution_token VARCHAR(255) NOT NULL DEFAULT '',
+            evolution_api_base_url VARCHAR(255) NOT NULL DEFAULT '',
+            instancia VARCHAR(120) NULL,
+            agendamento_token VARCHAR(64) NULL,
+            ativo CHAR(1) NOT NULL DEFAULT 'S',
+            atualizado_em DATETIME NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    ");
+
+    $pdo->exec("
         CREATE TABLE IF NOT EXISTS whatsapp_destinatarios (
             id INT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
             nome VARCHAR(120) NOT NULL,
@@ -163,6 +179,16 @@ function whatsappEnsureTables(PDO $pdo): void
         ");
         $stmt->execute();
     }
+
+    $pdo->exec("
+        INSERT IGNORE INTO whatsapp_gerencial_config
+            (id, nome, provedor, token, api_base_url, evolution_token, evolution_api_base_url, instancia, agendamento_token, ativo)
+        SELECT 1, 'WhatsApp Gerencial', provedor, token, api_base_url, evolution_token,
+               evolution_api_base_url, instancia, agendamento_token, ativo
+        FROM whatsapp_config
+        ORDER BY (instancia = 'Armazem_do_Dunga') DESC, (empresa_id = 4) DESC, id
+        LIMIT 1
+    ");
 
     $stmt = $pdo->query("SELECT agendamento_token FROM whatsapp_config WHERE empresa_id = 1 LIMIT 1");
     if (trim((string)$stmt->fetchColumn()) === '') {
@@ -335,8 +361,7 @@ function whatsappEnsureCompanyIndexes(PDO $pdo): void
 
 function whatsappConfig(PDO $pdo, int $empresaId = 1): ?array
 {
-    $stmt = $pdo->prepare("SELECT * FROM whatsapp_config WHERE empresa_id = ? LIMIT 1");
-    $stmt->execute([$empresaId]);
+    $stmt = $pdo->query("SELECT * FROM whatsapp_gerencial_config WHERE id = 1 LIMIT 1");
     $config = $stmt->fetch(PDO::FETCH_ASSOC);
     return $config ?: null;
 }

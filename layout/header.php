@@ -28,6 +28,7 @@ $descontoChequesUrl = ($appBaseUrl ?: '') . '/modulos/desconto_cheques/menu_desc
 $valeComprasUrl = ($appBaseUrl ?: '') . '/modulos/vale_compras/cadastro.php';
 $movimentacaoBaixaUrl = ($appBaseUrl ?: '') . '/modulos/movimentacao_baixa/menu_movimentacao_baixa.php';
 $whatsappUrl = ($appBaseUrl ?: '') . '/modulos/whatsapp/index.php';
+$whatsappOperacionalUrl = ($appBaseUrl ?: '') . '/modulos/whatsapp_operacional/index.php';
 $usuariosUrl = ($appBaseUrl ?: '') . '/modulos/usuarios/listar.php';
 $minhaSenhaUrl = ($appBaseUrl ?: '') . '/modulos/usuarios/minha_senha.php';
 $empresasUrl = ($appBaseUrl ?: '') . '/modulos/empresas/listar.php';
@@ -49,6 +50,7 @@ $mostrarDescontoChequesTopbar = true;
 $mostrarValeComprasTopbar = $empresaIdSessao === 2;
 $mostrarMovimentacaoBaixaTopbar = $empresaIdSessao === 2;
 $mostrarWhatsappTopbar = $nivelUsuario === 'MASTER';
+$mostrarWhatsappOperacionalTopbar = $nivelUsuario === 'MASTER';
 $mostrarUsuariosTopbar = $nivelUsuario === 'MASTER' || $nivelUsuario === 'ADMIN';
 $mostrarEmpresasTopbar = $nivelUsuario === 'MASTER';
 
@@ -92,6 +94,7 @@ if (isset($pdo_master) && function_exists('grupoPermitido') && function_exists('
     $mostrarValeComprasTopbar = $empresaIdSessao === 2 && grupoPermitido($pdo_master, $empresaIdSessao, 'Vale-Compras', $nivelUsuario);
     $mostrarMovimentacaoBaixaTopbar = $empresaIdSessao === 2 && grupoPermitido($pdo_master, $empresaIdSessao, 'Movimentacao/Baixa', $nivelUsuario);
     $mostrarWhatsappTopbar = $nivelUsuario === 'MASTER' && moduloPermitido($pdo_master, $empresaIdSessao, 'whatsapp', $nivelUsuario);
+    $mostrarWhatsappOperacionalTopbar = $nivelUsuario === 'MASTER' && moduloPermitido($pdo_master, $empresaIdSessao, 'whatsapp_operacional', $nivelUsuario);
     $mostrarUsuariosTopbar = in_array($nivelUsuario, ['MASTER', 'ADMIN'], true) && moduloPermitido($pdo_master, $empresaIdSessao, 'usuarios', $nivelUsuario);
     $mostrarEmpresasTopbar = $nivelUsuario === 'MASTER' && moduloPermitido($pdo_master, $empresaIdSessao, 'empresas', $nivelUsuario);
 }
@@ -113,6 +116,7 @@ $topbarModuleMenus = [
     '/modulos/vale_compras/' => $valeComprasUrl,
     '/modulos/movimentacao_baixa/' => $movimentacaoBaixaUrl,
     '/modulos/whatsapp/' => $whatsappUrl,
+    '/modulos/whatsapp_operacional/' => $whatsappOperacionalUrl,
     '/modulos/usuarios/' => $usuariosUrl,
     '/modulos/empresas/' => $empresasUrl,
 ];
@@ -663,7 +667,12 @@ $bootstrapCssUrl = ($appBaseUrl ?: '') . '/assets/bootstrap/bootstrap.min.css';
                 <?php endif; ?>
                 <?php if ($mostrarWhatsappTopbar): ?>
                     <li class="nav-item">
-                        <a class="nav-link" href="<?= htmlspecialchars($whatsappUrl) ?>">WhatsApp</a>
+                        <a class="nav-link" href="<?= htmlspecialchars($whatsappUrl) ?>">WhatsApp Gerencial</a>
+                    </li>
+                <?php endif; ?>
+                <?php if ($mostrarWhatsappOperacionalTopbar): ?>
+                    <li class="nav-item">
+                        <a class="nav-link" href="<?= htmlspecialchars($whatsappOperacionalUrl) ?>">WhatsApp Operacional</a>
                     </li>
                 <?php endif; ?>
                 <?php if ($mostrarUsuariosTopbar): ?>

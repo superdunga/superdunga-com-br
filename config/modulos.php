@@ -81,7 +81,8 @@ function sistemaModulosPadrao(): array
         ['codigo' => 'movimentacao_baixa_access_legado', 'grupo' => 'Movimentacao/Baixa', 'nome' => 'Analise Access', 'url' => 'modulos/movimentacao_baixa/access_legado.php', 'ordem' => 338, 'somente_master' => true],
         ['codigo' => 'movimentacao_baixa_access_tabela', 'grupo' => 'Movimentacao/Baixa', 'nome' => 'Tabela Access', 'url' => 'modulos/movimentacao_baixa/access_tabela.php', 'ordem' => 339, 'somente_master' => true],
 
-        ['codigo' => 'whatsapp', 'grupo' => 'Administracao', 'nome' => 'Mensagens WhatsApp', 'url' => 'modulos/whatsapp/index.php', 'ordem' => 310],
+        ['codigo' => 'whatsapp', 'grupo' => 'Administracao', 'nome' => 'WhatsApp Gerencial', 'url' => 'modulos/whatsapp/index.php', 'ordem' => 310],
+        ['codigo' => 'whatsapp_operacional', 'grupo' => 'Administracao', 'nome' => 'WhatsApp Operacional', 'url' => 'modulos/whatsapp_operacional/index.php', 'ordem' => 311],
         ['codigo' => 'usuarios', 'grupo' => 'Administracao', 'nome' => 'Gerenciar Usuarios', 'url' => 'modulos/usuarios/listar.php', 'ordem' => 320],
         ['codigo' => 'usuarios_permissoes', 'grupo' => 'Administracao', 'nome' => 'Permissoes por Perfil', 'url' => 'modulos/usuarios/permissoes.php', 'ordem' => 325],
         ['codigo' => 'usuarios_permissoes_usuario', 'grupo' => 'Administracao', 'nome' => 'Permissoes por Usuario', 'url' => 'modulos/usuarios/permissoes_usuario.php', 'ordem' => 326],

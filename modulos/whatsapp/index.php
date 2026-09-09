@@ -106,11 +106,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 throw new Exception('Informe o nome da instancia da Evolution API.');
             }
             $stmt = $pdo_master->prepare("
-                INSERT INTO whatsapp_config
-                    (id, empresa_id, nome, provedor, token, api_base_url, evolution_token, evolution_api_base_url, instancia, ativo)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO whatsapp_gerencial_config
+                    (id, nome, provedor, token, api_base_url, evolution_token, evolution_api_base_url, instancia, ativo)
+                VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON DUPLICATE KEY UPDATE
-                    empresa_id = VALUES(empresa_id),
                     nome = VALUES(nome),
                     provedor = VALUES(provedor),
                     token = VALUES(token),
@@ -121,9 +120,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     ativo = VALUES(ativo)
             ");
             $stmt->execute([
-                $empresaId,
-                $empresaId,
-                postValue('nome', 'Principal'),
+                postValue('nome', 'WhatsApp Gerencial'),
                 $provedor,
                 postValue('wascript_token'),
                 postValue('wascript_api_base_url', 'https://api-whatsapp.wascript.com.br/api/enviar-texto'),
@@ -133,12 +130,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 postValue('ativo', 'S') === 'S' ? 'S' : 'N',
             ]);
 
-            $stmtToken = $pdo_master->prepare("SELECT agendamento_token FROM whatsapp_config WHERE empresa_id = ? LIMIT 1");
-            $stmtToken->execute([$empresaId]);
+            $stmtToken = $pdo_master->query("SELECT agendamento_token FROM whatsapp_gerencial_config WHERE id = 1 LIMIT 1");
             if (trim((string)$stmtToken->fetchColumn()) === '') {
                 $tokenAgenda = function_exists('random_bytes') ? bin2hex(random_bytes(24)) : md5(uniqid('', true));
-                $stmtToken = $pdo_master->prepare("UPDATE whatsapp_config SET agendamento_token = ? WHERE empresa_id = ?");
-                $stmtToken->execute([$tokenAgenda, $empresaId]);
+                $stmtToken = $pdo_master->prepare("UPDATE whatsapp_gerencial_config SET agendamento_token = ? WHERE id = 1");
+                $stmtToken->execute([$tokenAgenda]);
             }
 
             $alerta = 'Configuracao salva.';
@@ -474,8 +470,8 @@ require __DIR__ . '/../../layout/header.php';
 <div class="d-flex flex-column flex-lg-row align-items-lg-center justify-content-between gap-3 mb-3">
     <div>
         <span class="badge text-bg-success mb-2">WhatsApp</span>
-        <h1 class="h3 fw-bold mb-1">Mensagens Integradas</h1>
-        <p class="text-muted mb-0">Configure a API, cadastre destinatarios, envie mensagens e acompanhe o historico.</p>
+        <h1 class="h3 fw-bold mb-1">WhatsApp Gerencial</h1>
+        <p class="text-muted mb-0">Rotinas gerenciais de todas as empresas pela instancia compartilhada.</p>
     </div>
     <a href="../../index.php" class="btn btn-outline-secondary">Voltar ao painel</a>
 </div>
@@ -517,7 +513,7 @@ require __DIR__ . '/../../layout/header.php';
     <div class="col-xl-5">
         <div class="card shadow-sm h-100">
             <div class="card-header">
-                <h2 class="h5 mb-0">Configuracao da API</h2>
+                <h2 class="h5 mb-0">Instancia gerencial compartilhada</h2>
             </div>
             <div class="card-body">
                 <form method="post" class="row g-3">
@@ -525,7 +521,7 @@ require __DIR__ . '/../../layout/header.php';
 
                     <div class="col-md-6">
                         <label class="form-label">Nome</label>
-                        <input type="text" name="nome" class="form-control" value="<?= htmlspecialchars($config['nome'] ?? 'Principal') ?>" required>
+                        <input type="text" name="nome" class="form-control" value="<?= htmlspecialchars($config['nome'] ?? 'WhatsApp Gerencial') ?>" required>
                     </div>
 
                     <div class="col-md-6">

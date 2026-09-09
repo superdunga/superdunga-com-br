@@ -12,7 +12,7 @@ try {
 
     $stmtToken = $pdo_master->prepare("
         SELECT COUNT(*)
-        FROM whatsapp_config
+        FROM whatsapp_gerencial_config
         WHERE agendamento_token = ?
           AND agendamento_token IS NOT NULL
           AND agendamento_token <> ''
