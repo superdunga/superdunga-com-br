@@ -8,7 +8,10 @@ exigirNivel('MASTER');
 whatsappEnsureTables($pdo_master);
 whatsappOperacionalEnsureTables($pdo_master);
 $empresaId = (int)($_SESSION['empresa_id'] ?? 0);
-$csrf = $_SESSION['csrf_whatsapp_operacional'] ??= bin2hex(random_bytes(32));
+if (empty($_SESSION['csrf_whatsapp_operacional'])) {
+    $_SESSION['csrf_whatsapp_operacional'] = bin2hex(random_bytes(32));
+}
+$csrf = $_SESSION['csrf_whatsapp_operacional'];
 $alerta = null;
 $erro = null;
 
