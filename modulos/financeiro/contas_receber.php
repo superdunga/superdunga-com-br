@@ -23,6 +23,14 @@ $opcoes = [
         'icone' => 'RC',
         'botao' => 'btn-success',
     ],
+    [
+        'titulo' => 'Clientes com Fechamento Mensal',
+        'descricao' => 'Selecione na CR002 os clientes que receberao a relacao mensal de compras pelo WhatsApp.',
+        'href' => 'clientes_fechamento_mensal.php',
+        'modulo' => 'financeiro_clientes_fechamento_mensal',
+        'icone' => 'FM',
+        'botao' => 'btn-primary',
+    ],
 ];
 
 $opcoes = filtrarOpcoesPorModulo($pdo_master, $empresaId, $opcoes);

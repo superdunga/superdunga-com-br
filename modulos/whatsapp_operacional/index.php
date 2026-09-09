@@ -84,6 +84,57 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 throw new Exception('Envio recusado: ' . $resultado['erro']);
             }
             $alerta = 'Mensagem operacional enviada.';
+        } elseif ($acao === 'enviar_fechamentos') {
+            $inicio = trim((string)($_POST['data_inicio'] ?? ''));
+            $fim = trim((string)($_POST['data_fim'] ?? ''));
+            if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $inicio) || !preg_match('/^\d{4}-\d{2}-\d{2}$/', $fim) || $inicio > $fim) {
+                throw new Exception('Informe um intervalo de compras valido.');
+            }
+            $selecionados = array_values(array_unique(array_filter(array_map('intval', (array)($_POST['clientes_fechamento'] ?? [])))));
+            if (empty($selecionados)) {
+                throw new Exception('Selecione pelo menos um cliente para envio.');
+            }
+            $configEnvio = whatsappOperacionalConfig($pdo_master, $empresaId);
+            if (!$configEnvio || ($configEnvio['ativo'] ?? 'N') !== 'S') {
+                throw new Exception('A instancia operacional desta empresa nao esta configurada e ativa.');
+            }
+            $clientesPeriodo = whatsappOperacionalClientesFechamento($pdo_master, $empresaId, $inicio, $fim);
+            $clientesPorId = [];
+            foreach ($clientesPeriodo as $clientePeriodo) {
+                $clientesPorId[(int)$clientePeriodo['CLICONTADOR']] = $clientePeriodo;
+            }
+            $empresaNome = whatsappNomeEmpresa($pdo_master, $empresaId);
+            $forcarReenvio = ($_POST['forcar_reenvio'] ?? 'N') === 'S';
+            $ok = 0; $falha = 0; $ignorados = 0;
+            foreach ($selecionados as $clicontador) {
+                $cliente = $clientesPorId[$clicontador] ?? null;
+                if (!$cliente || trim((string)$cliente['CELULAR']) === '') {
+                    $ignorados++;
+                    continue;
+                }
+                if (!$forcarReenvio && !empty($cliente['ultimo_envio'])) {
+                    $ignorados++;
+                    continue;
+                }
+                $titulos = whatsappOperacionalTitulosCliente($pdo_master, $empresaId, $clicontador, $inicio, $fim);
+                if (empty($titulos)) {
+                    $ignorados++;
+                    continue;
+                }
+                $diretorio = dirname(__DIR__, 2) . '/storage/whatsapp_fechamentos_operacionais/empresa_' . $empresaId . '/' . str_replace('-', '_', $fim);
+                $nomeArquivo = 'fechamento_' . $clicontador . '_' . str_replace('-', '', $inicio) . '_' . str_replace('-', '', $fim) . '.pdf';
+                $arquivo = $diretorio . '/' . $nomeArquivo;
+                whatsappOperacionalGerarPdf($arquivo, $empresaNome, $cliente, $inicio, $fim, $titulos);
+                $resultado = whatsappOperacionalEnviarDocumento($configEnvio, (string)$cliente['CELULAR'], $arquivo, $nomeArquivo, 'Relacao de compras em aberto - ' . date('d/m/Y', strtotime($inicio)) . ' a ' . date('d/m/Y', strtotime($fim)));
+                $stmtRegistro = $pdo_master->prepare("
+                    INSERT INTO whatsapp_operacional_fechamentos
+                        (empresa_id,clicontador,data_inicio,data_fim,quantidade_titulos,valor_aberto,arquivo,status,resposta_api,erro,usuario_id)
+                    VALUES (?,?,?,?,?,?,?,?,?,?,?)
+                ");
+                $stmtRegistro->execute([$empresaId,$clicontador,$inicio,$fim,count($titulos),array_sum(array_map(function($t){return (float)$t['VLRRESTANTE'];},$titulos)),$nomeArquivo,$resultado['ok']?'OK':'ERRO',$resultado['resposta'],$resultado['erro'],$_SESSION['usuario_id'] ?? null]);
+                if ($resultado['ok']) { $ok++; } else { $falha++; }
+            }
+            $alerta = "Fechamentos processados: {$ok} enviado(s), {$falha} falha(s) e {$ignorados} ignorado(s).";
         }
     } catch (Throwable $e) {
         $erro = $e->getMessage();
@@ -97,6 +148,21 @@ $destinatarios = $stmt->fetchAll(PDO::FETCH_ASSOC);
 $stmt = $pdo_master->prepare("SELECT * FROM whatsapp_operacional_envios WHERE empresa_id=? ORDER BY enviado_em DESC,id DESC LIMIT 50");
 $stmt->execute([$empresaId]);
 $historico = $stmt->fetchAll(PDO::FETCH_ASSOC);
+$mesAnterior = new DateTime('first day of previous month');
+$inicioFechamento = trim((string)($_GET['data_inicio'] ?? $mesAnterior->format('Y-m-d')));
+$fimFechamento = trim((string)($_GET['data_fim'] ?? $mesAnterior->format('Y-m-t')));
+$clientesFechamento = [];
+if (preg_match('/^\d{4}-\d{2}-\d{2}$/', $inicioFechamento) && preg_match('/^\d{4}-\d{2}-\d{2}$/', $fimFechamento) && $inicioFechamento <= $fimFechamento) {
+    $clientesFechamento = whatsappOperacionalClientesFechamento($pdo_master, $empresaId, $inicioFechamento, $fimFechamento);
+}
+$stmt = $pdo_master->prepare("
+    SELECT f.*, COALESCE(NULLIF(c.NOME,''),NULLIF(c.APELIDO,''),CONCAT('Cliente ',f.clicontador)) AS nome_cliente
+    FROM whatsapp_operacional_fechamentos f
+    LEFT JOIN armazem_cr002 c ON c.EMPRESA=f.empresa_id AND c.CLICONTADOR=f.clicontador
+    WHERE f.empresa_id=? ORDER BY f.enviado_em DESC,f.id DESC LIMIT 50
+");
+$stmt->execute([$empresaId]);
+$historicoFechamentos = $stmt->fetchAll(PDO::FETCH_ASSOC);
 require __DIR__ . '/../../layout/header.php';
 ?>
 <div class="d-flex align-items-center justify-content-between mb-3">
@@ -168,6 +234,30 @@ require __DIR__ . '/../../layout/header.php';
         <div class="col-lg-2 d-flex align-items-end"><button class="btn btn-success w-100">Enviar</button></div>
     </form>
 </div></div>
+
+<div class="card shadow-sm mb-3">
+    <div class="card-header d-flex flex-wrap align-items-center justify-content-between gap-2"><h2 class="h5 mb-0">Fechamento mensal dos clientes</h2><a href="../financeiro/clientes_fechamento_mensal.php" class="btn btn-sm btn-outline-primary">Administrar clientes</a></div>
+    <div class="card-body">
+        <form method="get" class="row g-2 align-items-end mb-3">
+            <div class="col-md-4"><label class="form-label">Compras de</label><input type="date" name="data_inicio" class="form-control" value="<?= htmlspecialchars($inicioFechamento) ?>" required></div>
+            <div class="col-md-4"><label class="form-label">Compras ate</label><input type="date" name="data_fim" class="form-control" value="<?= htmlspecialchars($fimFechamento) ?>" required></div>
+            <div class="col-md-4"><button class="btn btn-primary w-100">Carregar previa</button></div>
+        </form>
+        <form method="post" onsubmit="return confirm('Enviar os PDFs aos clientes selecionados pela instancia operacional?')">
+            <input type="hidden" name="csrf" value="<?= htmlspecialchars($csrf) ?>"><input type="hidden" name="acao" value="enviar_fechamentos"><input type="hidden" name="data_inicio" value="<?= htmlspecialchars($inicioFechamento) ?>"><input type="hidden" name="data_fim" value="<?= htmlspecialchars($fimFechamento) ?>">
+            <div class="table-responsive"><table class="table table-sm table-hover align-middle"><thead><tr><th style="width:42px"><input type="checkbox" id="wo-fech-todos" title="Selecionar todos aptos"></th><th>Cliente</th><th>Celular</th><th class="text-end">Titulos</th><th class="text-end">Em aberto</th><th>Situacao</th></tr></thead><tbody>
+            <?php foreach($clientesFechamento as $c): $semCelular=trim((string)$c['CELULAR'])===''; $jaEnviado=!empty($c['ultimo_envio']); ?><tr><td><input type="checkbox" class="wo-fech-check" name="clientes_fechamento[]" value="<?= (int)$c['CLICONTADOR'] ?>" <?= $semCelular||$jaEnviado?'disabled':'' ?>></td><td><div class="fw-semibold"><?= htmlspecialchars($c['nome_cliente']) ?></div><div class="small text-muted">Cod. <?= (int)$c['CLICONTADOR'] ?></div></td><td><?= htmlspecialchars($c['CELULAR'] ?: 'Sem celular') ?></td><td class="text-end"><?= (int)$c['quantidade_titulos'] ?></td><td class="text-end fw-semibold">R$ <?= number_format((float)$c['valor_aberto'],2,',','.') ?></td><td><?php if($semCelular): ?><span class="badge text-bg-warning">Sem celular</span><?php elseif($jaEnviado): ?><span class="badge text-bg-success">Enviado <?= htmlspecialchars(date('d/m/Y H:i',strtotime($c['ultimo_envio']))) ?></span><?php else: ?><span class="badge text-bg-primary">Pronto</span><?php endif; ?></td></tr><?php endforeach; ?>
+            <?php if(!$clientesFechamento): ?><tr><td colspan="6" class="text-center text-muted py-4">Nenhum cliente marcado possui compras em aberto neste intervalo.</td></tr><?php endif; ?>
+            </tbody></table></div>
+            <div class="d-flex flex-column flex-md-row align-items-md-center justify-content-between gap-2"><div class="form-check"><input class="form-check-input" type="checkbox" name="forcar_reenvio" value="S" id="forcar-reenvio"><label class="form-check-label" for="forcar-reenvio">Permitir reenvio do mesmo intervalo</label></div><button class="btn btn-success" <?= !$clientesFechamento?'disabled':'' ?>>Enviar PDFs selecionados</button></div>
+        </form>
+    </div>
+</div>
+<script>document.getElementById('wo-fech-todos').addEventListener('change',function(){document.querySelectorAll('.wo-fech-check:not(:disabled)').forEach(function(c){c.checked=document.getElementById('wo-fech-todos').checked;});});document.getElementById('forcar-reenvio').addEventListener('change',function(){document.querySelectorAll('.wo-fech-check').forEach(function(c){if(c.closest('tr').querySelector('.text-bg-success')){c.disabled=!document.getElementById('forcar-reenvio').checked;}});});</script>
+
+<div class="card shadow-sm mb-3"><div class="card-header"><h2 class="h5 mb-0">Historico dos fechamentos</h2></div><div class="table-responsive"><table class="table table-striped table-sm mb-0"><thead><tr><th>Envio</th><th>Cliente</th><th>Intervalo</th><th class="text-end">Titulos</th><th class="text-end">Em aberto</th><th>Status</th><th>Erro</th></tr></thead><tbody>
+<?php foreach($historicoFechamentos as $h): ?><tr><td class="text-nowrap"><?= htmlspecialchars(date('d/m/Y H:i',strtotime($h['enviado_em']))) ?></td><td><?= htmlspecialchars($h['nome_cliente']) ?></td><td><?= htmlspecialchars(date('d/m/Y',strtotime($h['data_inicio'])).' a '.date('d/m/Y',strtotime($h['data_fim']))) ?></td><td class="text-end"><?= (int)$h['quantidade_titulos'] ?></td><td class="text-end">R$ <?= number_format((float)$h['valor_aberto'],2,',','.') ?></td><td><span class="badge <?= $h['status']==='OK'?'text-bg-success':'text-bg-danger' ?>"><?= htmlspecialchars($h['status']) ?></span></td><td><?= htmlspecialchars($h['erro'] ?? '') ?></td></tr><?php endforeach; ?>
+<?php if(!$historicoFechamentos): ?><tr><td colspan="7" class="text-center text-muted py-3">Nenhum fechamento operacional enviado.</td></tr><?php endif; ?></tbody></table></div></div>
 
 <div class="card shadow-sm"><div class="card-header"><h2 class="h5 mb-0">Historico operacional</h2></div><div class="table-responsive"><table class="table table-striped table-sm mb-0"><thead><tr><th>Data</th><th>Destino</th><th>Mensagem</th><th>Status</th><th>Erro</th></tr></thead><tbody>
 <?php foreach($historico as $h): ?><tr><td class="text-nowrap"><?= htmlspecialchars(date('d/m/Y H:i',strtotime($h['enviado_em']))) ?></td><td><?= htmlspecialchars($h['destino_nome']) ?></td><td><?= nl2br(htmlspecialchars($h['mensagem'])) ?></td><td><span class="badge <?= $h['status']==='OK'?'text-bg-success':'text-bg-danger' ?>"><?= htmlspecialchars($h['status']) ?></span></td><td><?= htmlspecialchars($h['erro'] ?? '') ?></td></tr><?php endforeach; ?>

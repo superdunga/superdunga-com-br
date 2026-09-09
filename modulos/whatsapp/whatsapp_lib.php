@@ -309,6 +309,12 @@ function whatsappEnsureTables(PDO $pdo): void
         }
     } catch (Throwable $e) {
     }
+
+    $pdo->exec("
+        UPDATE whatsapp_rotinas
+        SET ativo = 'N'
+        WHERE gerador_sistema = 'fechamento_compras_clientes_pdf'
+    ");
 }
 
 function whatsappEnsureColumn(PDO $pdo, string $table, string $column, string $alterSql): void
