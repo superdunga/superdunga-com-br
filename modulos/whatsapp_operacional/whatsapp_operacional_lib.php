@@ -176,6 +176,7 @@ function whatsappOperacionalClientesFechamento(PDO $pdo, int $empresaId, string 
         ) ok ON ok.empresa_id=c.EMPRESA AND ok.clicontador=c.CLICONTADOR
              AND ok.data_inicio=? AND ok.data_fim=?
         WHERE c.EMPRESA=?
+          AND cr.CMCONTADOR=9
           AND DATE(COALESCE(v.DTVENDA,cr.DTEMISSAO)) BETWEEN ? AND ?
           AND (cr.STATUS IS NULL OR cr.STATUS<>'QT')
           AND COALESCE(cr.VLRRESTANTE,0)>0
@@ -198,6 +199,7 @@ function whatsappOperacionalTitulosCliente(PDO $pdo, int $empresaId, int $clicon
         INNER JOIN armazem_cr002 cli ON cli.EMPRESA=cr.EMPRESA AND cli.CLICONTADOR=cr.CLICONTADOR
         LEFT JOIN armazem_est007 v ON v.EMPRESA=cr.EMPRESA AND v.VENDACONTADOR=cr.NUMDOCORIGEM
         WHERE cr.EMPRESA=? AND cr.CLICONTADOR=?
+          AND cr.CMCONTADOR=9
           AND DATE(COALESCE(v.DTVENDA,cr.DTEMISSAO)) BETWEEN ? AND ?
           AND (cr.STATUS IS NULL OR cr.STATUS<>'QT')
           AND COALESCE(cr.VLRRESTANTE,0)>0

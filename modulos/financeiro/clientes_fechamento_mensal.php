@@ -57,8 +57,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
 $busca = trim((string)($_GET['q'] ?? ''));
 $nomeFiltro = trim((string)($_GET['nome'] ?? ''));
-$dataCompraAposFiltro = trim((string)($_GET['data_apos'] ?? ''));
-$dataCompraFiltro = trim((string)($_GET['data'] ?? ''));
+$primeiraCompraInicial = trim((string)($_GET['primeira_compra_inicial'] ?? ''));
+$primeiraCompraFinal = trim((string)($_GET['primeira_compra_final'] ?? ''));
+$ultimaCompraInicial = trim((string)($_GET['ultima_compra_inicial'] ?? ''));
+$ultimaCompraFinal = trim((string)($_GET['ultima_compra_final'] ?? ''));
 $semCelularFiltro = ($_GET['sem_celular'] ?? '') === 'S';
 $exibirZerados = ($_GET['zerados'] ?? 'S') === 'N' ? 'N' : 'S';
 $situacao = in_array(($_GET['situacao'] ?? ''), ['marcados', 'nao_marcados', 'sem_celular'], true) ? $_GET['situacao'] : '';
@@ -74,13 +76,21 @@ if ($nomeFiltro !== '') {
     $where[] = "COALESCE(NULLIF(c.NOME,''),NULLIF(c.APELIDO,''),'') LIKE ?";
     $params[] = '%' . $nomeFiltro . '%';
 }
-if (preg_match('/^\d{4}-\d{2}-\d{2}$/', $dataCompraAposFiltro)) {
-    $where[] = 'compras.data_ultima_compra >= ?';
-    $params[] = $dataCompraAposFiltro;
+if (preg_match('/^\d{4}-\d{2}-\d{2}$/', $primeiraCompraInicial)) {
+    $where[] = 'saldo.data_primeira_compra_aberta >= ?';
+    $params[] = $primeiraCompraInicial;
 }
-if (preg_match('/^\d{4}-\d{2}-\d{2}$/', $dataCompraFiltro)) {
+if (preg_match('/^\d{4}-\d{2}-\d{2}$/', $primeiraCompraFinal)) {
+    $where[] = 'saldo.data_primeira_compra_aberta <= ?';
+    $params[] = $primeiraCompraFinal;
+}
+if (preg_match('/^\d{4}-\d{2}-\d{2}$/', $ultimaCompraInicial)) {
+    $where[] = 'compras.data_ultima_compra >= ?';
+    $params[] = $ultimaCompraInicial;
+}
+if (preg_match('/^\d{4}-\d{2}-\d{2}$/', $ultimaCompraFinal)) {
     $where[] = 'compras.data_ultima_compra <= ?';
-    $params[] = $dataCompraFiltro;
+    $params[] = $ultimaCompraFinal;
 }
 if ($semCelularFiltro) {
     $where[] = "COALESCE(NULLIF(TRIM(c.CELULAR), ''), '') = ''";
@@ -109,6 +119,7 @@ $stmt = $pdo_master->prepare("
         FROM armazem_cr001 cr
         LEFT JOIN armazem_est007 v ON v.EMPRESA=cr.EMPRESA AND v.VENDACONTADOR=cr.NUMDOCORIGEM
         WHERE cr.EMPRESA=?
+          AND cr.CMCONTADOR=9
           AND DATE(COALESCE(v.DTVENDA,cr.DTEMISSAO))<=?
           AND (cr.STATUS IS NULL OR cr.STATUS<>'QT')
           AND COALESCE(cr.VLRRESTANTE,0)>0
@@ -116,10 +127,13 @@ $stmt = $pdo_master->prepare("
         GROUP BY cr.EMPRESA,cr.CLICONTADOR
     ) saldo ON saldo.EMPRESA=c.EMPRESA AND saldo.CLICONTADOR=c.CLICONTADOR
     LEFT JOIN (
-        SELECT EMPRESA,CLIENTE AS CLICONTADOR,MAX(DATE(DTVENDA)) AS data_ultima_compra
-        FROM armazem_est007
-        WHERE EMPRESA=? AND CLIENTE IS NOT NULL
-        GROUP BY EMPRESA,CLIENTE
+        SELECT cr.EMPRESA,cr.CLICONTADOR,MAX(DATE(COALESCE(v.DTVENDA,cr.DTEMISSAO))) AS data_ultima_compra
+        FROM armazem_cr001 cr
+        LEFT JOIN armazem_est007 v ON v.EMPRESA=cr.EMPRESA AND v.VENDACONTADOR=cr.NUMDOCORIGEM
+        WHERE cr.EMPRESA=?
+          AND cr.CMCONTADOR=9
+          AND COALESCE(cr.excluido_firebird,'N')<>'S'
+        GROUP BY cr.EMPRESA,cr.CLICONTADOR
     ) compras ON compras.EMPRESA=c.EMPRESA AND compras.CLICONTADOR=c.CLICONTADOR
     WHERE " . implode(' AND ', $where) . "
     ORDER BY NOME, c.CLICONTADOR
@@ -146,9 +160,11 @@ require __DIR__ . '/../../layout/header.php';
     <div class="card-body">
         <form method="get" class="row g-3 align-items-end">
             <div class="col-lg-4 col-md-6"><label class="form-label">Nome</label><input name="nome" class="form-control" value="<?= htmlspecialchars($nomeFiltro) ?>" placeholder="Nome do cliente"></div>
-            <div class="col-lg-3 col-md-6"><label class="form-label">Última compra após</label><input type="date" name="data_apos" class="form-control" value="<?= htmlspecialchars($dataCompraAposFiltro) ?>"></div>
-            <div class="col-lg-3 col-md-6"><label class="form-label">Última compra até</label><input type="date" name="data" class="form-control" value="<?= htmlspecialchars($dataCompraFiltro) ?>"></div>
-            <div class="col-lg-2 col-md-6"><div class="form-check pb-2"><input class="form-check-input" type="checkbox" name="sem_celular" value="S" id="filtro-sem-celular" <?= $semCelularFiltro?'checked':'' ?>><label class="form-check-label" for="filtro-sem-celular">Somente sem celular</label></div></div>
+            <div class="col-lg-4 col-md-6"><label class="form-label">Primeira compra em aberto - inicial</label><input type="date" name="primeira_compra_inicial" class="form-control" value="<?= htmlspecialchars($primeiraCompraInicial) ?>"></div>
+            <div class="col-lg-4 col-md-6"><label class="form-label">Primeira compra em aberto - final</label><input type="date" name="primeira_compra_final" class="form-control" value="<?= htmlspecialchars($primeiraCompraFinal) ?>"></div>
+            <div class="col-lg-4 col-md-6"><label class="form-label">Última compra - inicial</label><input type="date" name="ultima_compra_inicial" class="form-control" value="<?= htmlspecialchars($ultimaCompraInicial) ?>"></div>
+            <div class="col-lg-4 col-md-6"><label class="form-label">Última compra - final</label><input type="date" name="ultima_compra_final" class="form-control" value="<?= htmlspecialchars($ultimaCompraFinal) ?>"></div>
+            <div class="col-lg-4 col-md-6 d-flex align-items-end"><div class="form-check pb-2"><input class="form-check-input" type="checkbox" name="sem_celular" value="S" id="filtro-sem-celular" <?= $semCelularFiltro?'checked':'' ?>><label class="form-check-label" for="filtro-sem-celular">Somente sem celular</label></div></div>
             <div class="col-lg-3 col-md-6"><label class="form-label">Fechamento mensal</label><select name="situacao" class="form-select"><option value="">Todos</option><option value="marcados" <?= $situacao==='marcados'?'selected':'' ?>>Marcados</option><option value="nao_marcados" <?= $situacao==='nao_marcados'?'selected':'' ?>>Nao marcados</option></select></div>
             <div class="col-lg-3 col-md-6"><label class="form-label">Exibir valores zerados</label><select name="zerados" class="form-select"><option value="S" <?= $exibirZerados==='S'?'selected':'' ?>>Sim</option><option value="N" <?= $exibirZerados==='N'?'selected':'' ?>>Nao</option></select></div>
             <div class="col-lg-3"><button class="btn btn-primary w-100">Filtrar</button></div>
