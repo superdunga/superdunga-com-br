@@ -496,6 +496,14 @@ function whatsappOperacionalEnviarDocumento(array $config, string $numero, strin
     $ok=$resposta!==false&&$http>=200&&$http<300;$json=$ok?json_decode((string)$resposta,true):null;$mensagemId=(string)($json['key']['id']??$json['messageId']??'');return ['ok'=>$ok,'resposta'=>$resposta===false?null:$resposta,'erro'=>$ok?null:($resposta===false?$erroCurl:'HTTP '.$http.' - '.$resposta),'mensagem_id'=>$mensagemId];
 }
 
+function whatsappOperacionalMensagemFechamento(string $nomeCliente, string $dataLimite): string
+{
+    return "Olá, {$nomeCliente}! Tudo bem?\n\n"
+        . 'Segue em anexo a relação das compras em aberto até ' . date('d/m/Y', strtotime($dataLimite)) . ", para sua conferência e organização.\n\n"
+        . "Caso tenha alguma dúvida ou identifique alguma divergência, estamos à disposição.\n\n"
+        . 'Agradecemos pela parceria e pela confiança de sempre!';
+}
+
 function whatsappOperacionalFeriados(PDO $pdo, int $empresaId, int $ano): array
 {
     $feriados = [];
@@ -803,7 +811,7 @@ function whatsappOperacionalExecutarAutomacao(PDO $pdo): array
     whatsappOperacionalGerarPdf($arquivo,whatsappNomeEmpresa($pdo,(int)$item['empresa_id']),$cliente,'ATE',(string)$item['data_limite'],$titulos);
     $legenda=$cobranca
         ? 'Prezado(a) '.$cliente['nome_cliente'].', identificamos titulos vencidos em aberto. Encaminhamos a relacao atualizada de todos os titulos pendentes para conferencia. Solicitamos a regularizacao ou o contato com a empresa para esclarecimentos.'
-        : 'Relacao de compras em aberto ate '.date('d/m/Y',strtotime((string)$item['data_limite']));
+        : whatsappOperacionalMensagemFechamento((string)$cliente['nome_cliente'],(string)$item['data_limite']);
     $envio=whatsappOperacionalEnviarDocumento($config,(string)$cliente['CELULAR'],$arquivo,$nome,$legenda);
     $total=array_sum(array_map(function($t){return (float)$t['VLRRESTANTE'];},$titulos));
     if ($envio['ok']) {

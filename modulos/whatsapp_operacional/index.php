@@ -300,7 +300,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $nomeArquivo = 'fechamento_' . $clicontador . '_ate_' . str_replace('-', '', $fim) . '.pdf';
                 $arquivo = $diretorio . '/' . $nomeArquivo;
                 whatsappOperacionalGerarPdf($arquivo, $empresaNome, $cliente, 'ATE', $fim, $titulos);
-                $resultado = whatsappOperacionalEnviarDocumento($configEnvio, (string)$cliente['CELULAR'], $arquivo, $nomeArquivo, 'Relacao de compras em aberto ate ' . date('d/m/Y', strtotime($fim)));
+                $resultado = whatsappOperacionalEnviarDocumento($configEnvio, (string)$cliente['CELULAR'], $arquivo, $nomeArquivo, whatsappOperacionalMensagemFechamento((string)$cliente['nome_cliente'], $fim));
                 $stmtRegistro = $pdo_master->prepare("
                     INSERT INTO whatsapp_operacional_fechamentos
                         (empresa_id,clicontador,data_inicio,data_fim,quantidade_titulos,valor_aberto,arquivo,status,resposta_api,erro,usuario_id)
