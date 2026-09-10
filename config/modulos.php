@@ -31,6 +31,7 @@ function sistemaModulosPadrao(): array
         ['codigo' => 'financeiro', 'grupo' => 'Financeiro', 'nome' => 'Financeiro', 'url' => 'modulos/financeiro/menu_financeiro.php', 'ordem' => 260],
         ['codigo' => 'financeiro_contas_receber', 'grupo' => 'Financeiro', 'nome' => 'Contas a Receber - Clientes', 'url' => 'modulos/financeiro/contas_receber_clientes.php', 'ordem' => 270],
         ['codigo' => 'financeiro_clientes_fechamento_mensal', 'grupo' => 'Financeiro', 'nome' => 'Clientes com Fechamento Mensal', 'url' => 'modulos/financeiro/clientes_fechamento_mensal.php', 'ordem' => 271],
+        ['codigo' => 'financeiro_clientes_cobranca_automatica', 'grupo' => 'Financeiro', 'nome' => 'Clientes com Cobranca Automatica', 'url' => 'modulos/financeiro/clientes_cobranca_automatica.php', 'ordem' => 272],
         ['codigo' => 'financeiro_conciliacao_extratos', 'grupo' => 'Financeiro', 'nome' => 'Conciliacao de Extratos', 'url' => 'modulos/financeiro/conciliacao_extratos.php', 'ordem' => 285],
         ['codigo' => 'financeiro_conciliacao_cartao', 'grupo' => 'Financeiro', 'nome' => 'Conciliacao de Cartao de Credito', 'url' => 'modulos/financeiro/conciliacao_cartao_credito.php', 'ordem' => 286, 'somente_master' => true],
         ['codigo' => 'financeiro_cartao_credito', 'grupo' => 'Financeiro', 'nome' => 'Cartao de Credito', 'url' => 'modulos/financeiro/cartao_credito.php', 'ordem' => 287, 'somente_master' => true],

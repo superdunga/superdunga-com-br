@@ -51,6 +51,20 @@ function whatsappOperacionalEnsureTables(PDO $pdo): void
     ");
 
     $pdo->exec("
+        CREATE TABLE IF NOT EXISTS financeiro_clientes_cobranca_automatica (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            empresa_id INT NOT NULL,
+            clicontador INT NOT NULL,
+            ativo CHAR(1) NOT NULL DEFAULT 'N',
+            usuario_id INT NULL,
+            criado_em DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            atualizado_em DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            UNIQUE KEY uniq_fin_cli_cobranca (empresa_id,clicontador),
+            KEY idx_fin_cli_cobranca_ativo (empresa_id,ativo)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    ");
+
+    $pdo->exec("
         CREATE TABLE IF NOT EXISTS whatsapp_operacional_fechamentos (
             id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
             empresa_id INT NOT NULL,
@@ -78,6 +92,10 @@ function whatsappOperacionalEnsureTables(PDO $pdo): void
     whatsappOperacionalEnsureColumn($pdo, 'whatsapp_operacional_config', 'fechamento_ultima_competencia', "ALTER TABLE whatsapp_operacional_config ADD fechamento_ultima_competencia DATE NULL AFTER fechamento_proxima_data");
     whatsappOperacionalEnsureColumn($pdo, 'whatsapp_operacional_config', 'webhook_token', "ALTER TABLE whatsapp_operacional_config ADD webhook_token VARCHAR(64) NULL AFTER instancia");
     whatsappOperacionalEnsureColumn($pdo, 'whatsapp_operacional_config', 'webhook_configurado_em', "ALTER TABLE whatsapp_operacional_config ADD webhook_configurado_em DATETIME NULL AFTER webhook_token");
+    whatsappOperacionalEnsureColumn($pdo, 'whatsapp_operacional_config', 'cobranca_ativo', "ALTER TABLE whatsapp_operacional_config ADD cobranca_ativo CHAR(1) NOT NULL DEFAULT 'N' AFTER fechamento_ultima_competencia");
+    whatsappOperacionalEnsureColumn($pdo, 'whatsapp_operacional_config', 'cobranca_horario', "ALTER TABLE whatsapp_operacional_config ADD cobranca_horario TIME NOT NULL DEFAULT '10:00:00' AFTER cobranca_ativo");
+    whatsappOperacionalEnsureColumn($pdo, 'whatsapp_operacional_config', 'cobranca_intervalo_segundos', "ALTER TABLE whatsapp_operacional_config ADD cobranca_intervalo_segundos SMALLINT UNSIGNED NOT NULL DEFAULT 30 AFTER cobranca_horario");
+    whatsappOperacionalEnsureColumn($pdo, 'whatsapp_operacional_config', 'cobranca_ultima_referencia', "ALTER TABLE whatsapp_operacional_config ADD cobranca_ultima_referencia DATE NULL AFTER cobranca_intervalo_segundos");
 
     $configsSemToken = $pdo->query("SELECT id FROM whatsapp_operacional_config WHERE webhook_token IS NULL OR webhook_token='' ")->fetchAll(PDO::FETCH_COLUMN);
     $atualizarToken = $pdo->prepare("UPDATE whatsapp_operacional_config SET webhook_token=? WHERE id=? AND (webhook_token IS NULL OR webhook_token='')");
@@ -556,6 +574,87 @@ function whatsappOperacionalTitulosAte(PDO $pdo, int $empresaId, int $clicontado
     return $stmt->fetchAll(PDO::FETCH_ASSOC);
 }
 
+function whatsappOperacionalTitulosAbertos(PDO $pdo, int $empresaId, int $clicontador): array
+{
+    $stmt = $pdo->prepare("
+        SELECT cr.CRCONTADOR,cr.CLICONTADOR,
+               COALESCE(NULLIF(cli.NOME,''),NULLIF(cli.APELIDO,''),CONCAT('Cliente ',cr.CLICONTADOR)) AS nome_cliente,
+               cli.CELULAR,cr.DTVENC,cr.DTEMISSAO,cr.DTPAGTO,cr.VLRPARCELA,cr.VLRPAGO,cr.VLRRESTANTE,
+               COALESCE(NULLIF(cr.STATUS,''),'AB') AS STATUS
+        FROM armazem_cr001 cr
+        INNER JOIN armazem_cr002 cli ON cli.EMPRESA=cr.EMPRESA AND cli.CLICONTADOR=cr.CLICONTADOR
+        WHERE cr.EMPRESA=? AND cr.CLICONTADOR=? AND cr.CMCONTADOR=9
+          AND (cr.STATUS IS NULL OR cr.STATUS<>'QT')
+          AND COALESCE(cr.VLRRESTANTE,0)>0
+          AND COALESCE(cr.excluido_firebird,'N')<>'S'
+        ORDER BY cr.DTVENC,cr.DTEMISSAO,cr.CRCONTADOR
+    ");
+    $stmt->execute([$empresaId,$clicontador]);
+    return $stmt->fetchAll(PDO::FETCH_ASSOC);
+}
+
+function whatsappOperacionalClienteEmAtraso(PDO $pdo, int $empresaId, int $clicontador): bool
+{
+    $stmt = $pdo->prepare("
+        SELECT COUNT(*) FROM armazem_cr001
+        WHERE EMPRESA=? AND CLICONTADOR=? AND CMCONTADOR=9
+          AND DATE(DTVENC)<CURDATE()
+          AND (STATUS IS NULL OR STATUS<>'QT')
+          AND COALESCE(VLRRESTANTE,0)>0
+          AND COALESCE(excluido_firebird,'N')<>'S'
+    ");
+    $stmt->execute([$empresaId,$clicontador]);
+    return (int)$stmt->fetchColumn()>0;
+}
+
+function whatsappOperacionalProximaSegunda(string $horario='10:00:00', ?DateTimeImmutable $agora=null): DateTimeImmutable
+{
+    $agora=$agora ?: new DateTimeImmutable('now');
+    $hoje=new DateTimeImmutable($agora->format('Y-m-d').' '.$horario);
+    if ((int)$agora->format('N')===1 && $agora<$hoje) {
+        return $hoje;
+    }
+    return new DateTimeImmutable($agora->modify('next monday')->format('Y-m-d').' '.$horario);
+}
+
+function whatsappOperacionalPrepararFilaCobranca(PDO $pdo, array $config, DateTimeImmutable $referencia): int
+{
+    $empresaId=(int)$config['empresa_id'];
+    $stmt=$pdo->prepare("
+        SELECT c.CLICONTADOR,COALESCE(NULLIF(c.NOME,''),NULLIF(c.APELIDO,''),CONCAT('Cliente ',c.CLICONTADOR)) nome_cliente,c.CELULAR
+        FROM financeiro_clientes_cobranca_automatica ca
+        INNER JOIN armazem_cr002 c ON c.EMPRESA=ca.empresa_id AND c.CLICONTADOR=ca.clicontador
+        WHERE ca.empresa_id=? AND ca.ativo='S'
+          AND EXISTS (
+              SELECT 1 FROM armazem_cr001 cr
+              WHERE cr.EMPRESA=c.EMPRESA AND cr.CLICONTADOR=c.CLICONTADOR AND cr.CMCONTADOR=9
+                AND DATE(cr.DTVENC)<CURDATE() AND (cr.STATUS IS NULL OR cr.STATUS<>'QT')
+                AND COALESCE(cr.VLRRESTANTE,0)>0 AND COALESCE(cr.excluido_firebird,'N')<>'S'
+          )
+        ORDER BY c.CLICONTADOR
+    ");
+    $stmt->execute([$empresaId]);
+    $clientes=$stmt->fetchAll(PDO::FETCH_ASSOC);
+    $insert=$pdo->prepare("
+        INSERT IGNORE INTO whatsapp_operacional_fila
+          (empresa_id,rotina_codigo,rotina_nome,referencia,data_limite,destinatario_id,destinatario_nome,telefone,status,proxima_tentativa)
+        VALUES (?,'cobranca_semanal_clientes','Cobranca semanal de clientes',?,?,?,?,?,?,?)
+    ");
+    $criados=0;
+    $intervalo=max(10,(int)($config['cobranca_intervalo_segundos']??30));
+    foreach($clientes as $i=>$cliente){
+        $telefone=trim((string)$cliente['CELULAR']);
+        $status=$telefone===''?'IGNORADO':'AGUARDANDO';
+        $proxima=$referencia->modify('+'.($i*$intervalo).' seconds')->format('Y-m-d H:i:s');
+        $insert->execute([$empresaId,$referencia->format('Y-m-d'),$referencia->format('Y-m-d'),(string)$cliente['CLICONTADOR'],(string)$cliente['nome_cliente'],$telefone,$status,$status==='AGUARDANDO'?$proxima:null]);
+        if($status==='IGNORADO' && $insert->rowCount()>0){
+            $pdo->prepare("UPDATE whatsapp_operacional_fila SET erro='Cliente sem celular' WHERE empresa_id=? AND rotina_codigo='cobranca_semanal_clientes' AND referencia=? AND destinatario_id=?")->execute([$empresaId,$referencia->format('Y-m-d'),(string)$cliente['CLICONTADOR']]);
+        }
+        $criados+=$insert->rowCount();
+    }
+    return $criados;
+}
+
 function whatsappOperacionalClientesFechamentoAte(PDO $pdo, int $empresaId, string $dataLimite): array
 {
     $stmt = $pdo->prepare("
@@ -626,7 +725,7 @@ function whatsappOperacionalExecutarAutomacao(PDO $pdo): array
     $agora = new DateTimeImmutable('now');
     $competencia = $agora->modify('first day of previous month')->format('Y-m-01');
     $configs = $pdo->query("SELECT * FROM whatsapp_operacional_config WHERE ativo='S' AND fechamento_ativo='S'")->fetchAll(PDO::FETCH_ASSOC);
-    $resultado = ['filas_criadas'=>0,'processados'=>0,'aguardando_sincronizacao'=>[]];
+    $resultado = ['filas_criadas'=>0,'filas_cobranca_criadas'=>0,'processados'=>0,'aguardando_sincronizacao'=>[]];
     foreach ($configs as $config) {
         $agendada = whatsappOperacionalDataEnvio($pdo,(int)$config['empresa_id'],$competencia,(int)$config['fechamento_dia_util'],(string)$config['fechamento_horario'],$config['fechamento_proxima_data'] ?: null);
         $competenciaJaPreparada = !empty($config['fechamento_ultima_competencia']) && (string)$config['fechamento_ultima_competencia'] >= $competencia;
@@ -639,15 +738,32 @@ function whatsappOperacionalExecutarAutomacao(PDO $pdo): array
             $pdo->prepare("UPDATE whatsapp_operacional_config SET fechamento_ultima_competencia=?,fechamento_proxima_data=NULL WHERE empresa_id=?")->execute([$competencia,(int)$config['empresa_id']]);
         }
     }
+    $configsCobranca=$pdo->query("SELECT * FROM whatsapp_operacional_config WHERE ativo='S' AND cobranca_ativo='S'")->fetchAll(PDO::FETCH_ASSOC);
+    foreach($configsCobranca as $config){
+        $horario=(string)($config['cobranca_horario']??'10:00:00');
+        $segunda=$agora->modify('monday this week');
+        $referencia=new DateTimeImmutable($segunda->format('Y-m-d').' '.$horario);
+        $jaPreparada=!empty($config['cobranca_ultima_referencia']) && (string)$config['cobranca_ultima_referencia'] >= $referencia->format('Y-m-d');
+        if($agora>=$referencia && !$jaPreparada){
+            if(!whatsappOperacionalSincronizacaoAtualizada($pdo,(int)$config['empresa_id'])){
+                $resultado['aguardando_sincronizacao'][]=(int)$config['empresa_id'];
+                continue;
+            }
+            $resultado['filas_cobranca_criadas']+=whatsappOperacionalPrepararFilaCobranca($pdo,$config,$referencia);
+            $pdo->prepare("UPDATE whatsapp_operacional_config SET cobranca_ultima_referencia=? WHERE empresa_id=?")->execute([$referencia->format('Y-m-d'),(int)$config['empresa_id']]);
+        }
+    }
     $pdo->exec("UPDATE whatsapp_operacional_fila SET status='ERRO',erro='Processamento interrompido; aguardando nova tentativa',proxima_tentativa=NOW() WHERE status='PROCESSANDO' AND iniciado_em<DATE_SUB(NOW(),INTERVAL 10 MINUTE)");
     $stmt = $pdo->query("
         SELECT q.*
         FROM whatsapp_operacional_fila q
-        INNER JOIN whatsapp_operacional_config c ON c.empresa_id=q.empresa_id AND c.ativo='S' AND c.fechamento_ativo='S'
-        WHERE q.rotina_codigo='fechamento_mensal_clientes' AND q.status IN ('AGUARDANDO','ERRO') AND q.tentativas<3 AND q.proxima_tentativa<=NOW()
+        INNER JOIN whatsapp_operacional_config c ON c.empresa_id=q.empresa_id AND c.ativo='S'
+        WHERE q.rotina_codigo IN ('fechamento_mensal_clientes','cobranca_semanal_clientes')
+          AND ((q.rotina_codigo='fechamento_mensal_clientes' AND c.fechamento_ativo='S') OR (q.rotina_codigo='cobranca_semanal_clientes' AND c.cobranca_ativo='S'))
+          AND q.status IN ('AGUARDANDO','ERRO') AND q.tentativas<3 AND q.proxima_tentativa<=NOW()
           AND (
               (SELECT MAX(u.aceito_em) FROM whatsapp_operacional_fila u WHERE u.empresa_id=q.empresa_id AND u.status IN ('ACEITO','ENTREGUE')) IS NULL
-              OR TIMESTAMPDIFF(SECOND,(SELECT MAX(u.aceito_em) FROM whatsapp_operacional_fila u WHERE u.empresa_id=q.empresa_id AND u.status IN ('ACEITO','ENTREGUE')),NOW())>=c.fechamento_intervalo_segundos
+              OR TIMESTAMPDIFF(SECOND,(SELECT MAX(u.aceito_em) FROM whatsapp_operacional_fila u WHERE u.empresa_id=q.empresa_id AND u.status IN ('ACEITO','ENTREGUE')),NOW())>=CASE WHEN q.rotina_codigo='cobranca_semanal_clientes' THEN c.cobranca_intervalo_segundos ELSE c.fechamento_intervalo_segundos END
           )
         ORDER BY q.proxima_tentativa,q.id LIMIT 1
     ");
@@ -667,19 +783,28 @@ function whatsappOperacionalExecutarAutomacao(PDO $pdo): array
         return $resultado;
     }
     $config = whatsappOperacionalConfig($pdo,(int)$item['empresa_id']);
-    $titulos = whatsappOperacionalTitulosAte($pdo,(int)$item['empresa_id'],(int)$item['destinatario_id'],(string)$item['data_limite']);
+    $cobranca=$item['rotina_codigo']==='cobranca_semanal_clientes';
+    $titulos = $cobranca
+        ? whatsappOperacionalTitulosAbertos($pdo,(int)$item['empresa_id'],(int)$item['destinatario_id'])
+        : whatsappOperacionalTitulosAte($pdo,(int)$item['empresa_id'],(int)$item['destinatario_id'],(string)$item['data_limite']);
+    if($cobranca && !whatsappOperacionalClienteEmAtraso($pdo,(int)$item['empresa_id'],(int)$item['destinatario_id'])){
+        $titulos=[];
+    }
     if (!$config || !$titulos) {
-        $motivo = !$config ? 'Instancia operacional indisponivel' : 'Sem titulos em aberto no momento do envio';
+        $motivo = !$config ? 'Instancia operacional indisponivel' : ($cobranca?'Cliente sem titulo vencido no momento do envio':'Sem titulos em aberto no momento do envio');
         $pdo->prepare("UPDATE whatsapp_operacional_fila SET status='IGNORADO',erro=? WHERE id=?")->execute([$motivo,(int)$item['id']]);
         $resultado['processados']++;
         return $resultado;
     }
     $cliente=['CLICONTADOR'=>(int)$item['destinatario_id'],'nome_cliente'=>$titulos[0]['nome_cliente'],'CELULAR'=>$titulos[0]['CELULAR']];
-    $diretorio=dirname(__DIR__,2).'/storage/whatsapp_fechamentos_operacionais/empresa_'.(int)$item['empresa_id'].'/'.str_replace('-','_',substr((string)$item['competencia'],0,7));
-    $nome='fechamento_'.(int)$item['destinatario_id'].'_ate_'.str_replace('-','',(string)$item['data_limite']).'.pdf';
+    $diretorio=dirname(__DIR__,2).'/storage/whatsapp_fechamentos_operacionais/empresa_'.(int)$item['empresa_id'].'/'.($cobranca?'cobrancas':str_replace('-','_',substr((string)$item['competencia'],0,7)));
+    $nome=($cobranca?'cobranca_':'fechamento_').(int)$item['destinatario_id'].'_'.str_replace('-','',(string)$item['data_limite']).'.pdf';
     $arquivo=$diretorio.'/'.$nome;
     whatsappOperacionalGerarPdf($arquivo,whatsappNomeEmpresa($pdo,(int)$item['empresa_id']),$cliente,'ATE',(string)$item['data_limite'],$titulos);
-    $envio=whatsappOperacionalEnviarDocumento($config,(string)$cliente['CELULAR'],$arquivo,$nome,'Relacao de compras em aberto ate '.date('d/m/Y',strtotime((string)$item['data_limite'])));
+    $legenda=$cobranca
+        ? 'Prezado(a) '.$cliente['nome_cliente'].', identificamos titulos vencidos em aberto. Encaminhamos a relacao atualizada de todos os titulos pendentes para conferencia. Solicitamos a regularizacao ou o contato com a empresa para esclarecimentos.'
+        : 'Relacao de compras em aberto ate '.date('d/m/Y',strtotime((string)$item['data_limite']));
+    $envio=whatsappOperacionalEnviarDocumento($config,(string)$cliente['CELULAR'],$arquivo,$nome,$legenda);
     $total=array_sum(array_map(function($t){return (float)$t['VLRRESTANTE'];},$titulos));
     if ($envio['ok']) {
         $pdo->prepare("UPDATE whatsapp_operacional_fila SET status='ACEITO',quantidade_itens=?,valor=?,arquivo=?,mensagem_id=?,resposta_api=?,erro=NULL,aceito_em=NOW() WHERE id=?")->execute([count($titulos),$total,$nome,$envio['mensagem_id'],$envio['resposta'],(int)$item['id']]);

@@ -300,6 +300,7 @@ function validarPermissaoModuloAtual(): void
         'modulos/financeiro/contas_receber.php' => 'financeiro',
         'modulos/financeiro/contas_receber_clientes.php' => 'financeiro_contas_receber',
         'modulos/financeiro/clientes_fechamento_mensal.php' => 'financeiro_clientes_fechamento_mensal',
+        'modulos/financeiro/clientes_cobranca_automatica.php' => 'financeiro_clientes_cobranca_automatica',
         'modulos/financeiro/contas_pagar.php' => 'financeiro',
         'modulos/financeiro/contas.php' => 'financeiro',
         'modulos/financeiro/acerto_pdf.php' => 'financeiro',

@@ -31,6 +31,14 @@ $opcoes = [
         'icone' => 'FM',
         'botao' => 'btn-primary',
     ],
+    [
+        'titulo' => 'Clientes com Cobranca Automatica',
+        'descricao' => 'Selecione os clientes em atraso que poderao receber cobrancas pelo WhatsApp Operacional.',
+        'href' => 'clientes_cobranca_automatica.php',
+        'modulo' => 'financeiro_clientes_cobranca_automatica',
+        'icone' => 'CA',
+        'botao' => 'btn-warning',
+    ],
 ];
 
 $opcoes = filtrarOpcoesPorModulo($pdo_master, $empresaId, $opcoes);
