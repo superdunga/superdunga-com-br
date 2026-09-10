@@ -211,10 +211,13 @@ function whatsappOperacionalConfigurarWebhook(array $config): array
 {
     $url = rtrim((string)$config['evolution_api_base_url'], '/') . '/webhook/set/' . rawurlencode((string)$config['instancia']);
     $payload = [
-        'url' => whatsappOperacionalWebhookUrl($config),
-        'webhook_by_events' => false,
-        'webhook_base64' => false,
-        'events' => ['MESSAGES_UPDATE', 'SEND_MESSAGE_UPDATE'],
+        'webhook' => [
+            'enabled' => true,
+            'url' => whatsappOperacionalWebhookUrl($config),
+            'webhookByEvents' => false,
+            'webhookBase64' => false,
+            'events' => ['MESSAGES_UPDATE', 'SEND_MESSAGE_UPDATE'],
+        ],
     ];
     $ch = curl_init($url);
     curl_setopt_array($ch, [
