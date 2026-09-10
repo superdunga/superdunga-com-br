@@ -85,85 +85,148 @@ function enviarPdfRelatorioUnimed(array $paginas, string $arquivo): void
 function gerarPdfResponsaveisUnimed(array $responsaveisRelatorio, array $faturaAtual, string $nomeArquivoRelatorio): void
 {
     $paginas = [];
-    $conteudo = '';
-    $y = 0.0;
-    $margem = 28.0;
-    $largura = 595.0;
-    $altura = 842.0;
-
-    $novaPagina = static function () use (&$conteudo, &$y, $margem, $largura, $altura, $faturaAtual): void {
-        $conteudo = "0.07 0.20 0.42 rg\n";
-        $conteudo .= retanguloPdfRelatorioUnimed(0, $altura - 62, $largura, 62);
-        $conteudo .= "1 1 1 rg\n";
-        $conteudo .= textoCmdPdfRelatorioUnimed($margem, $altura - 25, 15, textoPdfRelatorioUnimed('DEMONSTRATIVO UNIMED POR RESPONSAVEL'), true);
-        $conteudo .= textoCmdPdfRelatorioUnimed($margem, $altura - 43, 9, textoPdfRelatorioUnimed('Fatura mensal: ' . ($faturaAtual['numero_fatura'] ?? '-') . ' - ' . competenciaUnimed($faturaAtual['competencia'] ?? '')));
-        $utilizacao = !empty($faturaAtual['numero_fatura_utilizacao']) ? (string)$faturaAtual['numero_fatura_utilizacao'] : '-';
-        $conteudo .= textoCmdPdfRelatorioUnimed(355, $altura - 43, 9, textoPdfRelatorioUnimed('Fatura utilizacao: ' . $utilizacao));
-        $conteudo .= "0 0 0 rg\n";
-        $y = $altura - 86;
-    };
-
-    $salvarPagina = static function () use (&$paginas, &$conteudo): void {
-        if ($conteudo !== '') {
-            $paginas[] = ['conteudo' => $conteudo];
-        }
-    };
-
-    $linha = static function (string $texto, int $tamanho = 8, bool $negrito = false) use (&$conteudo, &$y, $margem, $novaPagina, $salvarPagina): void {
-        if ($y < 42) {
-            $salvarPagina();
-            $novaPagina();
-        }
-        $conteudo .= textoCmdPdfRelatorioUnimed($margem, $y, $tamanho, textoPdfRelatorioUnimed($texto, 118), $negrito);
-        $y -= $tamanho + 5;
-    };
-
-    $novaPagina();
-
     if (empty($responsaveisRelatorio)) {
-        $linha('Nenhum responsavel encontrado para esta fatura.', 10, true);
-        $salvarPagina();
+        $conteudo = "0.07 0.23 0.47 rg\n" . retanguloPdfRelatorioUnimed(0, 780, 595, 62);
+        $conteudo .= "1 1 1 rg\n" . textoCmdPdfRelatorioUnimed(28, 807, 15, textoPdfRelatorioUnimed('DEMONSTRATIVO UNIMED POR RESPONSAVEL'), true);
+        $conteudo .= "0 0 0 rg\n" . textoCmdPdfRelatorioUnimed(28, 748, 10, textoPdfRelatorioUnimed('Nenhum responsavel encontrado para esta fatura.'), true);
+        $paginas[] = ['conteudo' => $conteudo];
         enviarPdfRelatorioUnimed($paginas, $nomeArquivoRelatorio);
     }
 
     foreach ($responsaveisRelatorio as $responsavel) {
-        if ($y < 170) {
-            $salvarPagina();
-            $novaPagina();
-        }
-
+        $conteudo = '';
+        $y = 814.0;
+        $margem = 28.0;
+        $larguraUtil = 539.0;
         $totalResponsavel = (float)$responsavel['mensalidade'] + (float)$responsavel['utilizacao'];
-        $linha('Responsavel: ' . $responsavel['nome'], 11, true);
-        $linha('Telefone: ' . (($responsavel['telefone'] ?? '') !== '' ? $responsavel['telefone'] : '-') . ' | Codigo: ' . (($responsavel['codigo'] ?? '') !== '' ? $responsavel['codigo'] : '-'), 8);
-        $linha('Mensalidade: ' . moedaUnimed($responsavel['mensalidade']) . ' | Utilizacao: ' . moedaUnimed($responsavel['utilizacao']) . ' | Total: ' . moedaUnimed($totalResponsavel), 9, true);
-
         $beneficiariosResp = $responsavel['beneficiarios'];
         uasort($beneficiariosResp, static function (array $a, array $b): int {
             return strcasecmp($a['nome'], $b['nome']);
         });
 
-        $linha('Resumo por beneficiario', 8, true);
+        $novaPagina = static function () use (&$conteudo, &$y, $margem, $larguraUtil, $faturaAtual, $responsavel): void {
+            $conteudo = "0.07 0.23 0.47 rg\n";
+            $conteudo .= retanguloPdfRelatorioUnimed(0, 780, 595, 62);
+            $conteudo .= "1 1 1 rg\n";
+            $conteudo .= textoCmdPdfRelatorioUnimed($margem, 812, 15, textoPdfRelatorioUnimed('DEMONSTRATIVO UNIMED POR RESPONSAVEL'), true);
+            $conteudo .= textoCmdPdfRelatorioUnimed($margem, 793, 8, textoPdfRelatorioUnimed('Responsavel: ' . $responsavel['nome']), true);
+            $telefone = ($responsavel['telefone'] ?? '') !== '' ? $responsavel['telefone'] : '-';
+            $conteudo .= textoCmdPdfRelatorioUnimed(345, 793, 8, textoPdfRelatorioUnimed('Telefone: ' . $telefone));
+            $conteudo .= "0.94 0.71 0.16 rg\n" . retanguloPdfRelatorioUnimed(0, 774, 595, 6);
+            $conteudo .= "0.10 0.13 0.20 rg\n";
+            $mensal = 'Fatura mensal: ' . ($faturaAtual['numero_fatura'] ?? '-') . ' - ' . competenciaUnimed($faturaAtual['competencia'] ?? '');
+            $numeroUtilizacao = !empty($faturaAtual['numero_fatura_utilizacao']) ? (string)$faturaAtual['numero_fatura_utilizacao'] : '-';
+            $compUtilizacao = !empty($faturaAtual['competencia_utilizacao']) ? ' - ' . competenciaUnimed($faturaAtual['competencia_utilizacao']) : '';
+            $conteudo .= textoCmdPdfRelatorioUnimed($margem, 757, 8, textoPdfRelatorioUnimed($mensal), true);
+            $conteudo .= textoCmdPdfRelatorioUnimed(345, 757, 8, textoPdfRelatorioUnimed('Fatura utilizacao: ' . $numeroUtilizacao . $compUtilizacao), true);
+            $conteudo .= "0.84 0.87 0.91 RG 0.6 w\n28 744 539 0 re S\n";
+            $y = 728;
+        };
+
+        $salvarPagina = static function () use (&$paginas, &$conteudo): void {
+            if ($conteudo !== '') {
+                $paginas[] = ['conteudo' => $conteudo];
+            }
+        };
+
+        $garantirEspaco = static function (float $alturaNecessaria) use (&$y, $salvarPagina, $novaPagina): void {
+            if ($y - $alturaNecessaria < 42) {
+                $salvarPagina();
+                $novaPagina();
+            }
+        };
+
+        $tituloSecao = static function (string $titulo) use (&$conteudo, &$y, $margem, $larguraUtil, $garantirEspaco): void {
+            $garantirEspaco(30);
+            $conteudo .= "0.07 0.23 0.47 rg\n" . retanguloPdfRelatorioUnimed($margem, $y - 18, $larguraUtil, 18);
+            $conteudo .= "1 1 1 rg\n" . textoCmdPdfRelatorioUnimed($margem + 7, $y - 13, 8, textoPdfRelatorioUnimed($titulo), true);
+            $conteudo .= "0 0 0 rg\n";
+            $y -= 18;
+        };
+
+        $cabecalhoTabela = static function (array $colunas) use (&$conteudo, &$y, $margem): void {
+            $x = $margem;
+            foreach ($colunas as $coluna) {
+                $conteudo .= "0.91 0.93 0.96 rg\n";
+                $conteudo .= retanguloPdfRelatorioUnimed($x, $y - 17, $coluna[1], 17);
+                $conteudo .= "0.72 0.76 0.82 RG 0.45 w\n" . number_format($x, 2, '.', '') . ' ' . number_format($y - 17, 2, '.', '') . ' ' . number_format($coluna[1], 2, '.', '') . " 17 re S\n";
+                $conteudo .= "0.07 0.18 0.35 rg\n" . textoCmdPdfRelatorioUnimed($x + 4, $y - 12, 7, textoPdfRelatorioUnimed($coluna[0]), true);
+                $x += $coluna[1];
+            }
+            $y -= 17;
+        };
+
+        $linhaTabela = static function (array $valores, array $colunas, bool $negritoUltimo = false) use (&$conteudo, &$y, $margem, $garantirEspaco): void {
+            $garantirEspaco(16);
+            $x = $margem;
+            foreach ($colunas as $indice => $coluna) {
+                $conteudo .= "0.82 0.85 0.89 RG 0.4 w\n" . number_format($x, 2, '.', '') . ' ' . number_format($y - 15, 2, '.', '') . ' ' . number_format($coluna[1], 2, '.', '') . " 15 re S\n";
+                $limite = max(4, (int)floor($coluna[1] / 4.3));
+                $conteudo .= "0.10 0.13 0.20 rg\n" . textoCmdPdfRelatorioUnimed($x + 4, $y - 11, 6, textoPdfRelatorioUnimed($valores[$indice] ?? '', $limite), $negritoUltimo && $indice === count($colunas) - 1);
+                $x += $coluna[1];
+            }
+            $y -= 15;
+        };
+
+        $novaPagina();
+
+        $boxLargura = ($larguraUtil - 18) / 4;
+        $resumos = [
+            ['Beneficiarios', (string)count($beneficiariosResp)],
+            ['Mensalidade', moedaUnimed($responsavel['mensalidade'])],
+            ['Utilizacao', moedaUnimed($responsavel['utilizacao'])],
+            ['Total a pagar', moedaUnimed($totalResponsavel)],
+        ];
+        foreach ($resumos as $indice => $resumo) {
+            $x = $margem + ($indice * ($boxLargura + 6));
+            $conteudo .= "0.96 0.97 0.98 rg\n" . retanguloPdfRelatorioUnimed($x, $y - 48, $boxLargura, 48);
+            $conteudo .= "0.78 0.82 0.87 RG 0.6 w\n" . number_format($x, 2, '.', '') . ' ' . number_format($y - 48, 2, '.', '') . ' ' . number_format($boxLargura, 2, '.', '') . " 48 re S\n";
+            $conteudo .= "0.32 0.38 0.48 rg\n" . textoCmdPdfRelatorioUnimed($x + 8, $y - 15, 7, textoPdfRelatorioUnimed($resumo[0]), true);
+            $conteudo .= "0.07 0.23 0.47 rg\n" . textoCmdPdfRelatorioUnimed($x + 8, $y - 36, 12, textoPdfRelatorioUnimed($resumo[1]), true);
+        }
+        $y -= 60;
+
+        $colunasResumo = [['Codigo', 75], ['Beneficiario', 160], ['Familia', 79], ['Mensalidade', 75], ['Utilizacao', 70], ['Total', 80]];
+        $tituloSecao('RESUMO POR BENEFICIARIO');
+        $cabecalhoTabela($colunasResumo);
         foreach ($beneficiariosResp as $beneficiario) {
-            $linha($beneficiario['codigo'] . ' | ' . $beneficiario['nome'] . ' | Mens. ' . moedaUnimed($beneficiario['mensalidade']) . ' | Util. ' . moedaUnimed($beneficiario['utilizacao']) . ' | Total ' . moedaUnimed((float)$beneficiario['mensalidade'] + (float)$beneficiario['utilizacao']), 7);
+            $linhaTabela([
+                $beneficiario['codigo'], $beneficiario['nome'], $beneficiario['familia'],
+                moedaUnimed($beneficiario['mensalidade']), moedaUnimed($beneficiario['utilizacao']),
+                moedaUnimed((float)$beneficiario['mensalidade'] + (float)$beneficiario['utilizacao']),
+            ], $colunasResumo, true);
         }
+        $y -= 12;
 
-        $linha('Mensalidades', 8, true);
+        $colunasMensalidade = [['Codigo', 90], ['Beneficiario', 220], ['Lancamento', 154], ['Valor', 75]];
+        $tituloSecao('MENSALIDADES');
+        $cabecalhoTabela($colunasMensalidade);
+        if (empty($responsavel['mensalidades'])) {
+            $linhaTabela(['-', 'Nenhuma mensalidade.', '-', '-'], $colunasMensalidade);
+        }
         foreach ($responsavel['mensalidades'] as $mensalidade) {
-            $linha($mensalidade['codigo_completo'] . ' | ' . $mensalidade['nome'] . ' | ' . $mensalidade['lancamento'] . ' | ' . moedaUnimed($mensalidade['valor_mensalidade']), 7);
+            $linhaTabela([$mensalidade['codigo_completo'], $mensalidade['nome'], $mensalidade['lancamento'], moedaUnimed($mensalidade['valor_mensalidade'])], $colunasMensalidade);
         }
+        $y -= 12;
 
-        $linha('Utilizacoes', 8, true);
+        $colunasUtilizacao = [['Data', 48], ['Codigo', 68], ['Beneficiario', 120], ['Prestador', 178], ['Doc.', 60], ['Valor', 65]];
+        $tituloSecao('UTILIZACOES DO PLANO');
+        $cabecalhoTabela($colunasUtilizacao);
         if (empty($responsavel['utilizacoes'])) {
-            $linha('Nenhuma utilizacao.', 7);
+            $linhaTabela(['-', '-', 'Nenhuma utilizacao.', '-', '-', '-'], $colunasUtilizacao);
         }
         foreach ($responsavel['utilizacoes'] as $utilizacaoLinha) {
             $dataAtendimento = !empty($utilizacaoLinha['data_atendimento']) ? date('d/m/Y', strtotime($utilizacaoLinha['data_atendimento'])) : '-';
-            $linha($dataAtendimento . ' | ' . $utilizacaoLinha['codigo_completo'] . ' | ' . $utilizacaoLinha['nome'] . ' | ' . $utilizacaoLinha['prestador'] . ' | Doc ' . $utilizacaoLinha['documento'] . ' | ' . moedaUnimed($utilizacaoLinha['valor_total']), 7);
+            $linhaTabela([$dataAtendimento, $utilizacaoLinha['codigo_completo'], $utilizacaoLinha['nome'], $utilizacaoLinha['prestador'], $utilizacaoLinha['documento'], moedaUnimed($utilizacaoLinha['valor_total'])], $colunasUtilizacao);
         }
-        $y -= 8;
+
+        $garantirEspaco(42);
+        $y -= 12;
+        $conteudo .= "0.94 0.71 0.16 rg\n" . retanguloPdfRelatorioUnimed($margem, $y - 28, $larguraUtil, 28);
+        $conteudo .= "0.07 0.18 0.35 rg\n" . textoCmdPdfRelatorioUnimed(385, $y - 19, 11, textoPdfRelatorioUnimed('TOTAL A PAGAR: ' . moedaUnimed($totalResponsavel)), true);
+        $salvarPagina();
     }
 
-    $salvarPagina();
     enviarPdfRelatorioUnimed($paginas, $nomeArquivoRelatorio);
 }
 
