@@ -461,6 +461,10 @@ if (($_GET['relatorio_responsaveis'] ?? '') === 'pdf' && $faturaAtual) {
         $nomeArquivoRelatorio = 'unimed' . preg_replace('/\D/', '', (string)$faturaAtual['competencia']) . $nomeResponsavelArquivo;
     }
 
+    if (($_GET['preview'] ?? '') !== '1') {
+        gerarPdfResponsaveisUnimed($responsaveisRelatorio, $faturaAtual, $nomeArquivoRelatorio);
+    }
+
     require '../../layout/header.php';
 ?>
 <style>
@@ -602,7 +606,7 @@ if (($_GET['relatorio_responsaveis'] ?? '') === 'pdf' && $faturaAtual) {
 
 <div class="unimed-relatorio">
     <div class="no-print d-flex gap-2 mb-3">
-        <button type="button" class="btn btn-primary" onclick="window.print()">Salvar em PDF</button>
+        <a href="faturas.php?fatura_id=<?= (int)$faturaId ?>&relatorio_responsaveis=pdf<?= $responsavelFiltroId > 0 ? '&responsavel_id=' . (int)$responsavelFiltroId : '' ?>" class="btn btn-primary">Baixar PDF</a>
         <a href="faturas.php?fatura_id=<?= (int)$faturaId ?>" class="btn btn-outline-secondary">Voltar</a>
     </div>
 
@@ -731,12 +735,6 @@ if (($_GET['relatorio_responsaveis'] ?? '') === 'pdf' && $faturaAtual) {
     <?php endforeach; ?>
 </div>
 
-<script>
-    document.title = <?= json_encode($nomeArquivoRelatorio, JSON_UNESCAPED_UNICODE) ?>;
-    window.addEventListener('load', function () {
-        setTimeout(function () { window.print(); }, 350);
-    });
-</script>
 <?php
     require '../../layout/footer.php';
     exit;
