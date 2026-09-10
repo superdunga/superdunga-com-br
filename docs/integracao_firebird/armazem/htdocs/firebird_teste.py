@@ -553,6 +553,7 @@ def dados_est008_ativos():
         limit = request.args.get("limit", default=1000, type=int)
         offset = request.args.get("offset", default=0, type=int)
         item_inicio = request.args.get("item_inicio", default=55908, type=int)
+        empresa = request.args.get("empresa", default=1, type=int)
 
         limit = max(1, int(limit))
         offset = max(0, int(offset))
@@ -566,9 +567,10 @@ def dados_est008_ativos():
             SELECT EMPRESA, ITEMVENDACONTADOR, VENDACONTA, PRODUTO
             FROM EST008
             WHERE ITEMVENDACONTADOR >= ?
+              AND EMPRESA = ?
             ORDER BY EMPRESA, ITEMVENDACONTADOR, VENDACONTA, PRODUTO
             ROWS {inicio} TO {fim}
-        """, (item_inicio,))
+        """, (item_inicio, empresa))
 
         colunas = [desc[0] for desc in cursor.description]
         dados = []

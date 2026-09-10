@@ -498,7 +498,6 @@ def verificar_tabelas_ativos():
             params_php=config.get("params_php")
         )
 
-    verificar_est008_ativos_lotes(5000)
 
 
 print("INICIANDO ENVIO FIREBIRD PARA MYSQL")

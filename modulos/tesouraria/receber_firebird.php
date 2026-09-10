@@ -891,7 +891,7 @@ $configAtivosFirebird = [
     'est004_ativos' => ['tabela_mysql' => 'armazem_est004', 'coluna_chave' => 'CODPRODUTO', 'nome_firebird' => 'EST004'],
     'est005_ativos' => ['tabela_mysql' => 'armazem_est005', 'coluna_chave' => 'COMPRACONTADOR', 'nome_firebird' => 'EST005'],
     'est006_ativos' => ['tabela_mysql' => 'armazem_est006', 'colunas_chave' => ['ITEMCOMPRACONTADOR', 'COMPRACONTA'], 'nome_firebird' => 'EST006'],
-    'est008_ativos' => ['tabela_mysql' => 'armazem_est008', 'colunas_chave' => ['EMPRESA', 'ITEMVENDACONTADOR', 'VENDACONTA', 'PRODUTO'], 'nome_firebird' => 'EST008'],
+    'est008_ativos' => ['tabela_mysql' => 'armazem_est008', 'colunas_chave' => ['EMPRESA', 'ITEMVENDACONTADOR', 'VENDACONTA', 'PRODUTO'], 'nome_firebird' => 'EST008', 'exige_empresa' => true],
     'cr002_ativos' => ['tabela_mysql' => 'armazem_cr002', 'coluna_chave' => 'CLICONTADOR', 'nome_firebird' => 'CR002'],
     'zconfig005_ativos' => ['tabela_mysql' => 'armazem_zconfig005', 'coluna_chave' => 'CODUSER', 'nome_firebird' => 'ZCONFIG005'],
     'est007_ativos' => ['tabela_mysql' => 'armazem_est007', 'coluna_chave' => 'VENDACONTADOR', 'nome_firebird' => 'EST007', 'coluna_data' => 'DTEMISSAO'],
@@ -1417,30 +1417,12 @@ elseif ($tabela === 'est004') {
     ";
 
     $stmt = $pdo_master->prepare($sql);
-    $stmtInvalidarVersaoAnterior = $pdo_master->prepare("
-        UPDATE armazem_est008
-        SET excluido_firebird = 'S',
-            data_exclusao_firebird = NOW(),
-            motivo_sync = 'Item substituido na mesma linha da venda'
-        WHERE EMPRESA = ?
-          AND ITEMVENDACONTADOR = ?
-          AND VENDACONTA = ?
-          AND PRODUTO <> ?
-          AND COALESCE(excluido_firebird, 'N') <> 'S'
-    ");
     $pdo_master->beginTransaction();
 
     foreach ($dados as $d) {
         if (empty($d['CODPRODUTO'])) {
             continue;
         }
-
-        $stmtInvalidarVersaoAnterior->execute([
-            $d['EMPRESA'],
-            $d['ITEMVENDACONTADOR'],
-            $d['VENDACONTA'],
-            $d['PRODUTO'],
-        ]);
 
         $stmt->execute([
             ':EMPRESA' => $d['EMPRESA'] ?? null,
@@ -1691,12 +1673,30 @@ elseif ($tabela === 'est008') {
     ";
 
     $stmt = $pdo_master->prepare($sql);
+    $stmtInvalidarVersaoAnterior = $pdo_master->prepare("
+        UPDATE armazem_est008
+        SET excluido_firebird = 'S',
+            data_exclusao_firebird = NOW(),
+            motivo_sync = 'Item substituido na mesma linha da venda'
+        WHERE EMPRESA = ?
+          AND ITEMVENDACONTADOR = ?
+          AND VENDACONTA = ?
+          AND PRODUTO <> ?
+          AND COALESCE(excluido_firebird, 'N') <> 'S'
+    ");
     $pdo_master->beginTransaction();
 
     foreach ($dados as $d) {
         if (empty($d['ITEMVENDACONTADOR']) || empty($d['VENDACONTA']) || empty($d['PRODUTO'])) {
             continue;
         }
+
+        $stmtInvalidarVersaoAnterior->execute([
+            $d['EMPRESA'],
+            $d['ITEMVENDACONTADOR'],
+            $d['VENDACONTA'],
+            $d['PRODUTO'],
+        ]);
 
         $stmt->execute([
             ':EMPRESA' => $d['EMPRESA'] ?? null,

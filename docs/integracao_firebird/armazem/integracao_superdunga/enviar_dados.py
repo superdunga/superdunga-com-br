@@ -379,7 +379,8 @@ def verificar_est008_ativos_lotes(tamanho_lote=1000):
                 params={
                     "limit": tamanho_lote,
                     "offset": offset,
-                    "item_inicio": item_inicio
+                    "item_inicio": item_inicio,
+                    "empresa": EMPRESA_DESTINO
                 },
                 timeout=300
             )
@@ -400,7 +401,8 @@ def verificar_est008_ativos_lotes(tamanho_lote=1000):
                 params={
                     "tabela": "est008_ativos",
                     "sync_id": sync_id,
-                    "iniciar": "1" if lote_numero == 1 else "0"
+                    "iniciar": "1" if lote_numero == 1 else "0",
+                    "empresa": EMPRESA_DESTINO
                 },
                 json=ids,
                 timeout=600
@@ -420,7 +422,8 @@ def verificar_est008_ativos_lotes(tamanho_lote=1000):
                 "tabela": "est008_ativos",
                 "sync_id": sync_id,
                 "finalizar": "1",
-                "confirmar_vazio": "1" if total == 0 else "0"
+                "confirmar_vazio": "1" if total == 0 else "0",
+                "empresa": EMPRESA_DESTINO
             },
             json=[],
             timeout=600
@@ -520,7 +523,6 @@ def verificar_tabelas_ativos():
             params_php=config.get("params_php")
         )
 
-    verificar_est008_ativos_lotes(5000)
 
 
 print("INICIANDO ENVIO FIREBIRD PARA MYSQL")
