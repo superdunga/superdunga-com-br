@@ -1,6 +1,7 @@
 <?php
 require __DIR__ . '/../../config/conexao.php';
 require __DIR__ . '/whatsapp_lib.php';
+require __DIR__ . '/../whatsapp_operacional/whatsapp_operacional_lib.php';
 
 header('Content-Type: application/json; charset=utf-8');
 date_default_timezone_set('America/Sao_Paulo');
@@ -29,11 +30,13 @@ try {
     }
 
     $resultado = whatsappExecutarAgendamentos($pdo_master);
+    $resultadoOperacional = whatsappOperacionalExecutarAutomacao($pdo_master);
 
     echo json_encode([
         'status' => 'ok',
         'executadas' => count($resultado),
         'resultado' => $resultado,
+        'fechamentos_operacionais' => $resultadoOperacional,
     ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
 } catch (Exception $e) {
     http_response_code(500);
