@@ -516,6 +516,16 @@ function processarAtivosFirebird(PDO $pdo, array $dados, array $config): void
     $nomeTabela = $config['tabela_mysql'];
     $colunasChave = normalizarColunasChave($config['colunas_chave'] ?? $config['coluna_chave']);
     $tabelaFirebird = $config['nome_firebird'];
+
+    if ($tabelaFirebird === 'EST008') {
+        http_response_code(409);
+        echo json_encode([
+            'erro' => 'Snapshot de ativos do EST008 temporariamente bloqueado para evitar exclusoes indevidas.',
+            'snapshot_bloqueado' => true,
+        ]);
+        exit;
+    }
+
     $registros = $dados['registros'] ?? $dados['ativos'] ?? $dados;
     $syncId = $_GET['sync_id'] ?? ($dados['sync_id'] ?? null);
     $iniciar = ($_GET['iniciar'] ?? '') === '1';
