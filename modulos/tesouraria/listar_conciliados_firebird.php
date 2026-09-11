@@ -32,6 +32,7 @@ try {
         WHERE EMPRESA = ?
           AND recebimento_id IS NOT NULL
           AND COALESCE(excluido_firebird, 'N') <> 'S'
+          AND COALESCE(enviado_firebird, 'N') IN ('N', 'E')
         ORDER BY CRCONTADOR
         LIMIT $limit OFFSET $offset
     ");

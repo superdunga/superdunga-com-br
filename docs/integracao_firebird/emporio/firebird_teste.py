@@ -914,10 +914,15 @@ def update_cr001():
                 fila_id = item.get("FILA_ID")
 
                 if not crcontador or empresa is None:
+                    resultados.append({
+                        "CRCONTADOR": crcontador,
+                        "status": "ERRO",
+                        "erro": "CRCONTADOR ou FIREBIRD_EMPRESA nao informado"
+                    })
                     continue
 
                 cursor.execute("""
-                    SELECT CHAVEINTEGRACAO, DTVENC
+                    SELECT CHAVEINTEGRACAO, CMCONTADOR, DTVENC
                     FROM CR001
                     WHERE CRCONTADOR = ? AND EMPRESA = ?
                 """, (crcontador, int(empresa)))
@@ -930,9 +935,15 @@ def update_cr001():
                             "status": "OBSOLETO",
                             "erro": "CR001 nao encontrado no Firebird"
                         })
+                    else:
+                        resultados.append({
+                            "CRCONTADOR": crcontador,
+                            "status": "ERRO",
+                            "erro": "CR001 nao encontrado no Firebird"
+                        })
                     continue
 
-                chave_atual, _ = atual
+                chave_atual, cm_atual, _ = atual
 
                 if operacao == "DESVINCULAR":
                     esperado = item.get("CHAVEINTEGRACAO_ANTERIOR")
@@ -953,6 +964,14 @@ def update_cr001():
                         })
                     continue
 
+                if chave is not None and chave_atual is not None and str(chave_atual) != str(chave):
+                    resultados.append({
+                        "CRCONTADOR": crcontador,
+                        "status": "ERRO",
+                        "erro": "CHAVEINTEGRACAO pertence a outro recebivel"
+                    })
+                    continue
+
                 campos = []
                 valores = []
 
@@ -968,15 +987,39 @@ def update_cr001():
                     campos.append("DTVENC = ?")
                     valores.append(dtvenc)
 
-                if not campos:
-                    continue
+                if campos:
+                    valores.extend([crcontador, int(empresa)])
+                    sql = f"UPDATE CR001 SET {', '.join(campos)} WHERE CRCONTADOR = ? AND EMPRESA = ?"
+                    cursor.execute(sql, tuple(valores))
 
-                valores.extend([crcontador, int(empresa)])
+                cursor.execute("""
+                    SELECT CHAVEINTEGRACAO, CMCONTADOR, DTVENC
+                    FROM CR001
+                    WHERE CRCONTADOR = ? AND EMPRESA = ?
+                """, (crcontador, int(empresa)))
+                confirmado = cursor.fetchone()
+                chave_confirmada, cm_confirmado, dtvenc_confirmado = confirmado
 
-                sql = f"UPDATE CR001 SET {', '.join(campos)} WHERE CRCONTADOR = ? AND EMPRESA = ?"
-                cursor.execute(sql, tuple(valores))
+                divergencias = []
+                if chave is not None and str(chave_confirmada) != str(chave):
+                    divergencias.append("CHAVEINTEGRACAO")
+                if cm is not None and int(cm_confirmado or 0) != int(cm):
+                    divergencias.append("CMCONTADOR")
+                if dtvenc not in (None, "") and str(dtvenc_confirmado)[:10] != str(dtvenc)[:10]:
+                    divergencias.append("DTVENC")
 
-                atualizados += 1
+                if divergencias:
+                    resultados.append({
+                        "CRCONTADOR": crcontador,
+                        "status": "ERRO",
+                        "erro": "Campos nao confirmados: " + ", ".join(divergencias)
+                    })
+                else:
+                    atualizados += 1
+                    resultados.append({
+                        "CRCONTADOR": crcontador,
+                        "status": "SINCRONIZADO"
+                    })
 
             con.commit()
             con.close()
