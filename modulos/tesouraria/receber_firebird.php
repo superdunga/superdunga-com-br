@@ -153,7 +153,7 @@ function montarChaveAtivo($item, array $colunasChave): ?string
         $partes[] = normalizarValorChaveAtivo($item[$coluna]);
     }
 
-    return implode("\x1F", $partes);
+    return hash('sha256', implode("\x1F", $partes));
 }
 
 function montarExpressaoChaveSql(string $alias, array $colunasChave): string
@@ -162,7 +162,9 @@ function montarExpressaoChaveSql(string $alias, array $colunasChave): string
         return "COALESCE(CAST($alias.`$coluna` AS CHAR), '')";
     }, $colunasChave);
 
-    return count($partes) === 1 ? $partes[0] : 'CONCAT_WS(CHAR(31), ' . implode(', ', $partes) . ')';
+    return count($partes) === 1
+        ? $partes[0]
+        : 'SHA2(CONCAT_WS(CHAR(31), ' . implode(', ', $partes) . '), 256)';
 }
 
 function garantirControleExclusaoTabela(PDO $pdo, string $nomeTabela, $colunasChave): void
