@@ -322,12 +322,13 @@ function processarAtivosEst008(PDO $pdo, array $dados): void
             $valores = [];
             foreach (['EMPRESA', 'ITEMVENDACONTADOR', 'VENDACONTA', 'PRODUTO'] as $coluna) {
                 $valor = $item[$coluna] ?? null;
-                if ($valor === null || $valor === '' || filter_var($valor, FILTER_VALIDATE_INT) === false) {
+                $valorNormalizado = trim((string)$valor);
+                if ($valor === null || !preg_match('/^\d+$/', $valorNormalizado)) {
                     http_response_code(422);
                     echo json_encode(['erro' => "Chave $coluna invalida no indice $indice.", 'recebidos' => count($registros), 'aceitos' => 0]);
                     exit;
                 }
-                $valores[$coluna] = (int)$valor;
+                $valores[$coluna] = (int)$valorNormalizado;
             }
 
             if ($valores['EMPRESA'] !== $empresa || $valores['ITEMVENDACONTADOR'] <= 0 || $valores['VENDACONTA'] <= 0 || $valores['PRODUTO'] <= 0) {

@@ -411,6 +411,8 @@ def verificar_est008_ativos_lotes(tamanho_lote=1000):
                 json=ids,
                 timeout=600
             )
+            if not envio.ok:
+                raise Exception(f"HTTP {envio.status_code} ao enviar lote EST008: {envio.text}")
             envio.raise_for_status()
 
             resultado_lote = envio.json()
