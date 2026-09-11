@@ -153,7 +153,7 @@ function montarChaveAtivo($item, array $colunasChave): ?string
         $partes[] = normalizarValorChaveAtivo($item[$coluna]);
     }
 
-    return hash('sha256', implode("\x1F", $partes));
+    return implode("\x1F", $partes);
 }
 
 function montarExpressaoChaveSql(string $alias, array $colunasChave): string
@@ -162,9 +162,7 @@ function montarExpressaoChaveSql(string $alias, array $colunasChave): string
         return "COALESCE(CAST($alias.`$coluna` AS CHAR), '')";
     }, $colunasChave);
 
-    return count($partes) === 1
-        ? $partes[0]
-        : 'SHA2(CONCAT_WS(CHAR(31), ' . implode(', ', $partes) . '), 256)';
+    return count($partes) === 1 ? $partes[0] : 'CONCAT_WS(CHAR(31), ' . implode(', ', $partes) . ')';
 }
 
 function garantirControleExclusaoTabela(PDO $pdo, string $nomeTabela, $colunasChave): void
@@ -222,6 +220,284 @@ function garantirTabelaSnapshotAtivos(PDO $pdo): void
             INDEX idx_sync_firebird_ativos_temp_tabela (tabela, criado_em)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
     ");
+}
+
+function garantirTabelasSnapshotEst008(PDO $pdo): void
+{
+    $pdo->exec("
+        CREATE TABLE IF NOT EXISTS sync_firebird_est008_temp (
+            sync_id VARCHAR(64) NOT NULL,
+            empresa INT NOT NULL,
+            itemvendacontador INT NOT NULL,
+            vendaconta INT NOT NULL,
+            produto INT NOT NULL,
+            criado_em DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (sync_id, empresa, itemvendacontador, vendaconta, produto),
+            INDEX idx_sync_est008_criado (criado_em)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    ");
+
+    $pdo->exec("
+        CREATE TABLE IF NOT EXISTS sync_firebird_est008_auditoria (
+            id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+            sync_id VARCHAR(64) NOT NULL,
+            empresa INT NOT NULL,
+            esperado INT NOT NULL DEFAULT 0,
+            recebido INT NOT NULL DEFAULT 0,
+            correspondentes INT NOT NULL DEFAULT 0,
+            ausentes_mysql INT NOT NULL DEFAULT 0,
+            candidatos_exclusao INT NOT NULL DEFAULT 0,
+            status VARCHAR(30) NOT NULL,
+            mensagem VARCHAR(255) NULL,
+            criado_em DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (id),
+            INDEX idx_sync_est008_auditoria (sync_id, empresa)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    ");
+}
+
+function registrarAuditoriaSnapshotEst008(
+    PDO $pdo,
+    string $syncId,
+    int $empresa,
+    int $esperado,
+    int $recebido,
+    int $correspondentes,
+    int $ausentesMysql,
+    int $candidatosExclusao,
+    string $status,
+    string $mensagem
+): void {
+    $stmt = $pdo->prepare("
+        INSERT INTO sync_firebird_est008_auditoria (
+            sync_id, empresa, esperado, recebido, correspondentes,
+            ausentes_mysql, candidatos_exclusao, status, mensagem
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ");
+    $stmt->execute([
+        $syncId, $empresa, $esperado, $recebido, $correspondentes,
+        $ausentesMysql, $candidatosExclusao, $status, $mensagem,
+    ]);
+}
+
+function processarAtivosEst008(PDO $pdo, array $dados): void
+{
+    $syncId = trim((string)($_GET['sync_id'] ?? ''));
+    $empresa = isset($_GET['empresa']) ? (int)$_GET['empresa'] : 0;
+    $iniciar = ($_GET['iniciar'] ?? '') === '1';
+    $finalizar = ($_GET['finalizar'] ?? '') === '1';
+    $previsualizar = ($_GET['previsualizar'] ?? '') === '1';
+    $aplicar = ($_GET['aplicar'] ?? '') === '1';
+    $esperado = isset($_GET['total_esperado']) ? (int)$_GET['total_esperado'] : 0;
+
+    if ($syncId === '' || strlen($syncId) > 64 || $empresa <= 0) {
+        http_response_code(422);
+        echo json_encode(['erro' => 'Informe sync_id valido e empresa para o snapshot EST008.']);
+        exit;
+    }
+
+    garantirTabelasSnapshotEst008($pdo);
+
+    if (!$finalizar) {
+        if ($iniciar) {
+            $stmtLimpar = $pdo->prepare("DELETE FROM sync_firebird_est008_temp WHERE sync_id = ?");
+            $stmtLimpar->execute([$syncId]);
+        }
+
+        $registros = $dados['registros'] ?? $dados['ativos'] ?? $dados;
+        if (!is_array($registros) || empty($registros)) {
+            http_response_code(422);
+            echo json_encode(['erro' => 'Lote EST008 vazio ou invalido.', 'recebidos' => 0, 'aceitos' => 0]);
+            exit;
+        }
+
+        $chaves = [];
+        foreach ($registros as $indice => $item) {
+            if (!is_array($item)) {
+                http_response_code(422);
+                echo json_encode(['erro' => "Registro EST008 invalido no indice $indice.", 'recebidos' => count($registros), 'aceitos' => 0]);
+                exit;
+            }
+
+            $valores = [];
+            foreach (['EMPRESA', 'ITEMVENDACONTADOR', 'VENDACONTA', 'PRODUTO'] as $coluna) {
+                $valor = $item[$coluna] ?? null;
+                if ($valor === null || $valor === '' || filter_var($valor, FILTER_VALIDATE_INT) === false) {
+                    http_response_code(422);
+                    echo json_encode(['erro' => "Chave $coluna invalida no indice $indice.", 'recebidos' => count($registros), 'aceitos' => 0]);
+                    exit;
+                }
+                $valores[$coluna] = (int)$valor;
+            }
+
+            if ($valores['EMPRESA'] !== $empresa || $valores['ITEMVENDACONTADOR'] <= 0 || $valores['VENDACONTA'] <= 0 || $valores['PRODUTO'] <= 0) {
+                http_response_code(422);
+                echo json_encode(['erro' => "Chave EST008 fora do escopo no indice $indice.", 'recebidos' => count($registros), 'aceitos' => 0]);
+                exit;
+            }
+
+            $chaves[] = $valores;
+        }
+
+        $pdo->beginTransaction();
+        try {
+            $stmtInserir = $pdo->prepare("
+                INSERT IGNORE INTO sync_firebird_est008_temp (
+                    sync_id, empresa, itemvendacontador, vendaconta, produto
+                ) VALUES (?, ?, ?, ?, ?)
+            ");
+            foreach ($chaves as $chave) {
+                $stmtInserir->execute([
+                    $syncId,
+                    $chave['EMPRESA'],
+                    $chave['ITEMVENDACONTADOR'],
+                    $chave['VENDACONTA'],
+                    $chave['PRODUTO'],
+                ]);
+            }
+            $pdo->commit();
+        } catch (Throwable $e) {
+            $pdo->rollBack();
+            throw $e;
+        }
+
+        $stmtTotal = $pdo->prepare("SELECT COUNT(*) FROM sync_firebird_est008_temp WHERE sync_id = ? AND empresa = ?");
+        $stmtTotal->execute([$syncId, $empresa]);
+
+        echo json_encode([
+            'status' => 'ok',
+            'tabela' => 'armazem_est008',
+            'sync_id' => $syncId,
+            'recebidos' => count($registros),
+            'aceitos' => count($chaves),
+            'acumulados' => (int)$stmtTotal->fetchColumn(),
+            'finalizado' => false,
+        ]);
+        exit;
+    }
+
+    $stmtTotal = $pdo->prepare("SELECT COUNT(*) FROM sync_firebird_est008_temp WHERE sync_id = ? AND empresa = ?");
+    $stmtTotal->execute([$syncId, $empresa]);
+    $recebido = (int)$stmtTotal->fetchColumn();
+
+    if ($esperado <= 0 || $recebido <= 0 || $recebido !== $esperado) {
+        $mensagem = "Contagem do snapshot divergente: esperado=$esperado recebido=$recebido.";
+        registrarAuditoriaSnapshotEst008($pdo, $syncId, $empresa, $esperado, $recebido, 0, 0, 0, 'BLOQUEADO', $mensagem);
+        http_response_code(409);
+        echo json_encode(['erro' => $mensagem, 'snapshot_bloqueado' => true]);
+        exit;
+    }
+
+    $params = [$syncId, $empresa, $empresa];
+    $join = "
+        ON t.sync_id = ?
+       AND t.empresa = ?
+       AND t.empresa = m.EMPRESA
+       AND t.itemvendacontador = m.ITEMVENDACONTADOR
+       AND t.vendaconta = m.VENDACONTA
+       AND t.produto = m.PRODUTO
+    ";
+
+    $stmtCorrespondentes = $pdo->prepare("SELECT COUNT(*) FROM armazem_est008 m INNER JOIN sync_firebird_est008_temp t $join WHERE m.EMPRESA = ?");
+    $stmtCorrespondentes->execute($params);
+    $correspondentes = (int)$stmtCorrespondentes->fetchColumn();
+    $ausentesMysql = $recebido - $correspondentes;
+
+    $stmtAtivos = $pdo->prepare("SELECT COUNT(*) FROM armazem_est008 WHERE EMPRESA = ? AND COALESCE(excluido_firebird, 'N') <> 'S'");
+    $stmtAtivos->execute([$empresa]);
+    $ativosMysql = (int)$stmtAtivos->fetchColumn();
+
+    $stmtCandidatos = $pdo->prepare("
+        SELECT COUNT(*)
+        FROM armazem_est008 m
+        LEFT JOIN sync_firebird_est008_temp t $join
+        WHERE m.EMPRESA = ?
+          AND COALESCE(m.excluido_firebird, 'N') <> 'S'
+          AND t.sync_id IS NULL
+    ");
+    $stmtCandidatos->execute($params);
+    $candidatos = (int)$stmtCandidatos->fetchColumn();
+    $limiteExclusao = max(500, (int)ceil($ativosMysql * 0.02));
+
+    if ($ausentesMysql !== 0 || $candidatos > $limiteExclusao) {
+        $mensagem = "Pre-validacao bloqueou o snapshot: ausentes_mysql=$ausentesMysql candidatos_exclusao=$candidatos limite=$limiteExclusao.";
+        registrarAuditoriaSnapshotEst008($pdo, $syncId, $empresa, $esperado, $recebido, $correspondentes, $ausentesMysql, $candidatos, 'BLOQUEADO', $mensagem);
+        http_response_code(409);
+        echo json_encode([
+            'erro' => $mensagem,
+            'snapshot_bloqueado' => true,
+            'processados' => $recebido,
+            'correspondentes' => $correspondentes,
+            'ausentes_mysql' => $ausentesMysql,
+            'candidatos_exclusao' => $candidatos,
+            'limite_exclusao' => $limiteExclusao,
+        ]);
+        exit;
+    }
+
+    if ($previsualizar || !$aplicar) {
+        registrarAuditoriaSnapshotEst008($pdo, $syncId, $empresa, $esperado, $recebido, $correspondentes, 0, $candidatos, 'PREVIA', 'Pre-validacao concluida sem alteracoes.');
+        $stmtLimpar = $pdo->prepare("DELETE FROM sync_firebird_est008_temp WHERE sync_id = ? AND empresa = ?");
+        $stmtLimpar->execute([$syncId, $empresa]);
+        echo json_encode([
+            'status' => 'ok',
+            'modo' => 'previsualizacao',
+            'sync_id' => $syncId,
+            'processados' => $recebido,
+            'correspondentes' => $correspondentes,
+            'candidatos_exclusao' => $candidatos,
+            'finalizado' => false,
+        ]);
+        exit;
+    }
+
+    $pdo->beginTransaction();
+    try {
+        $stmtReativar = $pdo->prepare("
+            UPDATE armazem_est008 m
+            INNER JOIN sync_firebird_est008_temp t $join
+            SET m.excluido_firebird = 'N',
+                m.data_exclusao_firebird = NULL,
+                m.motivo_sync = NULL,
+                m.ultima_presenca_firebird = NOW()
+            WHERE m.EMPRESA = ?
+        ");
+        $stmtReativar->execute($params);
+        $reativados = $stmtReativar->rowCount();
+
+        $stmtExcluir = $pdo->prepare("
+            UPDATE armazem_est008 m
+            LEFT JOIN sync_firebird_est008_temp t $join
+            SET m.excluido_firebird = 'S',
+                m.data_exclusao_firebird = NOW(),
+                m.motivo_sync = 'Nao encontrado na foto completa EST008 do Firebird'
+            WHERE m.EMPRESA = ?
+              AND COALESCE(m.excluido_firebird, 'N') <> 'S'
+              AND t.sync_id IS NULL
+        ");
+        $stmtExcluir->execute($params);
+        $marcadosExcluidos = $stmtExcluir->rowCount();
+
+        registrarAuditoriaSnapshotEst008($pdo, $syncId, $empresa, $esperado, $recebido, $correspondentes, 0, $candidatos, 'FINALIZADO', 'Snapshot EST008 finalizado.');
+        $stmtLimpar = $pdo->prepare("DELETE FROM sync_firebird_est008_temp WHERE sync_id = ? AND empresa = ?");
+        $stmtLimpar->execute([$syncId, $empresa]);
+        $pdo->commit();
+    } catch (Throwable $e) {
+        $pdo->rollBack();
+        throw $e;
+    }
+
+    echo json_encode([
+        'status' => 'ok',
+        'tabela' => 'armazem_est008',
+        'sync_id' => $syncId,
+        'processados' => $recebido,
+        'correspondentes' => $correspondentes,
+        'reativados' => $reativados,
+        'marcados_excluidos' => $marcadosExcluidos,
+        'finalizado' => true,
+    ]);
+    exit;
 }
 
 function garantirChaveEst006(PDO $pdo): void
@@ -516,15 +792,6 @@ function processarAtivosFirebird(PDO $pdo, array $dados, array $config): void
     $nomeTabela = $config['tabela_mysql'];
     $colunasChave = normalizarColunasChave($config['colunas_chave'] ?? $config['coluna_chave']);
     $tabelaFirebird = $config['nome_firebird'];
-
-    if ($tabelaFirebird === 'EST008') {
-        http_response_code(409);
-        echo json_encode([
-            'erro' => 'Snapshot de ativos do EST008 temporariamente bloqueado para evitar exclusoes indevidas.',
-            'snapshot_bloqueado' => true,
-        ]);
-        exit;
-    }
 
     $registros = $dados['registros'] ?? $dados['ativos'] ?? $dados;
     $syncId = $_GET['sync_id'] ?? ($dados['sync_id'] ?? null);
@@ -912,6 +1179,10 @@ $configAtivosFirebird = [
 if (isset($configAtivosFirebird[$tabela])) {
     if ($tabela === 'bnc002_ativos') {
         garantirTabelaBnc002($pdo_master);
+    }
+
+    if ($tabela === 'est008_ativos') {
+        processarAtivosEst008($pdo_master, $dados);
     }
 
     processarAtivosFirebird($pdo_master, $dados, $configAtivosFirebird[$tabela]);

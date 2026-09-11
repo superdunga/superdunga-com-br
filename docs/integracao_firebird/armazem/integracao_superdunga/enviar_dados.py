@@ -3,11 +3,15 @@ import datetime
 import uuid
 import sys
 
+sys.path.insert(0, r"C:\xampp\htdocs")
+from firebird_teste import conectar, tratar_valor
+
 
 MODO = (sys.argv[1] if len(sys.argv) > 1 else "rapido").lower()
 EXECUTAR_COMPLETO = MODO in ["completo", "full", "diario"]
 EMPRESA_DESTINO = 1
 BASE_SITE = "https://www.superdunga.com.br"
+APLICAR_SNAPSHOT_EST008 = False
 
 
 def params_site(params=None):
@@ -362,37 +366,37 @@ def enviar_ativos(nome, url_api, tabela_php, tamanho_lote=1000, params_api=None,
 
 
 def verificar_est008_ativos_lotes(tamanho_lote=1000):
+    con = None
     try:
         print("\nVerificando EST008 excluidos no Firebird em lotes...")
 
-        url_api = "http://127.0.0.1:5000/dados/est008_ativos"
         url_php = "https://www.superdunga.com.br/modulos/tesouraria/receber_firebird.php"
         sync_id = f"est008_{datetime.datetime.now().strftime('%Y%m%d%H%M%S')}_{uuid.uuid4().hex[:8]}"
-        item_inicio = 55908
-        offset = 0
         total = 0
         lote_numero = 1
 
+        con = conectar()
+        cursor = con.cursor()
+        cursor.execute("""
+            SELECT EMPRESA, ITEMVENDACONTADOR, VENDACONTA, PRODUTO
+            FROM EST008
+            WHERE EMPRESA = ?
+            ORDER BY EMPRESA, ITEMVENDACONTADOR, VENDACONTA, PRODUTO
+        """, (EMPRESA_DESTINO,))
+        colunas = [desc[0] for desc in cursor.description]
+
         while True:
-            resposta = requests.get(
-                url_api,
-                params={
-                    "limit": tamanho_lote,
-                    "offset": offset,
-                    "item_inicio": item_inicio,
-                    "empresa": EMPRESA_DESTINO
-                },
-                timeout=300
-            )
-            resposta.raise_for_status()
-
-            ids = resposta.json()
-
-            if not isinstance(ids, list):
-                raise Exception("Resposta invalida da API est008_ativos")
-
-            if len(ids) == 0:
+            linhas = cursor.fetchmany(tamanho_lote)
+            if not linhas:
                 break
+
+            ids = [
+                {
+                    colunas[i]: tratar_valor(valor)
+                    for i, valor in enumerate(linha)
+                }
+                for linha in linhas
+            ]
 
             print(f"EST008 lote {lote_numero}: {len(ids)} registros")
 
@@ -409,36 +413,69 @@ def verificar_est008_ativos_lotes(tamanho_lote=1000):
             )
             envio.raise_for_status()
 
+            resultado_lote = envio.json()
+            recebidos = int(resultado_lote.get("recebidos", -1))
+            aceitos = int(resultado_lote.get("aceitos", -1))
+            acumulados = int(resultado_lote.get("acumulados", -1))
+            esperado_acumulado = total + len(ids)
+            if recebidos != len(ids) or aceitos != len(ids) or acumulados != esperado_acumulado:
+                raise Exception(
+                    "Servidor rejeitou ou perdeu chaves EST008: "
+                    f"enviados={len(ids)} recebidos={recebidos} "
+                    f"aceitos={aceitos} acumulados={acumulados} "
+                    f"esperado_acumulado={esperado_acumulado}"
+                )
+
             print("Resposta do servidor EST008 lote:")
             print(envio.text)
 
             total += len(ids)
-            offset += tamanho_lote
             lote_numero += 1
+
+        if total == 0:
+            raise Exception("Firebird retornou fotografia EST008 vazia; finalizacao cancelada.")
+
+        params_finalizacao = {
+            "tabela": "est008_ativos",
+            "sync_id": sync_id,
+            "total_esperado": total,
+            "empresa": EMPRESA_DESTINO
+        }
+        if APLICAR_SNAPSHOT_EST008:
+            params_finalizacao["aplicar"] = "1"
+        else:
+            params_finalizacao["previsualizar"] = "1"
 
         envio_final = requests.post(
             url_php,
-            params={
-                "tabela": "est008_ativos",
-                "sync_id": sync_id,
-                "finalizar": "1",
-                "confirmar_vazio": "1" if total == 0 else "0",
-                "empresa": EMPRESA_DESTINO
-            },
+            params={**params_finalizacao, "finalizar": "1"},
             json=[],
             timeout=600
         )
         envio_final.raise_for_status()
 
-        print("Resposta final do servidor EST008 ativos:")
+        resultado_final = envio_final.json()
+        if int(resultado_final.get("processados", -1)) != total:
+            raise Exception("Finalizacao EST008 nao confirmou a fotografia completa.")
+        if APLICAR_SNAPSHOT_EST008 and resultado_final.get("finalizado") is not True:
+            raise Exception("Servidor nao confirmou a aplicacao do snapshot EST008.")
+        if not APLICAR_SNAPSHOT_EST008 and resultado_final.get("modo") != "previsualizacao":
+            raise Exception("Servidor nao confirmou a pre-validacao EST008.")
+
+        modo_final = "aplicado" if APLICAR_SNAPSHOT_EST008 else "pre-validado sem alterar registros"
+        print(f"Snapshot EST008 {modo_final}:")
         print(envio_final.text)
 
         print(f"EST008 ativos no Firebird: {total}")
-        registrar_log("EST008_ATIVOS", total, "OK", envio_final.text)
+        nome_log = "EST008_ATIVOS" if APLICAR_SNAPSHOT_EST008 else "EST008_ATIVOS_PREVIA"
+        registrar_log(nome_log, total, "OK", envio_final.text)
 
     except Exception as e:
         print("Erro ao verificar EST008 ativos em lotes:", str(e))
         registrar_log("EST008_ATIVOS", 0, "ERRO", str(e))
+    finally:
+        if con is not None:
+            con.close()
 
 
 def periodo_ultimos_dias(dias):
@@ -523,6 +560,8 @@ def verificar_tabelas_ativos():
             params_php=config.get("params_php")
         )
 
+    verificar_est008_ativos_lotes(5000)
+
 
 
 print("INICIANDO ENVIO FIREBIRD PARA MYSQL")
@@ -535,6 +574,11 @@ if MODO in ["bnc001_historico", "historico_bnc001"]:
         erro = str(e)
         print("Erro geral:", erro)
         registrar_log("BNC001_HISTORICO", 0, "ERRO", erro)
+    print("\nFINALIZADO")
+    sys.exit(0)
+
+if MODO in ["est008_previa", "previa_est008"]:
+    verificar_est008_ativos_lotes(5000)
     print("\nFINALIZADO")
     sys.exit(0)
 
