@@ -437,6 +437,25 @@ function processarAtivosEst008(PDO $pdo, array $dados): void
     }
 
     if ($previsualizar || !$aplicar) {
+        $stmtAmostra = $pdo->prepare("
+            SELECT
+                m.EMPRESA,
+                m.ITEMVENDACONTADOR,
+                m.VENDACONTA,
+                m.PRODUTO,
+                m.REGSTAMP,
+                m.motivo_sync
+            FROM armazem_est008 m
+            LEFT JOIN sync_firebird_est008_temp t $join
+            WHERE m.EMPRESA = ?
+              AND COALESCE(m.excluido_firebird, 'N') <> 'S'
+              AND t.sync_id IS NULL
+            ORDER BY m.ITEMVENDACONTADOR, m.VENDACONTA, m.PRODUTO
+            LIMIT 20
+        ");
+        $stmtAmostra->execute($params);
+        $amostraCandidatos = $stmtAmostra->fetchAll(PDO::FETCH_ASSOC);
+
         registrarAuditoriaSnapshotEst008($pdo, $syncId, $empresa, $esperado, $recebido, $correspondentes, 0, $candidatos, 'PREVIA', 'Pre-validacao concluida sem alteracoes.');
         $stmtLimpar = $pdo->prepare("DELETE FROM sync_firebird_est008_temp WHERE sync_id = ? AND empresa = ?");
         $stmtLimpar->execute([$syncId, $empresa]);
@@ -447,6 +466,7 @@ function processarAtivosEst008(PDO $pdo, array $dados): void
             'processados' => $recebido,
             'correspondentes' => $correspondentes,
             'candidatos_exclusao' => $candidatos,
+            'amostra_candidatos' => $amostraCandidatos,
             'finalizado' => false,
         ]);
         exit;
