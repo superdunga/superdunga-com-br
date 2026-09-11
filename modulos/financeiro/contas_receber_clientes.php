@@ -505,13 +505,15 @@ function retanguloPdfFinanceiro(float $x, float $y, float $w, float $h): string
     return number_format($x, 2, '.', '') . ' ' . number_format($y, 2, '.', '') . ' ' . number_format($w, 2, '.', '') . ' ' . number_format($h, 2, '.', '') . " re f\n";
 }
 
-function gerarPdfFinanceiroClientes(string $titulo, array $metadados, array $colunas, array $linhas, string $arquivo, string $orientacao = 'portrait'): void
+function gerarPdfFinanceiroClientes(string $titulo, array $metadados, array $colunas, array $linhas, string $arquivo, string $orientacao = 'portrait', ?string $totalDestaque = null): void
 {
     $largura = $orientacao === 'landscape' ? 842 : 595;
     $altura = $orientacao === 'landscape' ? 595 : 842;
     $margem = 28;
-    $linhaAltura = 16;
-    $topoTabela = $altura - 110;
+    $linhaAltura = 17;
+    $alturaCabecalho = 92;
+    $alturaDestaque = $totalDestaque !== null ? 42 : 0;
+    $topoTabela = $altura - $alturaCabecalho - $alturaDestaque - 25;
     $rodapeY = 22;
     $linhasPorPagina = max(1, (int)floor(($topoTabela - 44) / $linhaAltura));
     $paginas = [];
@@ -521,7 +523,7 @@ function gerarPdfFinanceiroClientes(string $titulo, array $metadados, array $col
     for ($pagina = 0; $pagina < $totalPaginas; $pagina++) {
         $conteudo = '';
         $conteudo .= corPdfFinanceiro(0.05, 0.20, 0.45);
-        $conteudo .= retanguloPdfFinanceiro(0, $altura - 78, $largura, 78);
+        $conteudo .= retanguloPdfFinanceiro(0, $altura - $alturaCabecalho, $largura, $alturaCabecalho);
         $conteudo .= "1 1 1 rg\n";
         $y = $altura - 31;
         $conteudo .= comandoTextoPdfFinanceiro($margem, $y, 17, textoPdfFinanceiro($titulo, 90), true);
@@ -532,12 +534,21 @@ function gerarPdfFinanceiroClientes(string $titulo, array $metadados, array $col
             $y -= 11;
         }
 
-        $conteudo .= corPdfFinanceiro(0.88, 0.93, 0.98);
-        $conteudo .= retanguloPdfFinanceiro($margem, $topoTabela - 4, $largura - ($margem * 2), 18);
-        $conteudo .= "0 g\n";
+        if ($totalDestaque !== null) {
+            $destaqueY = $altura - $alturaCabecalho - 34;
+            $conteudo .= corPdfFinanceiro(0.96, 0.73, 0.12);
+            $conteudo .= retanguloPdfFinanceiro($margem, $destaqueY, $largura - ($margem * 2), 26);
+            $conteudo .= corPdfFinanceiro(0.05, 0.18, 0.38);
+            $conteudo .= comandoTextoPdfFinanceiro($margem + 10, $destaqueY + 9, 9, 'TOTAL DOS TITULOS SELECIONADOS', true);
+            $conteudo .= comandoTextoPdfFinanceiro($largura - $margem - 145, $destaqueY + 8, 12, textoPdfFinanceiro($totalDestaque, 22), true);
+        }
+
+        $conteudo .= corPdfFinanceiro(0.05, 0.20, 0.45);
+        $conteudo .= retanguloPdfFinanceiro($margem, $topoTabela - 4, $largura - ($margem * 2), 20);
+        $conteudo .= "1 1 1 rg\n";
         $x = $margem + 3;
         foreach ($colunas as $coluna) {
-            $conteudo .= comandoTextoPdfFinanceiro($x, $topoTabela + 2, 8, textoPdfFinanceiro($coluna['titulo'], $coluna['limite'] ?? 20), true);
+            $conteudo .= comandoTextoPdfFinanceiro($x, $topoTabela + 2, 7, textoPdfFinanceiro($coluna['titulo'], $coluna['limite'] ?? 20), true);
             $x += $coluna['largura'];
         }
 
@@ -545,12 +556,18 @@ function gerarPdfFinanceiroClientes(string $titulo, array $metadados, array $col
         $linhasPagina = array_slice($linhas, $inicio, $linhasPorPagina);
         $y = $topoTabela - 16;
 
-        foreach ($linhasPagina as $linha) {
+        foreach ($linhasPagina as $indiceLinha => $linha) {
+            if ($indiceLinha % 2 === 1) {
+                $conteudo .= corPdfFinanceiro(0.96, 0.97, 0.98);
+                $conteudo .= retanguloPdfFinanceiro($margem, $y - 5, $largura - ($margem * 2), $linhaAltura);
+            }
+            $conteudo .= "0.82 0.85 0.90 RG 0.35 w " . number_format($margem, 2, '.', '') . ' ' . number_format($y - 5, 2, '.', '') . ' ' . number_format($largura - ($margem * 2), 2, '.', '') . " {$linhaAltura} re S\n";
+            $conteudo .= "0 g\n";
             $x = $margem + 3;
             foreach ($colunas as $indice => $coluna) {
                 $valor = $linha[$indice] ?? '';
                 $limite = $coluna['limite'] ?? max(8, (int)floor($coluna['largura'] / 4));
-                $conteudo .= comandoTextoPdfFinanceiro($x, $y, 8, textoPdfFinanceiro($valor, $limite));
+                $conteudo .= comandoTextoPdfFinanceiro($x, $y, 7, textoPdfFinanceiro($valor, $limite));
                 $x += $coluna['largura'];
             }
             $y -= $linhaAltura;
@@ -848,12 +865,12 @@ if (in_array($exportar, ['excel', 'pdf', 'pdf_itens'], true)) {
 
         if ($visao === 'sintetico') {
             $colunas = [
-                ['titulo' => 'Venda', 'largura' => 62, 'limite' => 10],
-                ['titulo' => 'CR', 'largura' => 48, 'limite' => 9],
-                ['titulo' => 'Compra', 'largura' => 82, 'limite' => 16],
-                ['titulo' => 'Venc.', 'largura' => 62, 'limite' => 10],
-                ['titulo' => 'Cliente', 'largura' => 181, 'limite' => 31],
-                ['titulo' => 'Valor', 'largura' => 78, 'limite' => 14],
+                ['titulo' => 'Venda', 'largura' => 70, 'limite' => 10],
+                ['titulo' => 'CR', 'largura' => 55, 'limite' => 9],
+                ['titulo' => 'Compra', 'largura' => 105, 'limite' => 16],
+                ['titulo' => 'Venc.', 'largura' => 70, 'limite' => 10],
+                ['titulo' => 'Cliente', 'largura' => 370, 'limite' => 65],
+                ['titulo' => 'Valor', 'largura' => 106, 'limite' => 16],
             ];
             $linhas = array_map(static function ($registro): array {
                 return [
@@ -865,30 +882,21 @@ if (in_array($exportar, ['excel', 'pdf', 'pdf_itens'], true)) {
                     moedaFinanceiroClientes($registro['VLRRESTANTE']),
                 ];
             }, $registros);
-            $linhas[] = [
-                '',
-                '',
-                '',
-                '',
-                'TOTAL DO RELATORIO',
-                moedaFinanceiroClientes($resumo['total_restante']),
-            ];
-
-            gerarPdfFinanceiroClientes($tituloExportacao, $metadados, $colunas, $linhas, $nomeArquivo, 'portrait');
+            gerarPdfFinanceiroClientes($tituloExportacao, $metadados, $colunas, $linhas, $nomeArquivo, 'landscape', moedaFinanceiroClientes($resumo['total_restante']));
         }
 
         $colunas = [
-            ['titulo' => 'CR', 'largura' => 45, 'limite' => 10],
-            ['titulo' => 'Cod.', 'largura' => 45, 'limite' => 10],
-            ['titulo' => 'Cliente', 'largura' => 245, 'limite' => 44],
-            ['titulo' => 'Venc.', 'largura' => 62, 'limite' => 10],
-            ['titulo' => 'Emissao', 'largura' => 62, 'limite' => 10],
-            ['titulo' => 'Pgto.', 'largura' => 62, 'limite' => 10],
-            ['titulo' => 'Valor', 'largura' => 85, 'limite' => 16],
-            ['titulo' => 'Pago', 'largura' => 85, 'limite' => 16],
-            ['titulo' => 'Restante', 'largura' => 85, 'limite' => 16],
-            ['titulo' => 'Status', 'largura' => 55, 'limite' => 12],
-            ['titulo' => 'Verif.', 'largura' => 50, 'limite' => 8],
+            ['titulo' => 'CR', 'largura' => 42, 'limite' => 8],
+            ['titulo' => 'Cod.', 'largura' => 42, 'limite' => 8],
+            ['titulo' => 'Cliente', 'largura' => 210, 'limite' => 40],
+            ['titulo' => 'Venc.', 'largura' => 58, 'limite' => 10],
+            ['titulo' => 'Emissao', 'largura' => 58, 'limite' => 10],
+            ['titulo' => 'Pgto.', 'largura' => 58, 'limite' => 10],
+            ['titulo' => 'Valor', 'largura' => 72, 'limite' => 13],
+            ['titulo' => 'Pago', 'largura' => 72, 'limite' => 13],
+            ['titulo' => 'Restante', 'largura' => 72, 'limite' => 13],
+            ['titulo' => 'Status', 'largura' => 52, 'limite' => 10],
+            ['titulo' => 'Verif.', 'largura' => 40, 'limite' => 6],
         ];
         $linhas = array_map(static function ($registro): array {
             return [
@@ -906,7 +914,7 @@ if (in_array($exportar, ['excel', 'pdf', 'pdf_itens'], true)) {
             ];
         }, $registros);
 
-        gerarPdfFinanceiroClientes($tituloExportacao, $metadados, $colunas, $linhas, $nomeArquivo, 'landscape');
+        gerarPdfFinanceiroClientes($tituloExportacao, $metadados, $colunas, $linhas, $nomeArquivo, 'landscape', moedaFinanceiroClientes($resumo['total_restante']));
     }
 
     if ($exportar === 'excel') {
