@@ -11,7 +11,7 @@ MODO = (sys.argv[1] if len(sys.argv) > 1 else "rapido").lower()
 EXECUTAR_COMPLETO = MODO in ["completo", "full", "diario"]
 EMPRESA_DESTINO = 1
 BASE_SITE = "https://www.superdunga.com.br"
-APLICAR_SNAPSHOT_EST008 = False
+APLICAR_SNAPSHOT_EST008 = MODO in ["completo", "full", "diario", "est008_aplicar", "aplicar_est008"]
 
 
 def params_site(params=None):
@@ -579,7 +579,7 @@ if MODO in ["bnc001_historico", "historico_bnc001"]:
     print("\nFINALIZADO")
     sys.exit(0)
 
-if MODO in ["est008_previa", "previa_est008"]:
+if MODO in ["est008_previa", "previa_est008", "est008_aplicar", "aplicar_est008"]:
     verificar_est008_ativos_lotes(5000)
     print("\nFINALIZADO")
     sys.exit(0)

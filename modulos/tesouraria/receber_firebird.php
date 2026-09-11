@@ -254,6 +254,24 @@ function garantirTabelasSnapshotEst008(PDO $pdo): void
             INDEX idx_sync_est008_auditoria (sync_id, empresa)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
     ");
+
+    $colunasControle = [
+        'ausente_est008_desde' => "ALTER TABLE armazem_est008 ADD ausente_est008_desde DATETIME NULL",
+        'ausente_est008_contagem' => "ALTER TABLE armazem_est008 ADD ausente_est008_contagem TINYINT UNSIGNED NOT NULL DEFAULT 0",
+    ];
+    $stmtColuna = $pdo->prepare("
+        SELECT COUNT(*)
+        FROM information_schema.COLUMNS
+        WHERE TABLE_SCHEMA = DATABASE()
+          AND TABLE_NAME = 'armazem_est008'
+          AND COLUMN_NAME = ?
+    ");
+    foreach ($colunasControle as $coluna => $sqlAlteracao) {
+        $stmtColuna->execute([$coluna]);
+        if ((int)$stmtColuna->fetchColumn() === 0) {
+            $pdo->exec($sqlAlteracao);
+        }
+    }
 }
 
 function registrarAuditoriaSnapshotEst008(
@@ -480,26 +498,40 @@ function processarAtivosEst008(PDO $pdo, array $dados): void
             SET m.excluido_firebird = 'N',
                 m.data_exclusao_firebird = NULL,
                 m.motivo_sync = NULL,
-                m.ultima_presenca_firebird = NOW()
+                m.ultima_presenca_firebird = NOW(),
+                m.ausente_est008_desde = NULL,
+                m.ausente_est008_contagem = 0
             WHERE m.EMPRESA = ?
         ");
         $stmtReativar->execute($params);
         $reativados = $stmtReativar->rowCount();
 
-        $stmtExcluir = $pdo->prepare("
+        $stmtMarcarAusentes = $pdo->prepare("
             UPDATE armazem_est008 m
             LEFT JOIN sync_firebird_est008_temp t $join
-            SET m.excluido_firebird = 'S',
-                m.data_exclusao_firebird = NOW(),
-                m.motivo_sync = 'Nao encontrado na foto completa EST008 do Firebird'
+            SET m.ausente_est008_desde = COALESCE(m.ausente_est008_desde, NOW()),
+                m.ausente_est008_contagem = LEAST(m.ausente_est008_contagem + 1, 255)
             WHERE m.EMPRESA = ?
               AND COALESCE(m.excluido_firebird, 'N') <> 'S'
               AND t.sync_id IS NULL
         ");
-        $stmtExcluir->execute($params);
+        $stmtMarcarAusentes->execute($params);
+        $pendentesConfirmacao = $stmtMarcarAusentes->rowCount();
+
+        $stmtExcluir = $pdo->prepare("
+            UPDATE armazem_est008
+            SET excluido_firebird = 'S',
+                data_exclusao_firebird = NOW(),
+                motivo_sync = 'Ausente em duas fotos completas consecutivas do EST008'
+            WHERE EMPRESA = ?
+              AND COALESCE(excluido_firebird, 'N') <> 'S'
+              AND ausente_est008_contagem >= 2
+              AND ausente_est008_desde <= DATE_SUB(NOW(), INTERVAL 10 MINUTE)
+        ");
+        $stmtExcluir->execute([$empresa]);
         $marcadosExcluidos = $stmtExcluir->rowCount();
 
-        registrarAuditoriaSnapshotEst008($pdo, $syncId, $empresa, $esperado, $recebido, $correspondentes, 0, $candidatos, 'FINALIZADO', 'Snapshot EST008 finalizado.');
+        registrarAuditoriaSnapshotEst008($pdo, $syncId, $empresa, $esperado, $recebido, $correspondentes, 0, $candidatos, 'FINALIZADO', "Snapshot EST008 finalizado: pendentes_confirmacao=$pendentesConfirmacao excluidos=$marcadosExcluidos.");
         $stmtLimpar = $pdo->prepare("DELETE FROM sync_firebird_est008_temp WHERE sync_id = ? AND empresa = ?");
         $stmtLimpar->execute([$syncId, $empresa]);
         $pdo->commit();
@@ -515,6 +547,7 @@ function processarAtivosEst008(PDO $pdo, array $dados): void
         'processados' => $recebido,
         'correspondentes' => $correspondentes,
         'reativados' => $reativados,
+        'pendentes_confirmacao' => $pendentesConfirmacao,
         'marcados_excluidos' => $marcadosExcluidos,
         'finalizado' => true,
     ]);
