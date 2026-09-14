@@ -1293,10 +1293,15 @@ require __DIR__ . '/../../layout/header.php';
                             </td>
                             <td>
                                 <span class="badge bg-<?= $h['status'] !== 'OK' || $h['entrega_status'] === 'FALHA' ? 'danger' : ($h['entrega_status'] === 'ENTREGUE' ? 'success' : 'warning text-dark') ?>">
-                                    <?= $h['status'] !== 'OK' ? 'Erro' : ($h['entrega_status'] === 'FALHA' ? 'Falha de entrega' : 'Aceito pela API') ?>
+                                    <?= $h['status'] !== 'OK' ? 'Erro no envio' : ($h['entrega_status'] === 'FALHA' ? 'Erro reportado pela Evolution' : ($h['entrega_status'] === 'ENTREGUE' ? 'Entrega confirmada' : 'Aceito pela API')) ?>
                                 </span>
                             </td>
-                            <td><?= htmlspecialchars($h['entrega_status'] ?: ($h['status'] === 'OK' ? 'Sem confirmacao historica' : '-')) ?></td>
+                            <td><?= htmlspecialchars([
+                                'PENDENTE' => 'Sem confirmacao da Evolution',
+                                'SEM_CONFIRMACAO' => 'Sem confirmacao da Evolution',
+                                'FALHA' => 'Evolution reportou erro',
+                                'ENTREGUE' => 'Confirmada pela Evolution',
+                            ][$h['entrega_status'] ?? ''] ?? ($h['status'] === 'OK' ? 'Sem confirmacao historica' : '-')) ?></td>
                             <td class="small">
                                 <?= htmlspecialchars($h['erro'] ?: ($h['resposta_api'] ?? '')) ?>
                             </td>
