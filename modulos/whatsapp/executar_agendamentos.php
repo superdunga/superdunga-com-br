@@ -37,8 +37,8 @@ try {
 
     echo json_encode([
         'status' => 'ok',
-        'executadas' => count(array_filter($resultado, static fn($item) => $item['status'] !== 'IGNORADO_ATRASO')),
-        'ignoradas_atraso' => count(array_filter($resultado, static fn($item) => $item['status'] === 'IGNORADO_ATRASO')),
+        'executadas' => count(array_filter($resultado, static function ($item) { return $item['status'] !== 'IGNORADO_ATRASO'; })),
+        'ignoradas_atraso' => count(array_filter($resultado, static function ($item) { return $item['status'] === 'IGNORADO_ATRASO'; })),
         'resultado' => $resultado,
         'fechamentos_operacionais' => $resultadoOperacional,
         'confirmacoes_gerenciais' => $confirmacoesGerenciais,
