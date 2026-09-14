@@ -29,14 +29,19 @@ try {
         exit;
     }
 
+    $pdo_master->prepare('UPDATE whatsapp_gerencial_config SET cron_ultimo_contato_em=NOW() WHERE agendamento_token=?')->execute([$tokenRecebido]);
+
     $resultado = whatsappExecutarAgendamentos($pdo_master);
     $resultadoOperacional = whatsappOperacionalExecutarAutomacao($pdo_master);
+    $confirmacoesGerenciais = whatsappAtualizarConfirmacoesGerenciais($pdo_master);
 
     echo json_encode([
         'status' => 'ok',
-        'executadas' => count($resultado),
+        'executadas' => count(array_filter($resultado, static fn($item) => $item['status'] !== 'IGNORADO_ATRASO')),
+        'ignoradas_atraso' => count(array_filter($resultado, static fn($item) => $item['status'] === 'IGNORADO_ATRASO')),
         'resultado' => $resultado,
         'fechamentos_operacionais' => $resultadoOperacional,
+        'confirmacoes_gerenciais' => $confirmacoesGerenciais,
     ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
 } catch (Exception $e) {
     http_response_code(500);

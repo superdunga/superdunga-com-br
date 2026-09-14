@@ -97,6 +97,11 @@ function whatsappEnsureTables(PDO $pdo): void
     whatsappEnsureColumn($pdo, 'whatsapp_mensagens', 'descricao', 'ALTER TABLE whatsapp_mensagens ADD descricao VARCHAR(255) NULL AFTER titulo');
     whatsappEnsureColumn($pdo, 'whatsapp_rotinas', 'empresa_id', 'ALTER TABLE whatsapp_rotinas ADD empresa_id INT NOT NULL DEFAULT 1 AFTER id');
     whatsappEnsureColumn($pdo, 'whatsapp_envios', 'empresa_id', 'ALTER TABLE whatsapp_envios ADD empresa_id INT NOT NULL DEFAULT 1 AFTER id');
+    whatsappEnsureColumn($pdo, 'whatsapp_envios', 'mensagem_evolution_id', 'ALTER TABLE whatsapp_envios ADD mensagem_evolution_id VARCHAR(120) NULL AFTER resposta_api');
+    whatsappEnsureColumn($pdo, 'whatsapp_envios', 'entrega_status', 'ALTER TABLE whatsapp_envios ADD entrega_status VARCHAR(24) NULL AFTER mensagem_evolution_id');
+    whatsappEnsureColumn($pdo, 'whatsapp_envios', 'entrega_consultada_em', 'ALTER TABLE whatsapp_envios ADD entrega_consultada_em DATETIME NULL AFTER entrega_status');
+    whatsappEnsureColumn($pdo, 'whatsapp_envios', 'entregue_em', 'ALTER TABLE whatsapp_envios ADD entregue_em DATETIME NULL AFTER entrega_consultada_em');
+    whatsappEnsureColumn($pdo, 'whatsapp_gerencial_config', 'cron_ultimo_contato_em', 'ALTER TABLE whatsapp_gerencial_config ADD cron_ultimo_contato_em DATETIME NULL AFTER agendamento_token');
     whatsappEnsureColumn($pdo, 'whatsapp_rotinas', 'origem_mensagem', "ALTER TABLE whatsapp_rotinas ADD origem_mensagem ENUM('TEXTO','SISTEMA') NOT NULL DEFAULT 'TEXTO' AFTER mensagem_id");
     whatsappEnsureColumn($pdo, 'whatsapp_rotinas', 'gerador_sistema', 'ALTER TABLE whatsapp_rotinas ADD gerador_sistema VARCHAR(80) NULL AFTER origem_mensagem');
     whatsappEnsureColumn($pdo, 'whatsapp_rotinas', 'periodicidade', "ALTER TABLE whatsapp_rotinas ADD periodicidade ENUM('MANUAL','DIARIO','SEMANAL','MENSAL') NOT NULL DEFAULT 'MANUAL' AFTER evitar_duplicidade_diaria");
@@ -153,6 +158,18 @@ function whatsappEnsureTables(PDO $pdo): void
             atualizado_em DATETIME NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
             INDEX idx_wra_proxima (ativo, proxima_execucao),
             INDEX idx_wra_rotina (rotina_id)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    ");
+
+    $pdo->exec("
+        CREATE TABLE IF NOT EXISTS whatsapp_agendamentos_ignorados (
+            id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+            agendamento_id INT UNSIGNED NOT NULL,
+            empresa_id INT NOT NULL,
+            previsto_em DATETIME NOT NULL,
+            motivo VARCHAR(120) NOT NULL,
+            registrado_em DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE KEY uq_whatsapp_agendamento_ignorado (agendamento_id, previsto_em)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
     ");
 
@@ -351,6 +368,11 @@ function whatsappEnsureCompanyIndexes(PDO $pdo): void
 
     try {
         $pdo->exec("ALTER TABLE whatsapp_envios ADD INDEX idx_whatsapp_envios_empresa (empresa_id, enviado_em)");
+    } catch (Throwable $e) {
+    }
+
+    try {
+        $pdo->exec("ALTER TABLE whatsapp_envios ADD INDEX idx_whatsapp_envios_entrega (entrega_status, entrega_consultada_em)");
     } catch (Throwable $e) {
     }
 
@@ -566,11 +588,14 @@ function whatsappSendDocument(PDO $pdo, array $config, array $destinatario, stri
 function whatsappRegisterSend(PDO $pdo, ?int $mensagemId, array $destinatario, string $mensagem, string $status, ?string $resposta, ?string $erro, ?int $usuarioId, ?int $rotinaId = null): array
 {
     $empresaId = (int)($destinatario['empresa_id'] ?? 1);
+    $dadosResposta = $resposta !== null ? json_decode($resposta, true) : null;
+    $evolutionId = is_array($dadosResposta) ? (string)($dadosResposta['key']['id'] ?? '') : '';
+    $entregaStatus = $status === 'OK' && $evolutionId !== '' ? 'PENDENTE' : null;
     $stmt = $pdo->prepare("
         INSERT INTO whatsapp_envios
-            (empresa_id, rotina_id, mensagem_id, destinatario_id, destino_nome, destino_numero, mensagem, status, resposta_api, erro, usuario_id)
+            (empresa_id, rotina_id, mensagem_id, destinatario_id, destino_nome, destino_numero, mensagem, status, resposta_api, mensagem_evolution_id, entrega_status, erro, usuario_id)
         VALUES
-            (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ");
     $stmt->execute([
         $empresaId,
@@ -582,6 +607,8 @@ function whatsappRegisterSend(PDO $pdo, ?int $mensagemId, array $destinatario, s
         $mensagem,
         $status,
         $resposta,
+        $evolutionId !== '' ? $evolutionId : null,
+        $entregaStatus,
         $erro,
         $usuarioId,
     ]);
@@ -814,6 +841,7 @@ function whatsappExecutarAgendamentos(PDO $pdo): array
     $stmt = $pdo->query("
         SELECT
             a.id AS agendamento_id,
+            a.proxima_execucao AS agendamento_previsto_em,
             r.*
         FROM whatsapp_rotina_agendamentos a
         INNER JOIN whatsapp_rotinas r ON r.id = a.rotina_id
@@ -828,13 +856,20 @@ function whatsappExecutarAgendamentos(PDO $pdo): array
 
     $resultado = [];
     foreach ($rotinas as $rotina) {
+        if (whatsappAgendamentoAtrasado((string)$rotina['agendamento_previsto_em'])) {
+            $pdo->prepare("INSERT IGNORE INTO whatsapp_agendamentos_ignorados (agendamento_id,empresa_id,previsto_em,motivo) VALUES (?,?,?,'Atraso superior a 15 minutos')")
+                ->execute([(int)$rotina['agendamento_id'],(int)$rotina['empresa_id'],$rotina['agendamento_previsto_em']]);
+            whatsappAtualizarProximaAgendamento($pdo, (int)$rotina['agendamento_id']);
+            $resultado[] = ['rotina'=>$rotina['codigo'],'agendamento_id'=>(int)$rotina['agendamento_id'],'status'=>'IGNORADO_ATRASO'];
+            continue;
+        }
         try {
             list($mensagem, $mensagemId) = whatsappMensagemRotina($pdo, $rotina);
             $envio = whatsappEnviarRotina($pdo, $rotina, $mensagem, $mensagemId, null);
             $resultado[] = [
                 'rotina' => $rotina['codigo'],
                 'agendamento_id' => (int)$rotina['agendamento_id'],
-                'status' => 'OK',
+                'status' => $envio['falha'] > 0 ? ($envio['ok'] > 0 ? 'PARCIAL' : 'ERRO') : 'OK',
                 'ok' => $envio['ok'],
                 'falha' => $envio['falha'],
             ];
@@ -852,6 +887,82 @@ function whatsappExecutarAgendamentos(PDO $pdo): array
         }
     }
 
+    return $resultado;
+}
+
+function whatsappAgendamentoAtrasado(string $previsto, ?DateTimeImmutable $agora = null): bool
+{
+    $agora = $agora ?: new DateTimeImmutable('now');
+    return $agora->getTimestamp() - (new DateTimeImmutable($previsto))->getTimestamp() > 15 * 60;
+}
+
+function whatsappStatusEntregaEvolution(array $mensagem): ?string
+{
+    $atualizacoes = $mensagem['MessageUpdate'] ?? [];
+    $ultimaAtualizacao = is_array($atualizacoes) && $atualizacoes ? end($atualizacoes) : [];
+    $status = strtoupper((string)($ultimaAtualizacao['status'] ?? $mensagem['status'] ?? ''));
+    if (in_array($status, ['DELIVERY_ACK','DELIVERED','READ','PLAYED','3','4','5'], true)) {
+        return 'ENTREGUE';
+    }
+    if (in_array($status, ['ERROR','FAILED','0'], true)) {
+        return 'FALHA';
+    }
+    return null;
+}
+
+function whatsappAtualizarConfirmacoesGerenciais(PDO $pdo): array
+{
+    $config = whatsappConfig($pdo);
+    if (!$config || strtoupper((string)$config['provedor']) !== 'EVOLUTION') {
+        return ['consultados'=>0,'entregues'=>0,'falhas'=>0];
+    }
+    $anteriores = $pdo->query("SELECT id,resposta_api FROM whatsapp_envios WHERE status='OK' AND entrega_status IS NULL AND resposta_api LIKE '{\"key\":%' AND enviado_em>=DATE_SUB(NOW(),INTERVAL 2 DAY) ORDER BY id DESC LIMIT 20")->fetchAll(PDO::FETCH_ASSOC);
+    $prepararAnterior = $pdo->prepare("UPDATE whatsapp_envios SET mensagem_evolution_id=?,entrega_status='PENDENTE' WHERE id=? AND entrega_status IS NULL");
+    foreach ($anteriores as $anterior) {
+        $dados = json_decode($anterior['resposta_api'], true);
+        $id = (string)($dados['key']['id'] ?? '');
+        if ($id !== '') {
+            $prepararAnterior->execute([$id,(int)$anterior['id']]);
+        }
+    }
+    $pdo->exec("UPDATE whatsapp_envios SET entrega_status='SEM_CONFIRMACAO' WHERE entrega_status='PENDENTE' AND enviado_em<DATE_SUB(NOW(),INTERVAL 2 DAY)");
+    $stmt = $pdo->query("SELECT id,mensagem_evolution_id FROM whatsapp_envios WHERE entrega_status='PENDENTE' ORDER BY entrega_consultada_em IS NULL DESC,entrega_consultada_em,id LIMIT 5");
+    $resultado = ['consultados'=>0,'entregues'=>0,'falhas'=>0];
+    foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $envio) {
+        $url = rtrim((string)$config['evolution_api_base_url'], '/') . '/chat/findMessages/' . rawurlencode((string)$config['instancia']);
+        $ch = curl_init($url);
+        curl_setopt_array($ch, [
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_POST => true,
+            CURLOPT_POSTFIELDS => json_encode(['where'=>['key'=>['id'=>$envio['mensagem_evolution_id']]]]),
+            CURLOPT_HTTPHEADER => ['Content-Type: application/json', 'apikey: ' . $config['evolution_token']],
+            CURLOPT_CONNECTTIMEOUT => 3,
+            CURLOPT_TIMEOUT => 6,
+        ]);
+        $resposta = curl_exec($ch);
+        $http = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        curl_close($ch);
+        $pdo->prepare('UPDATE whatsapp_envios SET entrega_consultada_em=NOW() WHERE id=?')->execute([(int)$envio['id']]);
+        $resultado['consultados']++;
+        if ($resposta === false || $http < 200 || $http >= 300) {
+            continue;
+        }
+        $dados = json_decode($resposta, true);
+        foreach (($dados['messages']['records'] ?? []) as $mensagem) {
+            if (($mensagem['key']['id'] ?? '') !== $envio['mensagem_evolution_id']) {
+                continue;
+            }
+            $status = whatsappStatusEntregaEvolution($mensagem);
+            if ($status === 'ENTREGUE') {
+                $pdo->prepare("UPDATE whatsapp_envios SET entrega_status='ENTREGUE',entregue_em=NOW() WHERE id=? AND entrega_status='PENDENTE'")->execute([(int)$envio['id']]);
+                $resultado['entregues']++;
+            } elseif ($status === 'FALHA') {
+                $pdo->prepare("UPDATE whatsapp_envios SET entrega_status='FALHA' WHERE id=? AND entrega_status='PENDENTE'")->execute([(int)$envio['id']]);
+                $resultado['falhas']++;
+            }
+            break;
+        }
+    }
     return $resultado;
 }
 

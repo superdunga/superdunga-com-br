@@ -455,6 +455,16 @@ $stmt = $pdo_master->prepare("
 ");
 $stmt->execute([$empresaId]);
 $historico = $stmt->fetchAll(PDO::FETCH_ASSOC);
+$stmt = $pdo_master->prepare("
+    SELECT i.previsto_em, i.motivo, r.nome AS rotina_nome
+    FROM whatsapp_agendamentos_ignorados i
+    INNER JOIN whatsapp_rotina_agendamentos a ON a.id=i.agendamento_id
+    INNER JOIN whatsapp_rotinas r ON r.id=a.rotina_id AND r.empresa_id=i.empresa_id
+    WHERE i.empresa_id=?
+    ORDER BY i.previsto_em DESC LIMIT 20
+");
+$stmt->execute([$empresaId]);
+$agendamentosIgnorados = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
 $cronUrl = '';
 if (!empty($config['agendamento_token'])) {
@@ -483,6 +493,15 @@ require __DIR__ . '/../../layout/header.php';
             Este token e gerado pelo SuperDunga para o cron executar as mensagens agendadas. Ele nao e o token da API Waseller.
         </div>
         <code class="d-block text-break"><?= htmlspecialchars($cronUrl) ?></code>
+        <div class="small mt-2">
+            Ultima chamada autenticada:
+            <?php if (!empty($config['cron_ultimo_contato_em'])): ?>
+                <?= htmlspecialchars(date('d/m/Y H:i', strtotime($config['cron_ultimo_contato_em']))) ?>
+                <?php if (time() - strtotime($config['cron_ultimo_contato_em']) > 15 * 60): ?><span class="badge text-bg-warning ms-1">Atrasada</span><?php endif; ?>
+            <?php else: ?>
+                <span class="badge text-bg-warning">Nao registrada</span>
+            <?php endif; ?>
+        </div>
     </div>
 <?php endif; ?>
 
@@ -1255,12 +1274,13 @@ require __DIR__ . '/../../layout/header.php';
                         <th>Mensagem</th>
                         <th>Destino</th>
                         <th>Status</th>
+                        <th>Entrega</th>
                         <th>Resposta</th>
                     </tr>
                 </thead>
                 <tbody>
                     <?php if (empty($historico)): ?>
-                        <tr><td colspan="6" class="text-muted text-center">Nenhum envio registrado.</td></tr>
+                        <tr><td colspan="7" class="text-muted text-center">Nenhum envio registrado.</td></tr>
                     <?php endif; ?>
                     <?php foreach ($historico as $h): ?>
                         <tr>
@@ -1272,10 +1292,11 @@ require __DIR__ . '/../../layout/header.php';
                                 <small class="text-muted"><?= htmlspecialchars($h['destino_numero']) ?></small>
                             </td>
                             <td>
-                                <span class="badge bg-<?= $h['status'] === 'OK' ? 'success' : 'danger' ?>">
-                                    <?= htmlspecialchars($h['status']) ?>
+                                <span class="badge bg-<?= $h['status'] !== 'OK' || $h['entrega_status'] === 'FALHA' ? 'danger' : ($h['entrega_status'] === 'ENTREGUE' ? 'success' : 'warning text-dark') ?>">
+                                    <?= $h['status'] !== 'OK' ? 'Erro' : ($h['entrega_status'] === 'FALHA' ? 'Falha de entrega' : 'Aceito pela API') ?>
                                 </span>
                             </td>
+                            <td><?= htmlspecialchars($h['entrega_status'] ?: ($h['status'] === 'OK' ? 'Sem confirmacao historica' : '-')) ?></td>
                             <td class="small">
                                 <?= htmlspecialchars($h['erro'] ?: ($h['resposta_api'] ?? '')) ?>
                             </td>
@@ -1286,5 +1307,19 @@ require __DIR__ . '/../../layout/header.php';
         </div>
     </div>
 </div>
+
+<?php if ($agendamentosIgnorados): ?>
+<div class="card shadow-sm mt-3">
+    <div class="card-header"><h2 class="h5 mb-0">Agendamentos nao enviados por atraso</h2></div>
+    <div class="table-responsive">
+        <table class="table table-sm mb-0">
+            <thead><tr><th>Previsto</th><th>Rotina</th><th>Motivo</th></tr></thead>
+            <tbody><?php foreach ($agendamentosIgnorados as $ignorado): ?>
+                <tr><td><?= htmlspecialchars(date('d/m/Y H:i', strtotime($ignorado['previsto_em']))) ?></td><td><?= htmlspecialchars($ignorado['rotina_nome']) ?></td><td><?= htmlspecialchars($ignorado['motivo']) ?></td></tr>
+            <?php endforeach; ?></tbody>
+        </table>
+    </div>
+</div>
+<?php endif; ?>
 
 <?php require __DIR__ . '/../../layout/footer.php'; ?>
