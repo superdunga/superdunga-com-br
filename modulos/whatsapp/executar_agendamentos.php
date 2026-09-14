@@ -33,6 +33,7 @@ try {
 
     $resultado = whatsappExecutarAgendamentos($pdo_master);
     $resultadoOperacional = whatsappOperacionalExecutarAutomacao($pdo_master);
+    $confirmacoesOperacionais = whatsappOperacionalConsultarConfirmacoes($pdo_master);
     $confirmacoesGerenciais = whatsappAtualizarConfirmacoesGerenciais($pdo_master);
 
     echo json_encode([
@@ -41,6 +42,7 @@ try {
         'ignoradas_atraso' => count(array_filter($resultado, static function ($item) { return $item['status'] === 'IGNORADO_ATRASO'; })),
         'resultado' => $resultado,
         'fechamentos_operacionais' => $resultadoOperacional,
+        'confirmacoes_operacionais' => $confirmacoesOperacionais,
         'confirmacoes_gerenciais' => $confirmacoesGerenciais,
     ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
 } catch (Exception $e) {

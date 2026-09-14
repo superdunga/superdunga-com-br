@@ -162,6 +162,7 @@ function whatsappOperacionalEnsureTables(PDO $pdo): void
             INDEX idx_wo_fila_mensagem (empresa_id,mensagem_id)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
     ");
+    whatsappOperacionalEnsureColumn($pdo, 'whatsapp_operacional_fila', 'entrega_consultada_em', "ALTER TABLE whatsapp_operacional_fila ADD entrega_consultada_em DATETIME NULL AFTER entregue_em");
 
     $pdo->exec("
         CREATE TABLE IF NOT EXISTS whatsapp_operacional_webhook_eventos (
@@ -253,6 +254,51 @@ function whatsappOperacionalConfigurarWebhook(array $config): array
     return ['ok'=>$ok, 'http'=>$http, 'resposta'=>$resposta, 'erro'=>$ok?null:($resposta===false?$erroCurl:'HTTP '.$http.' - '.$resposta)];
 }
 
+function whatsappOperacionalEventoMensagemId(array $dados, array $payload): string
+{
+    return trim((string)(
+        $dados['key']['id']
+        ?? $dados['update']['key']['id']
+        ?? $dados['keyId']
+        ?? $dados['update']['keyId']
+        ?? $dados['message']['key']['id']
+        ?? $dados['messageId']
+        ?? $payload['messageId']
+        ?? $dados['id']
+        ?? ''
+    ));
+}
+
+function whatsappOperacionalStatusConfirmacao(array $statuses): ?string
+{
+    $normalizados = [];
+    $numericos = ['0'=>'ERROR','1'=>'PENDING','2'=>'SERVER_ACK','3'=>'DELIVERY_ACK','4'=>'READ','5'=>'PLAYED'];
+    foreach ($statuses as $status) {
+        $valor = strtoupper(trim((string)$status));
+        $normalizados[] = $numericos[$valor] ?? $valor;
+    }
+    if (array_intersect($normalizados, ['DELIVERY_ACK','DELIVERED','READ','PLAYED'])) {
+        return 'ENTREGUE';
+    }
+    return in_array('ERROR', $normalizados, true) || in_array('FAILED', $normalizados, true) ? 'ERRO' : null;
+}
+
+function whatsappOperacionalAplicarConfirmacao(PDO $pdo, int $filaId, array $statuses): string
+{
+    $confirmacao = whatsappOperacionalStatusConfirmacao($statuses);
+    if ($confirmacao === 'ENTREGUE') {
+        $stmt = $pdo->prepare("UPDATE whatsapp_operacional_fila SET status='ENTREGUE',entregue_em=COALESCE(entregue_em,NOW()),erro=NULL WHERE id=? AND status IN ('ACEITO','ENTREGUE')");
+        $stmt->execute([$filaId]);
+        return $stmt->rowCount() > 0 ? 'ENTREGUE' : 'SEM_ALTERACAO';
+    }
+    if ($confirmacao === 'ERRO') {
+        $stmt = $pdo->prepare("UPDATE whatsapp_operacional_fila SET erro='Evolution reportou erro; confirmar no destino antes de reenviar' WHERE id=? AND status='ACEITO'");
+        $stmt->execute([$filaId]);
+        return $stmt->rowCount() > 0 ? 'ERRO_SEM_REENVIO' : 'SEM_ALTERACAO';
+    }
+    return 'SEM_ALTERACAO';
+}
+
 function whatsappOperacionalProcessarWebhook(PDO $pdo, string $token, array $payload): array
 {
     $stmt = $pdo->prepare("SELECT * FROM whatsapp_operacional_config WHERE webhook_token=? AND webhook_token<>'' LIMIT 1");
@@ -274,7 +320,7 @@ function whatsappOperacionalProcessarWebhook(PDO $pdo, string $token, array $pay
     if (isset($dados[0]) && is_array($dados[0])) {
         $dados = $dados[0];
     }
-    $mensagemId = (string)($dados['key']['id'] ?? $dados['id'] ?? $dados['messageId'] ?? $payload['messageId'] ?? '');
+    $mensagemId = whatsappOperacionalEventoMensagemId($dados, $payload);
     $status = strtoupper((string)($dados['update']['status'] ?? $dados['status'] ?? $payload['status'] ?? ''));
     $statusNumerico = ['0'=>'ERROR','1'=>'PENDING','2'=>'SERVER_ACK','3'=>'DELIVERY_ACK','4'=>'READ','5'=>'PLAYED'];
     if (isset($statusNumerico[$status])) {
@@ -289,15 +335,7 @@ function whatsappOperacionalProcessarWebhook(PDO $pdo, string $token, array $pay
         $fila = $stmt->fetch(PDO::FETCH_ASSOC);
         if ($fila) {
             $filaId = (int)$fila['id'];
-            if (in_array($status, ['DELIVERY_ACK','READ','PLAYED'], true)) {
-                $pdo->prepare("UPDATE whatsapp_operacional_fila SET status='ENTREGUE',entregue_em=COALESCE(entregue_em,NOW()),erro=NULL WHERE id=? AND status IN ('ACEITO','ENTREGUE')")->execute([$filaId]);
-                $resultado = 'ENTREGUE';
-            } elseif ($status === 'ERROR') {
-                $pdo->prepare("UPDATE whatsapp_operacional_fila SET status='ERRO',erro='Falha de entrega informada pela Evolution',proxima_tentativa=DATE_ADD(NOW(),INTERVAL 5 MINUTE) WHERE id=? AND status='ACEITO'")->execute([$filaId]);
-                $resultado = 'ERRO';
-            } else {
-                $resultado = 'SEM_ALTERACAO';
-            }
+            $resultado = whatsappOperacionalAplicarConfirmacao($pdo, $filaId, [$status]);
         }
     }
     $stmt = $pdo->prepare("INSERT INTO whatsapp_operacional_webhook_eventos (empresa_id,instancia,evento,mensagem_id,status_recebido,fila_id,resultado) VALUES (?,?,?,?,?,?,?)");
@@ -725,6 +763,60 @@ function whatsappOperacionalPrepararFila(PDO $pdo, array $config, string $compet
         }
     }
     return $criados;
+}
+
+function whatsappOperacionalConsultarConfirmacoes(PDO $pdo): array
+{
+    $stmt = $pdo->query("
+        SELECT q.id,q.mensagem_id,c.evolution_api_base_url,c.instancia,c.evolution_token
+        FROM whatsapp_operacional_fila q
+        INNER JOIN whatsapp_operacional_config c ON c.empresa_id=q.empresa_id AND c.ativo='S'
+        WHERE q.status='ACEITO' AND q.mensagem_id IS NOT NULL AND q.mensagem_id<>''
+          AND q.aceito_em>=DATE_SUB(NOW(),INTERVAL 7 DAY)
+          AND (q.entrega_consultada_em IS NULL OR q.entrega_consultada_em<DATE_SUB(NOW(),INTERVAL 15 MINUTE))
+        ORDER BY q.entrega_consultada_em IS NOT NULL,q.entrega_consultada_em,q.id
+        LIMIT 5
+    ");
+    $resultado = ['consultados'=>0,'entregues'=>0,'erros_reportados'=>0];
+    $marcarConsulta = $pdo->prepare("UPDATE whatsapp_operacional_fila SET entrega_consultada_em=NOW() WHERE id=? AND status='ACEITO'");
+    foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $envio) {
+        $url = rtrim((string)$envio['evolution_api_base_url'], '/') . '/chat/findMessages/' . rawurlencode((string)$envio['instancia']);
+        $ch = curl_init($url);
+        curl_setopt_array($ch, [
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_POST => true,
+            CURLOPT_POSTFIELDS => json_encode(['where'=>['key'=>['id'=>$envio['mensagem_id']]]]),
+            CURLOPT_HTTPHEADER => ['Content-Type: application/json','apikey: ' . $envio['evolution_token']],
+            CURLOPT_CONNECTTIMEOUT => 3,
+            CURLOPT_TIMEOUT => 6,
+        ]);
+        $resposta = curl_exec($ch);
+        $http = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        curl_close($ch);
+        $marcarConsulta->execute([(int)$envio['id']]);
+        $resultado['consultados']++;
+        if ($resposta === false || $http < 200 || $http >= 300) {
+            continue;
+        }
+        $dados = json_decode($resposta, true);
+        foreach (($dados['messages']['records'] ?? []) as $mensagem) {
+            if (($mensagem['key']['id'] ?? '') !== $envio['mensagem_id']) {
+                continue;
+            }
+            $statuses = array_column($mensagem['MessageUpdate'] ?? [], 'status');
+            if (isset($mensagem['status'])) {
+                $statuses[] = $mensagem['status'];
+            }
+            $status = whatsappOperacionalAplicarConfirmacao($pdo, (int)$envio['id'], $statuses);
+            if ($status === 'ENTREGUE') {
+                $resultado['entregues']++;
+            } elseif ($status === 'ERRO_SEM_REENVIO') {
+                $resultado['erros_reportados']++;
+            }
+            break;
+        }
+    }
+    return $resultado;
 }
 
 function whatsappOperacionalExecutarAutomacao(PDO $pdo): array
