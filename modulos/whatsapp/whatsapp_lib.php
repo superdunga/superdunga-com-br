@@ -1527,16 +1527,118 @@ function whatsappMensagemAcompanhamentoVendas(PDO $pdo, ?DateTime $base = null, 
     $stmt->execute([$inicioMesAnterior, $fimMesAnterior, $empresaId]);
     $vendaMesAnterior = (float)$stmt->fetchColumn();
 
+    $previsao = whatsappCalcularPrevisaoFechamentoVendas($pdo, $base, $empresaId);
+
     $msg = "*Acompanhamento das Vendas*\n\n";
     $msg .= "Data base: " . $base->format('d/m/Y') . "\n\n";
     $msg .= "Venda do dia anterior (" . $diaAnterior->format('d/m/Y') . " 07:00 ate " . $base->format('d/m/Y') . " 03:00):\n";
     $msg .= "R$ " . number_format($vendaDiaAnterior, 2, ',', '.') . "\n\n";
     $msg .= "Venda acumulada do mes atual (" . $base->format('01/m/Y') . " ate " . $base->format('d/m/Y') . "):\n";
     $msg .= "R$ " . number_format($vendaMesAtual, 2, ',', '.') . "\n\n";
+    $msg .= "Previsao pelo desempenho do mes:\n";
+    $msg .= "*R$ " . number_format($previsao['valor'], 2, ',', '.') . "*\n";
+    $msg .= $previsao['percentual_meta'] !== null
+        ? number_format($previsao['percentual_meta'], 1, ',', '.') . "% da meta mensal\n\n"
+        : "Meta mensal nao informada\n\n";
     $msg .= "Venda do mes anterior (" . (clone $base)->modify('first day of previous month')->format('m/Y') . "):\n";
     $msg .= "R$ " . number_format($vendaMesAnterior, 2, ',', '.');
 
     return $msg;
+}
+
+function whatsappCalcularPrevisaoFechamentoVendas(PDO $pdo, DateTime $base, int $empresaId): array
+{
+    $inicioMes = (clone $base)->modify('first day of this month')->setTime(0, 0, 0);
+    $fimMes = (clone $base)->modify('last day of this month')->setTime(23, 59, 59);
+    $dataReferencia = (clone $base)->modify('-1 day')->setTime(0, 0, 0);
+    if ($dataReferencia < $inicioMes) {
+        $dataReferencia = clone $inicioMes;
+    }
+
+    $inicioConsulta = $inicioMes->format('Y-m-d') . ' 07:00:00';
+    $fimConsulta = (clone $dataReferencia)->modify('+1 day')->format('Y-m-d') . ' 03:00:00';
+    $stmtVendas = $pdo->prepare("
+        SELECT data_caixa, SUM(valor) AS total
+        FROM (
+            SELECT
+                DATE(CASE WHEN TIME(DTLANC) < '03:00:00' THEN DATE_SUB(DTLANC, INTERVAL 1 DAY) ELSE DTLANC END) AS data_caixa,
+                NUMDOC,
+                MAX(TOTGERAL) AS valor
+            FROM armazem_est007
+            WHERE DTLANC >= ?
+              AND DTLANC <= ?
+              AND EMPRESA = ?
+              AND CANCELADO = 'N'
+              AND COALESCE(excluido_firebird, 'N') <> 'S'
+              AND COALESCE(CMCONTADOR, 0) <> 10
+              AND (TIME(DTLANC) >= '07:00:00' OR TIME(DTLANC) < '03:00:00')
+            GROUP BY data_caixa, NUMDOC
+        ) vendas
+        GROUP BY data_caixa
+    ");
+    $stmtVendas->execute([$inicioConsulta, $fimConsulta, $empresaId]);
+    $vendasPorData = [];
+    foreach ($stmtVendas->fetchAll(PDO::FETCH_ASSOC) as $venda) {
+        $vendasPorData[(string)$venda['data_caixa']] = (float)$venda['total'];
+    }
+
+    $metaMensal = 0.0;
+    $distribuicao = [];
+    try {
+        $stmtMeta = $pdo->prepare("SELECT valor_meta FROM fechamento_metas_vendas WHERE empresa_id = ? AND mes = ? LIMIT 1");
+        $stmtMeta->execute([$empresaId, $base->format('Y-m')]);
+        $metaMensal = (float)($stmtMeta->fetchColumn() ?: 0);
+
+        $stmtDias = $pdo->prepare("
+            SELECT dia_semana, trabalha, valor_meta_dia
+            FROM fechamento_metas_vendas_dias
+            WHERE empresa_id = ? AND mes = ?
+        ");
+        $stmtDias->execute([$empresaId, $base->format('Y-m')]);
+        foreach ($stmtDias->fetchAll(PDO::FETCH_ASSOC) as $dia) {
+            $distribuicao[(int)$dia['dia_semana']] = [
+                'trabalha' => (string)$dia['trabalha'],
+                'valor' => (float)$dia['valor_meta_dia'],
+            ];
+        }
+    } catch (Throwable $e) {
+        $metaMensal = 0.0;
+    }
+
+    $totaisPorDiaSemana = array_fill(0, 7, 0.0);
+    $ocorrenciasComVenda = array_fill(0, 7, 0);
+    $faturamentoReal = 0.0;
+    foreach ($vendasPorData as $dataVenda => $totalVenda) {
+        $faturamentoReal += $totalVenda;
+        if ($totalVenda <= 0) {
+            continue;
+        }
+        $diaSemana = (int)date('w', strtotime($dataVenda));
+        $totaisPorDiaSemana[$diaSemana] += $totalVenda;
+        $ocorrenciasComVenda[$diaSemana]++;
+    }
+
+    $previsaoRestante = 0.0;
+    $cursor = (clone $dataReferencia)->modify('+1 day');
+    while ($cursor <= $fimMes) {
+        $diaSemana = (int)$cursor->format('w');
+        $configDia = $distribuicao[$diaSemana] ?? [
+            'trabalha' => in_array($diaSemana, [0, 6], true) ? 'N' : 'S',
+            'valor' => 0.0,
+        ];
+        if ($configDia['trabalha'] === 'S') {
+            $previsaoRestante += $ocorrenciasComVenda[$diaSemana] > 0
+                ? $totaisPorDiaSemana[$diaSemana] / $ocorrenciasComVenda[$diaSemana]
+                : $configDia['valor'];
+        }
+        $cursor->modify('+1 day');
+    }
+
+    $valorPrevisao = $faturamentoReal + $previsaoRestante;
+    return [
+        'valor' => $valorPrevisao,
+        'percentual_meta' => $metaMensal > 0 ? ($valorPrevisao / $metaMensal) * 100 : null,
+    ];
 }
 
 function whatsappMensagemApresentacaoCaixa(PDO $pdo, ?DateTime $base = null, int $empresaId = 1): string
