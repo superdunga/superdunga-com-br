@@ -53,6 +53,19 @@ $pdo_master->exec("
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
 ");
 
+$pdo_master->exec("
+    CREATE TABLE IF NOT EXISTS fechamento_metas_vendas_dias (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        empresa_id INT NOT NULL,
+        mes CHAR(7) NOT NULL,
+        dia_semana TINYINT UNSIGNED NOT NULL,
+        trabalha CHAR(1) NOT NULL DEFAULT 'S',
+        valor_meta_dia DECIMAL(15,2) NOT NULL DEFAULT 0,
+        atualizado_em DATETIME NULL,
+        UNIQUE KEY uniq_meta_vendas_dia (empresa_id, mes, dia_semana)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+");
+
 function dinheiroParaFloatMetaVendas(string $valor): float
 {
     $valor = trim($valor);
@@ -239,6 +252,32 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['acao'] ?? '') === 'salvar_
     exit;
 }
 
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['acao'] ?? '') === 'salvar_distribuicao_meta') {
+    $trabalhaFimSemana = [
+        0 => isset($_POST['trabalha_domingo']) ? 'S' : 'N',
+        6 => isset($_POST['trabalha_sabado']) ? 'S' : 'N',
+    ];
+    $valoresDias = is_array($_POST['valor_meta_dia'] ?? null) ? $_POST['valor_meta_dia'] : [];
+    $stmtDistribuicao = $pdo_master->prepare("
+        INSERT INTO fechamento_metas_vendas_dias
+            (empresa_id, mes, dia_semana, trabalha, valor_meta_dia, atualizado_em)
+        VALUES (?, ?, ?, ?, ?, NOW())
+        ON DUPLICATE KEY UPDATE
+            trabalha = VALUES(trabalha),
+            valor_meta_dia = VALUES(valor_meta_dia),
+            atualizado_em = NOW()
+    ");
+    for ($dia = 0; $dia <= 6; $dia++) {
+        $trabalha = $trabalhaFimSemana[$dia] ?? 'S';
+        $valorDia = $trabalha === 'S'
+            ? dinheiroParaFloatMetaVendas((string)($valoresDias[$dia] ?? '0'))
+            : 0.0;
+        $stmtDistribuicao->execute([$empresaId, $mesAtual, $dia, $trabalha, $valorDia]);
+    }
+    header('Location: metas_vendas.php?distribuicao=ok');
+    exit;
+}
+
 $stmtMeta = $pdo_master->prepare("
     SELECT valor_meta
     FROM fechamento_metas_vendas
@@ -249,6 +288,40 @@ $stmtMeta = $pdo_master->prepare("
 $stmtMeta->execute([$empresaId, $mesAtual]);
 $metaVendas = (float)($stmtMeta->fetchColumn() ?: 0);
 
+$stmtDistribuicao = $pdo_master->prepare("
+    SELECT dia_semana, trabalha, valor_meta_dia
+    FROM fechamento_metas_vendas_dias
+    WHERE empresa_id = ? AND mes = ?
+");
+$stmtDistribuicao->execute([$empresaId, $mesAtual]);
+$distribuicaoSalva = [];
+foreach ($stmtDistribuicao->fetchAll(PDO::FETCH_ASSOC) as $linhaDistribuicao) {
+    $distribuicaoSalva[(int)$linhaDistribuicao['dia_semana']] = $linhaDistribuicao;
+}
+$quantidadeDiasMesPorSemana = array_fill(0, 7, 0);
+$cursorDiasMes = strtotime($inicioMesAtual);
+$fimDiasMes = strtotime($fimMesAtual);
+while ($cursorDiasMes <= $fimDiasMes) {
+    $quantidadeDiasMesPorSemana[(int)date('w', $cursorDiasMes)]++;
+    $cursorDiasMes = strtotime('+1 day', $cursorDiasMes);
+}
+$distribuicaoMeta = [];
+$totalDiasTrabalhadosMeta = 0;
+foreach ($diasSemanaMetaVendas as $diaValor => $diaNome) {
+    $trabalhaPadrao = in_array($diaValor, [0, 6], true) ? 'N' : 'S';
+    $trabalha = (string)($distribuicaoSalva[$diaValor]['trabalha'] ?? $trabalhaPadrao);
+    $quantidade = $quantidadeDiasMesPorSemana[$diaValor];
+    if ($trabalha === 'S') {
+        $totalDiasTrabalhadosMeta += $quantidade;
+    }
+    $distribuicaoMeta[$diaValor] = [
+        'nome' => $diaNome,
+        'trabalha' => $trabalha,
+        'quantidade' => $quantidade,
+        'valor_dia' => (float)($distribuicaoSalva[$diaValor]['valor_meta_dia'] ?? 0),
+    ];
+}
+
 $vendasMesAtual = vendasPorDiaMetaVendas($pdo_master, $empresaId, $filtroDataIni, $filtroDataFim, $diasSelecionados);
 $vendasMesAnterior = vendasPorDiaMetaVendas($pdo_master, $empresaId, $inicioMesAnterior, $fimMesAnterior, $diasSelecionados);
 $vendasPorHora = vendasPorHoraMetaVendas($pdo_master, $empresaId, $filtroDataIni, $filtroDataFim, $diasSelecionados);
@@ -256,6 +329,7 @@ $vendasPorHora = vendasPorHoraMetaVendas($pdo_master, $empresaId, $filtroDataIni
 $comparativoDias = [];
 $totalAtualAteReferencia = 0.0;
 $totalAnteriorComparavel = 0.0;
+$totalMetaDistribuidaComparavel = 0.0;
 $qtdVendasAtualAteReferencia = 0;
 $qtdVendasAnteriorComparavel = 0;
 $maiorAlta = null;
@@ -278,11 +352,18 @@ while ($cursor <= $fimComparativo) {
     $valorAnterior = (float)$vendaAnterior['total'];
     $qtdAtual = (int)$vendaAtual['qtd'];
     $qtdAnterior = (int)$vendaAnterior['qtd'];
+    $diaSemanaAtual = (int)date('w', $cursor);
+    $metaDiaDistribuida = ($distribuicaoMeta[$diaSemanaAtual]['trabalha'] ?? 'N') === 'S'
+        ? (float)($distribuicaoMeta[$diaSemanaAtual]['valor_dia'] ?? 0)
+        : 0.0;
+    $diferencaMetaDia = $valorAtual - $metaDiaDistribuida;
+    $percentualMetaDia = $metaDiaDistribuida > 0 ? ($valorAtual / $metaDiaDistribuida) * 100 : null;
     $diferenca = $valorAtual - $valorAnterior;
     $percentual = $valorAnterior > 0 ? (($valorAtual / $valorAnterior) - 1) * 100 : null;
 
     $totalAtualAteReferencia += $valorAtual;
     $totalAnteriorComparavel += $valorAnterior;
+    $totalMetaDistribuidaComparavel += $metaDiaDistribuida;
     $qtdVendasAtualAteReferencia += $qtdAtual;
     $qtdVendasAnteriorComparavel += $qtdAnterior;
 
@@ -302,6 +383,9 @@ while ($cursor <= $fimComparativo) {
         'valor_anterior' => $valorAnterior,
         'qtd_atual' => $qtdAtual,
         'ticket_medio_atual' => $qtdAtual > 0 ? $valorAtual / $qtdAtual : 0.0,
+        'meta_distribuida' => $metaDiaDistribuida,
+        'diferenca_meta' => $diferencaMetaDia,
+        'percentual_meta' => $percentualMetaDia,
         'diferenca' => $diferenca,
         'percentual' => $percentual,
         'ocorrencia' => ocorrenciaSemanaMesMetaVendas($dataAtualLoop),
@@ -409,6 +493,59 @@ require '../../layout/header.php';
             <?php if (($_GET['meta'] ?? '') === 'ok'): ?>
                 <div class="alert alert-success py-2">Meta de vendas salva.</div>
             <?php endif; ?>
+            <?php if (($_GET['distribuicao'] ?? '') === 'ok'): ?>
+                <div class="alert alert-success py-2">Distribuicao diaria da meta salva.</div>
+            <?php endif; ?>
+
+            <form method="post" class="border rounded-2 mb-3" id="form-distribuicao-meta">
+                <input type="hidden" name="acao" value="salvar_distribuicao_meta">
+                <div class="p-3 border-bottom d-flex flex-column flex-lg-row justify-content-between gap-3 align-items-lg-center">
+                    <div>
+                        <h3 class="h6 fw-bold mb-1">Distribuicao da meta por dia da semana</h3>
+                        <div class="small text-muted">Defina a meta de um dia; o sistema multiplica pelas ocorrencias desse dia em <?= date('m/Y', strtotime($inicioMesAtual)) ?>.</div>
+                    </div>
+                    <div class="d-flex flex-wrap gap-3">
+                        <div class="form-check form-switch">
+                            <input class="form-check-input js-dia-trabalhado" type="checkbox" role="switch" name="trabalha_sabado" id="trabalha_sabado" data-dia="6" <?= $distribuicaoMeta[6]['trabalha'] === 'S' ? 'checked' : '' ?>>
+                            <label class="form-check-label" for="trabalha_sabado">Trabalha aos sabados</label>
+                        </div>
+                        <div class="form-check form-switch">
+                            <input class="form-check-input js-dia-trabalhado" type="checkbox" role="switch" name="trabalha_domingo" id="trabalha_domingo" data-dia="0" <?= $distribuicaoMeta[0]['trabalha'] === 'S' ? 'checked' : '' ?>>
+                            <label class="form-check-label" for="trabalha_domingo">Trabalha aos domingos</label>
+                        </div>
+                    </div>
+                </div>
+                <div class="table-responsive">
+                    <table class="table table-sm table-bordered align-middle mb-0">
+                        <thead class="table-light">
+                            <tr><th>Dia da semana</th><th class="text-center">Dias no mes</th><th class="text-center">Participacao dos dias</th><th class="text-end">Meta por dia</th><th class="text-end">Previsao no mes</th></tr>
+                        </thead>
+                        <tbody>
+                            <?php foreach ($distribuicaoMeta as $diaValor => $dia): ?>
+                                <?php $habilitado = $dia['trabalha'] === 'S'; ?>
+                                <tr class="js-linha-meta-dia<?= $habilitado ? '' : ' table-secondary' ?>" data-dia="<?= (int)$diaValor ?>" data-quantidade="<?= (int)$dia['quantidade'] ?>">
+                                    <td class="fw-semibold"><?= htmlspecialchars($dia['nome']) ?></td>
+                                    <td class="text-center js-quantidade-dia"><?= $habilitado ? (int)$dia['quantidade'] : 0 ?></td>
+                                    <td class="text-center js-percentual-dia"><?= $habilitado && $totalDiasTrabalhadosMeta > 0 ? number_format(($dia['quantidade'] / $totalDiasTrabalhadosMeta) * 100, 1, ',', '.') . '%' : '-' ?></td>
+                                    <td><input type="text" inputmode="decimal" class="form-control form-control-sm text-end js-meta-dia" name="valor_meta_dia[<?= (int)$diaValor ?>]" value="<?= number_format($dia['valor_dia'], 2, ',', '.') ?>" <?= $habilitado ? '' : 'disabled' ?>></td>
+                                    <td class="text-end fw-semibold js-subtotal-dia"><?= moedaMetaVendas($habilitado ? $dia['valor_dia'] * $dia['quantidade'] : 0) ?></td>
+                                </tr>
+                            <?php endforeach; ?>
+                        </tbody>
+                    </table>
+                </div>
+                <div class="p-3 d-flex flex-column flex-lg-row justify-content-between gap-3 align-items-lg-center">
+                    <div class="d-flex flex-wrap gap-4">
+                        <div><span class="small text-muted d-block">Meta mensal</span><strong id="meta-mensal-distribuicao" data-valor="<?= number_format($metaVendas, 2, '.', '') ?>"><?= moedaMetaVendas($metaVendas) ?></strong></div>
+                        <div><span class="small text-muted d-block">Previsao distribuida</span><strong id="previsao-distribuida">R$ 0,00</strong></div>
+                        <div><span class="small text-muted d-block">Diferenca</span><strong id="diferenca-distribuicao">R$ 0,00</strong></div>
+                    </div>
+                    <div class="d-flex flex-column flex-sm-row gap-2 align-items-sm-center">
+                        <span class="badge fs-6" id="status-distribuicao"></span>
+                        <button type="submit" class="btn btn-primary btn-sm">Salvar distribuicao</button>
+                    </div>
+                </div>
+            </form>
 
             <form method="get" class="border rounded-2 p-3 mb-3 bg-light">
                 <div class="row g-2 align-items-end">
@@ -513,6 +650,9 @@ require '../../layout/header.php';
                                     <th class="text-end">Atual</th>
                                     <th class="text-end">Vendas</th>
                                     <th class="text-end">Ticket medio</th>
+                                    <th class="text-end">Meta do dia</th>
+                                    <th class="text-end">Dif. meta</th>
+                                    <th class="text-end">Meta %</th>
                                     <th class="text-end">Anterior</th>
                                     <th class="text-end">Dif.</th>
                                     <th class="text-end">%</th>
@@ -529,6 +669,11 @@ require '../../layout/header.php';
                                         <td class="text-end"><?= moedaMetaVendas((float)$linha['valor_atual']) ?></td>
                                         <td class="text-end"><?= numeroMetaVendas((int)$linha['qtd_atual']) ?></td>
                                         <td class="text-end"><?= moedaMetaVendas((float)$linha['ticket_medio_atual']) ?></td>
+                                        <td class="text-end"><?= (float)$linha['meta_distribuida'] > 0 ? moedaMetaVendas((float)$linha['meta_distribuida']) : '-' ?></td>
+                                        <td class="text-end <?= (float)$linha['diferenca_meta'] < 0 ? 'text-danger' : 'text-success' ?>">
+                                            <?= (float)$linha['meta_distribuida'] > 0 ? moedaMetaVendas((float)$linha['diferenca_meta']) : '-' ?>
+                                        </td>
+                                        <td class="text-end"><?= percentualMetaVendas($linha['percentual_meta']) ?></td>
                                         <td class="text-end"><?= moedaMetaVendas((float)$linha['valor_anterior']) ?></td>
                                         <td class="text-end <?= (float)$linha['diferenca'] < 0 ? 'text-danger' : 'text-success' ?>">
                                             <?= moedaMetaVendas((float)$linha['diferenca']) ?>
@@ -543,6 +688,11 @@ require '../../layout/header.php';
                                     <td class="text-end"><?= moedaMetaVendas($totalAtualAteReferencia) ?></td>
                                     <td class="text-end"><?= numeroMetaVendas($qtdVendasAtualAteReferencia) ?></td>
                                     <td class="text-end"><?= moedaMetaVendas($ticketMedioAtualAteReferencia) ?></td>
+                                    <td class="text-end"><?= moedaMetaVendas($totalMetaDistribuidaComparavel) ?></td>
+                                    <td class="text-end <?= ($totalAtualAteReferencia - $totalMetaDistribuidaComparavel) < 0 ? 'text-danger' : 'text-success' ?>">
+                                        <?= moedaMetaVendas($totalAtualAteReferencia - $totalMetaDistribuidaComparavel) ?>
+                                    </td>
+                                    <td class="text-end"><?= $totalMetaDistribuidaComparavel > 0 ? percentualMetaVendas(($totalAtualAteReferencia / $totalMetaDistribuidaComparavel) * 100) : '-' ?></td>
                                     <td class="text-end"><?= moedaMetaVendas($totalAnteriorComparavel) ?></td>
                                     <td class="text-end <?= ($totalAtualAteReferencia - $totalAnteriorComparavel) < 0 ? 'text-danger' : 'text-success' ?>">
                                         <?= moedaMetaVendas($totalAtualAteReferencia - $totalAnteriorComparavel) ?>
@@ -596,5 +746,44 @@ require '../../layout/header.php';
         </div>
     </div>
 </section>
+
+<script>
+(() => {
+    const moeda = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' });
+    const numero = (valor) => Number.parseFloat(String(valor || '').replace(/[^\d,.-]/g, '').replace(/\./g, '').replace(',', '.')) || 0;
+    const linhas = [...document.querySelectorAll('.js-linha-meta-dia')];
+    const metaMensal = Number(document.getElementById('meta-mensal-distribuicao').dataset.valor) || 0;
+    function atualizar() {
+        let diasTrabalhados = 0;
+        linhas.forEach((linha) => { if (!linha.querySelector('.js-meta-dia').disabled) diasTrabalhados += Number(linha.dataset.quantidade); });
+        let previsao = 0;
+        linhas.forEach((linha) => {
+            const campo = linha.querySelector('.js-meta-dia');
+            const habilitado = !campo.disabled;
+            const quantidade = habilitado ? Number(linha.dataset.quantidade) : 0;
+            const subtotal = quantidade * numero(campo.value);
+            previsao += subtotal;
+            linha.querySelector('.js-quantidade-dia').textContent = quantidade;
+            linha.querySelector('.js-percentual-dia').textContent = habilitado && diasTrabalhados ? ((quantidade / diasTrabalhados) * 100).toLocaleString('pt-BR', { minimumFractionDigits: 1, maximumFractionDigits: 1 }) + '%' : '-';
+            linha.querySelector('.js-subtotal-dia').textContent = moeda.format(subtotal);
+        });
+        const diferenca = previsao - metaMensal;
+        document.getElementById('previsao-distribuida').textContent = moeda.format(previsao);
+        document.getElementById('diferenca-distribuicao').textContent = moeda.format(diferenca);
+        const status = document.getElementById('status-distribuicao');
+        const confere = metaMensal > 0 && Math.abs(diferenca) < 0.01;
+        status.className = 'badge fs-6 ' + (confere ? 'text-bg-success' : 'text-bg-warning');
+        status.textContent = confere ? 'Distribuicao confere' : 'Ajuste a distribuicao';
+    }
+    document.querySelectorAll('.js-meta-dia').forEach((campo) => campo.addEventListener('input', atualizar));
+    document.querySelectorAll('.js-dia-trabalhado').forEach((controle) => controle.addEventListener('change', () => {
+        const linha = document.querySelector(`.js-linha-meta-dia[data-dia="${controle.dataset.dia}"]`);
+        linha.querySelector('.js-meta-dia').disabled = !controle.checked;
+        linha.classList.toggle('table-secondary', !controle.checked);
+        atualizar();
+    }));
+    atualizar();
+})();
+</script>
 
 <?php require '../../layout/footer.php'; ?>
