@@ -322,6 +322,51 @@ foreach ($diasSemanaMetaVendas as $diaValor => $diaNome) {
     ];
 }
 
+$vendasMesAtualCompleto = $temDiasFechados
+    ? vendasPorDiaMetaVendas($pdo_master, $empresaId, $inicioMesAtual, $dataReferencia)
+    : [];
+$faturamentoRealMes = array_sum(array_column($vendasMesAtualCompleto, 'total'));
+$totaisAtuaisPorDiaSemana = array_fill(0, 7, 0.0);
+$ocorrenciasAtuaisPorDiaSemana = array_fill(0, 7, 0);
+if ($temDiasFechados) {
+    $cursorDesempenho = strtotime($inicioMesAtual);
+    $fimDesempenho = strtotime($dataReferencia);
+    while ($cursorDesempenho <= $fimDesempenho) {
+        $dataDesempenho = date('Y-m-d', $cursorDesempenho);
+        $diaSemanaDesempenho = (int)date('w', $cursorDesempenho);
+        if (($distribuicaoMeta[$diaSemanaDesempenho]['trabalha'] ?? 'N') === 'S') {
+            $totalDiaDesempenho = (float)($vendasMesAtualCompleto[$dataDesempenho]['total'] ?? 0.0);
+            if ($totalDiaDesempenho > 0) {
+                $totaisAtuaisPorDiaSemana[$diaSemanaDesempenho] += $totalDiaDesempenho;
+                $ocorrenciasAtuaisPorDiaSemana[$diaSemanaDesempenho]++;
+            }
+        }
+        $cursorDesempenho = strtotime('+1 day', $cursorDesempenho);
+    }
+}
+$previsaoRestantePorDesempenho = 0.0;
+$diasRestantesTrabalhados = 0;
+$diasRestantesPelaMedia = 0;
+$diasRestantesPelaMeta = 0;
+$cursorFechamentoDesempenho = strtotime($dataReferencia . ' +1 day');
+while ($cursorFechamentoDesempenho <= $fimDiasMes) {
+    $diaSemanaPrevisaoAtual = (int)date('w', $cursorFechamentoDesempenho);
+    if (($distribuicaoMeta[$diaSemanaPrevisaoAtual]['trabalha'] ?? 'N') === 'S') {
+        $diasRestantesTrabalhados++;
+        if ($ocorrenciasAtuaisPorDiaSemana[$diaSemanaPrevisaoAtual] > 0) {
+            $previsaoRestantePorDesempenho += $totaisAtuaisPorDiaSemana[$diaSemanaPrevisaoAtual]
+                / $ocorrenciasAtuaisPorDiaSemana[$diaSemanaPrevisaoAtual];
+            $diasRestantesPelaMedia++;
+        } else {
+            $previsaoRestantePorDesempenho += (float)($distribuicaoMeta[$diaSemanaPrevisaoAtual]['valor_dia'] ?? 0.0);
+            $diasRestantesPelaMeta++;
+        }
+    }
+    $cursorFechamentoDesempenho = strtotime('+1 day', $cursorFechamentoDesempenho);
+}
+$previsaoFechamentoDesempenho = $faturamentoRealMes + $previsaoRestantePorDesempenho;
+$percentualPrevisaoMeta = $metaVendas > 0 ? ($previsaoFechamentoDesempenho / $metaVendas) * 100 : null;
+
 $vendasMesAtual = vendasPorDiaMetaVendas($pdo_master, $empresaId, $filtroDataIni, $filtroDataFim, $diasSelecionados);
 $vendasMesAnterior = vendasPorDiaMetaVendas($pdo_master, $empresaId, $inicioMesAnterior, $fimMesAnterior, $diasSelecionados);
 $vendasPorHora = vendasPorHoraMetaVendas($pdo_master, $empresaId, $filtroDataIni, $filtroDataFim, $diasSelecionados);
@@ -623,6 +668,33 @@ require '../../layout/header.php';
                         </div>
                         <div class="h4 mb-1"><?= moedaMetaVendas($ticketMedioAtualAteReferencia) ?></div>
                         <div class="small">Mes anterior equivalente: <?= moedaMetaVendas($ticketMedioAnteriorComparavel) ?></div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="border border-primary rounded-2 p-3 mb-3 bg-primary-subtle">
+                <div class="row g-3 align-items-center">
+                    <div class="col-lg-4">
+                        <div class="text-muted small">Previsao pelo desempenho do mes</div>
+                        <div class="h3 mb-1"><?= moedaMetaVendas($previsaoFechamentoDesempenho) ?></div>
+                        <div class="small">
+                            <?= $percentualPrevisaoMeta !== null ? percentualMetaVendas($percentualPrevisaoMeta) . ' da meta mensal' : 'Meta mensal nao informada' ?>
+                        </div>
+                    </div>
+                    <div class="col-sm-4 col-lg-2">
+                        <div class="text-muted small">Realizado no mes</div>
+                        <div class="fw-bold"><?= moedaMetaVendas($faturamentoRealMes) ?></div>
+                        <div class="small">Ate <?= date('d/m/Y', strtotime($dataReferencia)) ?></div>
+                    </div>
+                    <div class="col-sm-4 col-lg-3">
+                        <div class="text-muted small">Projetado nos dias restantes</div>
+                        <div class="fw-bold"><?= moedaMetaVendas($previsaoRestantePorDesempenho) ?></div>
+                        <div class="small"><?= $diasRestantesTrabalhados ?> dia(s) de trabalho restante(s)</div>
+                    </div>
+                    <div class="col-sm-4 col-lg-3">
+                        <div class="text-muted small">Base da projecao</div>
+                        <div class="fw-semibold"><?= $diasRestantesPelaMedia ?> dia(s) pela media atual</div>
+                        <div class="small"><?= $diasRestantesPelaMeta ?> dia(s) pela meta distribuida</div>
                     </div>
                 </div>
             </div>
