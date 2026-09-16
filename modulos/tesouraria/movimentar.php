@@ -28,8 +28,8 @@ $fluxosEspeciais = [
 $fluxoEspecial = (!$modoEdicao && isset($fluxosEspeciais[$fluxo])) ? $fluxosEspeciais[$fluxo] : null;
 $dispensaComprovante = $fluxoEspecial !== null;
 
-if ($modoEdicao && $_SESSION['nivel'] !== 'MASTER') {
-    die("Acesso negado: edição permitida apenas para MASTER.");
+if ($modoEdicao && !in_array($_SESSION['nivel'] ?? '', ['MASTER', 'ADMIN'], true)) {
+    die("Acesso negado: edição permitida apenas para MASTER ou ADMIN.");
 }
 
 /* =========================

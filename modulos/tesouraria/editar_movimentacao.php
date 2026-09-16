@@ -2,7 +2,7 @@
 require '../../config/auth.php';
 require '../../config/conexao.php';
 
-if ($_SESSION['nivel'] !== 'MASTER') {
+if (!in_array($_SESSION['nivel'] ?? '', ['MASTER', 'ADMIN'], true)) {
     die("Acesso negado");
 }
 

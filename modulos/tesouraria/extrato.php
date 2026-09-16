@@ -4,8 +4,8 @@ require '../../config/conexao.php';
 
 $empresa_id = $_SESSION['empresa_id'];
 $nivelUsuario = $_SESSION['nivel'] ?? '';
-$isMaster = $nivelUsuario === 'MASTER';
-$podeVerDetalhes = in_array($nivelUsuario, ['MASTER', 'OPERADOR'], true);
+$podeAlterar = in_array($nivelUsuario, ['MASTER', 'ADMIN'], true);
+$podeVerDetalhes = in_array($nivelUsuario, ['MASTER', 'ADMIN', 'OPERADOR'], true);
 
 function saldoComSinalTesouraria(float $valor): string
 {
@@ -21,10 +21,10 @@ function saldoComSinalTesouraria(float $valor): string
 }
 
 /* =========================
-   EXCLUIR MOVIMENTACAO (MASTER)
+   EXCLUIR MOVIMENTACAO (MASTER / ADMIN)
 ========================= */
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['acao'] ?? '') === 'excluir_movimentacao') {
-    if (!$isMaster) {
+    if (!$podeAlterar) {
         die('Acesso negado.');
     }
 
@@ -139,10 +139,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['acao'] ?? '') === 'excluir
 }
 
 /* =========================
-   DESFAZER MATCH FIREBIRD (MASTER)
+   DESFAZER MATCH FIREBIRD (MASTER / ADMIN)
 ========================= */
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['acao'] ?? '') === 'desfazer_match_firebird') {
-    if (!$isMaster) {
+    if (!$podeAlterar) {
         die('Acesso negado.');
     }
 
@@ -427,7 +427,7 @@ document.addEventListener('DOMContentLoaded', function () {
 
                                     <?php endif; ?>
 
-                                    <?php if ($isMaster): ?>
+                                    <?php if ($podeAlterar): ?>
 
                                         <a href="movimentar.php?id=<?= $m['id'] ?>" 
                                            class="btn btn-sm btn-outline-dark"
@@ -465,7 +465,7 @@ document.addEventListener('DOMContentLoaded', function () {
                                     }
                                     ?>
 
-                                    <?php if ($isMaster && ($m['conciliado'] ?? '') === 'S' && !empty($m['firebird_id'])): ?>
+                                    <?php if ($podeAlterar && ($m['conciliado'] ?? '') === 'S' && !empty($m['firebird_id'])): ?>
                                         <form method="POST" class="d-inline"
                                               onsubmit="return confirm('Desfazer o match Firebird da movimentacao #<?= (int)$m['id'] ?>?');">
                                             <input type="hidden" name="acao" value="desfazer_match_firebird">
