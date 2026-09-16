@@ -698,7 +698,9 @@ function analisarCsvMercadoPago(string $arquivo): ?array
     ];
     $indiceCabecalho = null;
     foreach ($registros as $indice => $registro) {
-        $normalizado = array_map(static fn($valor) => normalizarCabecalhoExtrato((string)$valor), $registro);
+        $normalizado = array_map(static function ($valor) {
+            return normalizarCabecalhoExtrato((string)$valor);
+        }, $registro);
         if (array_slice($normalizado, 0, count($cabecalhoLancamentos)) === $cabecalhoLancamentos) {
             $indiceCabecalho = $indice;
             break;
@@ -711,7 +713,9 @@ function analisarCsvMercadoPago(string $arquivo): ?array
 
     $resumo = null;
     if (isset($registros[0], $registros[1])) {
-        $cabecalhoResumo = array_map(static fn($valor) => normalizarCabecalhoExtrato((string)$valor), $registros[0]);
+        $cabecalhoResumo = array_map(static function ($valor) {
+            return normalizarCabecalhoExtrato((string)$valor);
+        }, $registros[0]);
         if (array_slice($cabecalhoResumo, 0, 4) === ['initial_balance', 'credits', 'debits', 'final_balance']) {
             $resumo = [
                 'inicial' => normalizarDecimalExtrato((string)($registros[1][0] ?? '')),
@@ -727,7 +731,9 @@ function analisarCsvMercadoPago(string $arquivo): ?array
     $totalCreditos = 0.0;
     $totalDebitos = 0.0;
     foreach (array_slice($registros, $indiceCabecalho + 1) as $indice => $registro) {
-        if (count(array_filter($registro, static fn($valor) => trim((string)$valor) !== '')) === 0) {
+        if (count(array_filter($registro, static function ($valor) {
+            return trim((string)$valor) !== '';
+        })) === 0) {
             continue;
         }
 
