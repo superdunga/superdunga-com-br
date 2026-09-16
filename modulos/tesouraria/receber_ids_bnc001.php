@@ -119,6 +119,45 @@ try {
     $stmtAtivos->execute($paramsEmpresa);
     $reativados = $stmtAtivos->rowCount();
 
+    $stmtAuditarConciliacoesOrfas = $pdo_master->prepare("
+        INSERT INTO financeiro_extrato_conciliacoes_log
+            (empresa_id, cbcontador, extrato_id, movcontador, tipo_match, usuario_id)
+        SELECT
+            ?,
+            e.cbcontador,
+            e.id,
+            e.bnc001_movcontador,
+            'desfazer_bnc_excluido',
+            NULL
+        FROM financeiro_extrato_bancario e
+        INNER JOIN armazem_bnc001 m
+            ON m.EMPRESA = e.bnc001_empresa
+           AND m.MOVCONTADOR = e.bnc001_movcontador
+        LEFT JOIN armazem_bnc001_ids_temp t
+            ON t.MOVCONTADOR = m.MOVCONTADOR
+        WHERE m.EMPRESA = ?
+          AND t.MOVCONTADOR IS NULL
+          AND e.conciliado = 'S'
+    ");
+    $stmtAuditarConciliacoesOrfas->execute([$empresaSync, $empresaSync]);
+
+    $stmtReabrirExtratos = $pdo_master->prepare("
+        UPDATE financeiro_extrato_bancario e
+        INNER JOIN armazem_bnc001 m
+            ON m.EMPRESA = e.bnc001_empresa
+           AND m.MOVCONTADOR = e.bnc001_movcontador
+        LEFT JOIN armazem_bnc001_ids_temp t
+            ON t.MOVCONTADOR = m.MOVCONTADOR
+        SET e.conciliado = 'N',
+            e.bnc001_empresa = NULL,
+            e.bnc001_movcontador = NULL
+        WHERE m.EMPRESA = ?
+          AND t.MOVCONTADOR IS NULL
+          AND e.conciliado = 'S'
+    ");
+    $stmtReabrirExtratos->execute([$empresaSync]);
+    $conciliacoesReabertas = $stmtReabrirExtratos->rowCount();
+
     $stmtDeletados = $pdo_master->prepare("
         UPDATE armazem_bnc001 m
         LEFT JOIN armazem_bnc001_ids_temp t
@@ -147,5 +186,6 @@ echo json_encode([
     'status' => 'ok',
     'total_ids_recebidos' => count($ids),
     'reativados' => $reativados,
-    'marcados_deletados' => $marcadosDeletados
+    'marcados_deletados' => $marcadosDeletados,
+    'conciliacoes_reabertas' => $conciliacoesReabertas
 ]);

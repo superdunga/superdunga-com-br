@@ -41,12 +41,14 @@ function garantirTabelasConciliacaoExtratos(PDO $pdo): void
             tipo CHAR(1) NOT NULL,
             valor DECIMAL(15,4) NOT NULL,
             identificador_banco VARCHAR(190) NOT NULL,
+            identificador_externo_hash CHAR(40) NULL,
             bnc001_empresa INT NULL,
             bnc001_movcontador INT NULL,
             recebimento_id INT NULL,
             conciliado CHAR(1) NOT NULL DEFAULT 'N',
             criado_em DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
             UNIQUE KEY uk_fin_ext_identificador (empresa_id, cbcontador, identificador_banco),
+            UNIQUE KEY uk_fin_ext_identificador_externo (identificador_externo_hash),
             INDEX idx_fin_ext_pendentes (empresa_id, cbcontador, conciliado, data_movimento),
             INDEX idx_fin_ext_match (empresa_id, cbcontador, tipo, valor, data_movimento),
             INDEX idx_fin_ext_movcontador (bnc001_movcontador),
@@ -96,6 +98,25 @@ function garantirTabelasConciliacaoExtratos(PDO $pdo): void
             ADD COLUMN bnc001_empresa INT NULL AFTER identificador_banco
         ");
     }
+
+    $stmtColunaIdentificadorExterno = $pdo->query("
+        SELECT COUNT(*)
+        FROM information_schema.columns
+        WHERE table_schema = DATABASE()
+          AND table_name = 'financeiro_extrato_bancario'
+          AND column_name = 'identificador_externo_hash'
+    ");
+    if ((int)$stmtColunaIdentificadorExterno->fetchColumn() === 0) {
+        $pdo->exec("
+            ALTER TABLE financeiro_extrato_bancario
+            ADD COLUMN identificador_externo_hash CHAR(40) NULL AFTER identificador_banco
+        ");
+    }
+
+    garantirIndiceConciliacaoExtratos($pdo, 'financeiro_extrato_bancario', 'uk_fin_ext_identificador_externo', "
+        CREATE UNIQUE INDEX uk_fin_ext_identificador_externo
+        ON financeiro_extrato_bancario (identificador_externo_hash)
+    ");
 
     $pdo->exec("
         UPDATE financeiro_extrato_bancario
@@ -605,6 +626,12 @@ function gerarIdentificadorNaturalExtrato(string $chaveNatural, int $ocorrenciaN
     return sha1('natural|' . $chaveNatural . '|' . max(1, $ocorrenciaNatural));
 }
 
+function gerarHashIdentificadorExternoExtrato(string $identificador): ?string
+{
+    $identificador = mb_strtolower(trim($identificador));
+    return $identificador !== '' ? sha1($identificador) : null;
+}
+
 function detectarDelimitadorCsv(string $linha): string
 {
     $delimitadores = [';', ',', "\t"];
@@ -640,8 +667,127 @@ function buscarCampoExtrato(array $linha, array $nomes): string
     return '';
 }
 
+function analisarCsvMercadoPago(string $arquivo): ?array
+{
+    $handle = fopen($arquivo, 'r');
+    if (!$handle) {
+        return null;
+    }
+
+    $primeiraLinha = fgets($handle);
+    if ($primeiraLinha === false) {
+        fclose($handle);
+        return null;
+    }
+
+    $primeiraLinha = preg_replace('/^\xEF\xBB\xBF/', '', $primeiraLinha);
+    $delimitador = detectarDelimitadorCsv($primeiraLinha);
+    rewind($handle);
+    $registros = [];
+    while (($campos = fgetcsv($handle, 0, $delimitador)) !== false) {
+        $registros[] = $campos;
+    }
+    fclose($handle);
+
+    $cabecalhoLancamentos = [
+        'release_date',
+        'transaction_type',
+        'reference_id',
+        'transaction_net_amount',
+        'partial_balance',
+    ];
+    $indiceCabecalho = null;
+    foreach ($registros as $indice => $registro) {
+        $normalizado = array_map(static fn($valor) => normalizarCabecalhoExtrato((string)$valor), $registro);
+        if (array_slice($normalizado, 0, count($cabecalhoLancamentos)) === $cabecalhoLancamentos) {
+            $indiceCabecalho = $indice;
+            break;
+        }
+    }
+
+    if ($indiceCabecalho === null) {
+        return null;
+    }
+
+    $resumo = null;
+    if (isset($registros[0], $registros[1])) {
+        $cabecalhoResumo = array_map(static fn($valor) => normalizarCabecalhoExtrato((string)$valor), $registros[0]);
+        if (array_slice($cabecalhoResumo, 0, 4) === ['initial_balance', 'credits', 'debits', 'final_balance']) {
+            $resumo = [
+                'inicial' => normalizarDecimalExtrato((string)($registros[1][0] ?? '')),
+                'creditos' => normalizarDecimalExtrato((string)($registros[1][1] ?? '')),
+                'debitos' => normalizarDecimalExtrato((string)($registros[1][2] ?? '')),
+                'final' => normalizarDecimalExtrato((string)($registros[1][3] ?? '')),
+            ];
+        }
+    }
+
+    $linhas = [];
+    $saldoCalculado = $resumo['inicial'] ?? null;
+    $totalCreditos = 0.0;
+    $totalDebitos = 0.0;
+    foreach (array_slice($registros, $indiceCabecalho + 1) as $indice => $registro) {
+        if (count(array_filter($registro, static fn($valor) => trim((string)$valor) !== '')) === 0) {
+            continue;
+        }
+
+        $data = normalizarDataExtrato((string)($registro[0] ?? ''));
+        $historico = normalizarTextoExtrato($registro[1] ?? '');
+        $referencia = normalizarTextoExtrato($registro[2] ?? '');
+        $valorAssinado = normalizarDecimalExtrato((string)($registro[3] ?? ''));
+        $saldoInformado = normalizarDecimalExtrato((string)($registro[4] ?? ''));
+
+        if ($data === null || $referencia === '' || abs($valorAssinado) < 0.005) {
+            throw new RuntimeException('Linha ' . ($indiceCabecalho + $indice + 2) . ' invalida no extrato Mercado Pago.');
+        }
+
+        if ($valorAssinado > 0) {
+            $totalCreditos += $valorAssinado;
+        } else {
+            $totalDebitos += $valorAssinado;
+        }
+
+        if ($saldoCalculado !== null) {
+            $saldoCalculado = round($saldoCalculado + $valorAssinado, 2);
+            if (abs($saldoCalculado - $saldoInformado) > 0.01) {
+                throw new RuntimeException('Saldo progressivo divergente na transacao Mercado Pago ' . $referencia . '.');
+            }
+        }
+
+        $linhas[] = [
+            'data_movimento' => $data,
+            'historico' => $historico,
+            'documento' => $referencia,
+            'valor' => $valorAssinado,
+            'tipo' => $valorAssinado >= 0 ? 'C' : 'D',
+            'identificador' => 'mercado_pago:' . $referencia,
+        ];
+    }
+
+    if (!$linhas) {
+        throw new RuntimeException('O extrato Mercado Pago nao possui lancamentos validos.');
+    }
+
+    if ($resumo !== null) {
+        $saldoResumo = round($resumo['inicial'] + $resumo['creditos'] + $resumo['debitos'], 2);
+        if (abs($saldoResumo - $resumo['final']) > 0.01
+            || abs(round($totalCreditos, 2) - round($resumo['creditos'], 2)) > 0.01
+            || abs(round($totalDebitos, 2) - round($resumo['debitos'], 2)) > 0.01
+            || abs(round((float)$saldoCalculado, 2) - round($resumo['final'], 2)) > 0.01) {
+            throw new RuntimeException('Os totais do extrato Mercado Pago nao conferem com o resumo do arquivo.');
+        }
+    }
+
+    return ['linhas' => $linhas, 'resumo' => $resumo];
+}
+
 function lerCsvExtrato(string $arquivo): array
 {
+    $mercadoPago = analisarCsvMercadoPago($arquivo);
+    if ($mercadoPago !== null) {
+        return $mercadoPago['linhas'];
+    }
+
     $handle = fopen($arquivo, 'r');
     if (!$handle) {
         return [];
@@ -702,6 +848,12 @@ function lerOfxExtrato(string $arquivo): array
         $conteudo = $conteudoUtf8;
     }
 
+    $instituicao = '';
+    if (preg_match('/<ORG>([^<\r\n]+)/i', $conteudo, $instituicaoMatch)) {
+        $instituicao = normalizarCabecalhoExtrato($instituicaoMatch[1]);
+    }
+    $bancoDoBrasil = $instituicao === 'banco_do_brasil';
+
     preg_match_all('/<STMTTRN>(.*?)<\/STMTTRN>/is', $conteudo, $matches);
     $linhas = [];
 
@@ -715,6 +867,14 @@ function lerOfxExtrato(string $arquivo): array
 
         $valor = normalizarDecimalExtrato($capturar('TRNAMT'));
         $tipoOfx = strtoupper($capturar('TRNTYPE'));
+        $nome = $capturar('NAME');
+        $memo = $capturar('MEMO');
+        if ($bancoDoBrasil && in_array('saldo_anterior', [
+            normalizarCabecalhoExtrato($nome),
+            normalizarCabecalhoExtrato($memo),
+        ], true)) {
+            continue;
+        }
         $dataRaw = $capturar('DTPOSTED');
         $data = null;
         if ($dataRaw !== '') {
@@ -724,7 +884,7 @@ function lerOfxExtrato(string $arquivo): array
 
         $linhas[] = [
             'data_movimento' => $data,
-            'historico' => normalizarTextoExtrato($capturar('MEMO') ?: $capturar('NAME')),
+            'historico' => normalizarTextoExtrato($memo ?: $nome),
             'documento' => normalizarTextoExtrato($capturar('CHECKNUM') ?: $capturar('REFNUM')),
             'valor' => $valor,
             'tipo' => in_array($tipoOfx, ['CREDIT', 'DEP', 'DIRECTDEP', 'INT'], true) ? 'C' : 'D',
@@ -865,6 +1025,7 @@ function importarLinhasExtratoBanco(PDO $pdo, int $empresaId, int $usuarioId, in
 
     $registrosImportacao = [];
     $identificadoresConsulta = [];
+    $identificadoresExternosConsulta = [];
     $datasImportacao = [];
     $ocorrenciasNaturaisImportacao = [];
     foreach ($linhas as $linha) {
@@ -883,8 +1044,12 @@ function importarLinhasExtratoBanco(PDO $pdo, int $empresaId, int $usuarioId, in
         $ocorrenciaNatural = $ocorrenciasNaturaisImportacao[$chaveNatural];
         $datasImportacao[date('Y-m-d', strtotime((string)$linha['data_movimento']))] = true;
         $identificadorOriginal = (string)$linha['identificador'];
-        $identificador = gerarIdentificadorNaturalExtrato($chaveNatural, $ocorrenciaNatural);
-        $identificadoresLinha = [$identificador];
+        $identificadorExternoHash = gerarHashIdentificadorExternoExtrato($identificadorOriginal);
+        $identificadorNatural = gerarIdentificadorNaturalExtrato($chaveNatural, $ocorrenciaNatural);
+        $identificador = $identificadorOriginal !== ''
+            ? gerarIdentificadorExtrato($empresaId, $cbcontador, (string)$linha['data_movimento'], $valor, $tipo, $historicoLinha, $documentoLinha, $identificadorOriginal)
+            : $identificadorNatural;
+        $identificadoresLinha = [$identificador, $identificadorNatural];
         if ($identificadorOriginal !== '') {
             $identificadoresLinha[] = gerarIdentificadorLinhaExtrato(
                 $empresaId,
@@ -918,14 +1083,33 @@ function importarLinhasExtratoBanco(PDO $pdo, int $empresaId, int $usuarioId, in
                 $tipo,
                 $valor,
                 $identificador,
+                $identificadorExternoHash,
             ],
             'identificadores' => $identificadoresLinha,
             'chave_natural' => $chaveNatural,
             'ocorrencia_natural' => $ocorrenciaNatural,
             'tem_identificador_externo' => $identificadorOriginal !== '',
+            'identificador_externo_hash' => $identificadorExternoHash,
         ];
+        if ($identificadorExternoHash !== null) {
+            $identificadoresExternosConsulta[$identificadorExternoHash] = true;
+        }
         foreach ($identificadoresLinha as $identificadorConsulta) {
             $identificadoresConsulta[$identificadorConsulta] = true;
+        }
+    }
+
+    $identificadoresExternosExistentes = [];
+    foreach (array_chunk(array_keys($identificadoresExternosConsulta), 500) as $loteHashes) {
+        $placeholders = implode(',', array_fill(0, count($loteHashes), '?'));
+        $stmtExternos = $pdo->prepare("
+            SELECT identificador_externo_hash
+            FROM financeiro_extrato_bancario
+            WHERE identificador_externo_hash IN ({$placeholders})
+        ");
+        $stmtExternos->execute($loteHashes);
+        foreach ($stmtExternos->fetchAll(PDO::FETCH_COLUMN) as $hashExistente) {
+            $identificadoresExternosExistentes[(string)$hashExistente] = true;
         }
     }
 
@@ -989,10 +1173,15 @@ function importarLinhasExtratoBanco(PDO $pdo, int $empresaId, int $usuarioId, in
 
         $qtdNaturalExistente = (int)($chavesNaturaisExistentes[$registroImportacao['chave_natural']] ?? 0);
         $existePorChaveNatural = $qtdNaturalExistente >= (int)$registroImportacao['ocorrencia_natural'];
+        $hashExterno = $registroImportacao['identificador_externo_hash'];
+        $existeGlobalmente = $hashExterno !== null && isset($identificadoresExternosExistentes[$hashExterno]);
 
-        if (!$existe && !$existePorChaveNatural) {
+        if (!$existe && !$existePorChaveNatural && !$existeGlobalmente) {
             $registrosNovos[] = $registroImportacao['dados'];
             $chavesNaturaisExistentes[$registroImportacao['chave_natural']] = max($qtdNaturalExistente, (int)$registroImportacao['ocorrencia_natural']);
+            if ($hashExterno !== null) {
+                $identificadoresExternosExistentes[$hashExterno] = true;
+            }
         }
     }
 
@@ -1002,7 +1191,7 @@ function importarLinhasExtratoBanco(PDO $pdo, int $empresaId, int $usuarioId, in
             continue;
         }
 
-        $placeholders = implode(',', array_fill(0, count($loteRegistros), '(?, ?, ?, ?, ?, ?, ?, ?, ?)'));
+        $placeholders = implode(',', array_fill(0, count($loteRegistros), '(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'));
         $valoresInsert = [];
         foreach ($loteRegistros as $registroNovo) {
             array_push($valoresInsert, ...$registroNovo);
@@ -1010,7 +1199,7 @@ function importarLinhasExtratoBanco(PDO $pdo, int $empresaId, int $usuarioId, in
 
         $stmtIns = $pdo->prepare("
             INSERT IGNORE INTO financeiro_extrato_bancario
-                (empresa_id, cbcontador, importacao_id, data_movimento, historico, documento, tipo, valor, identificador_banco)
+                (empresa_id, cbcontador, importacao_id, data_movimento, historico, documento, tipo, valor, identificador_banco, identificador_externo_hash)
             VALUES {$placeholders}
         ");
         $stmtIns->execute($valoresInsert);
@@ -1354,7 +1543,7 @@ $cbcontador = (int)($_GET['cbcontador'] ?? ($_POST['cbcontador'] ?? 0));
 if ($cbcontador <= 0 && !empty($contas)) {
     $cbcontador = (int)$contas[0]['CBCONTADOR'];
 }
-$dataIni = trim($_GET['data_ini'] ?? date('Y-m-01'));
+$dataIni = trim($_GET['data_ini'] ?? date('Y-01-01'));
 $dataFim = trim($_GET['data_fim'] ?? date('Y-m-d'));
 $dcFiltro = strtoupper(trim((string)($_GET['dc'] ?? '')));
 $historicoFiltro = trim((string)($_GET['historico'] ?? ''));
@@ -2378,6 +2567,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['acao'] ?? '') === 'importa
 
                 $registrosImportacao = [];
                 $identificadoresConsulta = [];
+                $identificadoresExternosConsulta = [];
                 $datasImportacao = [];
                 $ocorrenciasNaturaisImportacao = [];
                 foreach ($linhas as $linha) {
@@ -2396,8 +2586,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['acao'] ?? '') === 'importa
                     $ocorrenciaNatural = $ocorrenciasNaturaisImportacao[$chaveNatural];
                     $datasImportacao[date('Y-m-d', strtotime((string)$linha['data_movimento']))] = true;
                     $identificadorOriginal = (string)$linha['identificador'];
-                    $identificador = gerarIdentificadorNaturalExtrato($chaveNatural, $ocorrenciaNatural);
-                    $identificadoresLinha = [$identificador];
+                    $identificadorExternoHash = gerarHashIdentificadorExternoExtrato($identificadorOriginal);
+                    $identificadorNatural = gerarIdentificadorNaturalExtrato($chaveNatural, $ocorrenciaNatural);
+                    $identificador = $identificadorOriginal !== ''
+                        ? gerarIdentificadorExtrato($empresaId, $cbcontadorPost, (string)$linha['data_movimento'], $valor, $tipo, $historicoLinha, $documentoLinha, $identificadorOriginal)
+                        : $identificadorNatural;
+                    $identificadoresLinha = [$identificador, $identificadorNatural];
                     if ($identificadorOriginal !== '') {
                         $identificadoresLinha[] = gerarIdentificadorLinhaExtrato(
                             $empresaId,
@@ -2431,14 +2625,33 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['acao'] ?? '') === 'importa
                             $tipo,
                             $valor,
                             $identificador,
+                            $identificadorExternoHash,
                         ],
                         'identificadores' => $identificadoresLinha,
                         'chave_natural' => $chaveNatural,
                         'ocorrencia_natural' => $ocorrenciaNatural,
                         'tem_identificador_externo' => $identificadorOriginal !== '',
+                        'identificador_externo_hash' => $identificadorExternoHash,
                     ];
+                    if ($identificadorExternoHash !== null) {
+                        $identificadoresExternosConsulta[$identificadorExternoHash] = true;
+                    }
                     foreach ($identificadoresLinha as $identificadorConsulta) {
                         $identificadoresConsulta[$identificadorConsulta] = true;
+                    }
+                }
+
+                $identificadoresExternosExistentes = [];
+                foreach (array_chunk(array_keys($identificadoresExternosConsulta), 500) as $loteHashes) {
+                    $placeholders = implode(',', array_fill(0, count($loteHashes), '?'));
+                    $stmtExternos = $pdo_master->prepare("
+                        SELECT identificador_externo_hash
+                        FROM financeiro_extrato_bancario
+                        WHERE identificador_externo_hash IN ({$placeholders})
+                    ");
+                    $stmtExternos->execute($loteHashes);
+                    foreach ($stmtExternos->fetchAll(PDO::FETCH_COLUMN) as $hashExistente) {
+                        $identificadoresExternosExistentes[(string)$hashExistente] = true;
                     }
                 }
 
@@ -2502,10 +2715,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['acao'] ?? '') === 'importa
 
                     $qtdNaturalExistente = (int)($chavesNaturaisExistentes[$registroImportacao['chave_natural']] ?? 0);
                     $existePorChaveNatural = $qtdNaturalExistente >= (int)$registroImportacao['ocorrencia_natural'];
+                    $hashExterno = $registroImportacao['identificador_externo_hash'];
+                    $existeGlobalmente = $hashExterno !== null && isset($identificadoresExternosExistentes[$hashExterno]);
 
-                    if (!$existe && !$existePorChaveNatural) {
+                    if (!$existe && !$existePorChaveNatural && !$existeGlobalmente) {
                         $registrosNovos[] = $registroImportacao['dados'];
                         $chavesNaturaisExistentes[$registroImportacao['chave_natural']] = max($qtdNaturalExistente, (int)$registroImportacao['ocorrencia_natural']);
+                        if ($hashExterno !== null) {
+                            $identificadoresExternosExistentes[$hashExterno] = true;
+                        }
                     }
                 }
 
@@ -2515,7 +2733,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['acao'] ?? '') === 'importa
                         continue;
                     }
 
-                    $placeholders = implode(',', array_fill(0, count($loteRegistros), '(?, ?, ?, ?, ?, ?, ?, ?, ?)'));
+                    $placeholders = implode(',', array_fill(0, count($loteRegistros), '(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'));
                     $valoresInsert = [];
                     foreach ($loteRegistros as $registroNovo) {
                         array_push($valoresInsert, ...$registroNovo);
@@ -2523,7 +2741,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['acao'] ?? '') === 'importa
 
                     $stmtIns = $pdo_master->prepare("
                         INSERT IGNORE INTO financeiro_extrato_bancario
-                            (empresa_id, cbcontador, importacao_id, data_movimento, historico, documento, tipo, valor, identificador_banco)
+                            (empresa_id, cbcontador, importacao_id, data_movimento, historico, documento, tipo, valor, identificador_banco, identificador_externo_hash)
                         VALUES {$placeholders}
                     ");
                     $stmtIns->execute($valoresInsert);
@@ -3326,6 +3544,13 @@ require '../../layout/header.php';
     overflow-wrap: break-word;
 }
 
+.comparacao-extratos-layout {
+    width: min(1320px, calc(100vw - 32px));
+    max-width: none;
+    margin-left: 50%;
+    transform: translateX(-50%);
+}
+
 @media (max-width: 768px) {
     .extrato-bancario-quadro,
     .sistema-bnc-quadro {
@@ -4047,9 +4272,9 @@ function validarLancamentoBnc001Extrato() {
 }
 </script>
 
-<section class="mb-4">
+<section class="mb-4 comparacao-extratos-layout">
     <div class="row g-3">
-        <div class="col-xl-7">
+        <div class="col-lg-7">
             <div class="bg-white border rounded-2 shadow-sm overflow-hidden">
                 <div class="p-3 border-bottom bg-light">
                     <form method="POST" id="form-gerar-recebiveis" class="d-none">
@@ -4265,7 +4490,7 @@ function validarLancamentoBnc001Extrato() {
                 </div>
             </div>
         </div>
-        <div class="col-xl-5">
+        <div class="col-lg-5">
             <div class="bg-white border rounded-2 shadow-sm overflow-hidden">
                 <div class="p-3 border-bottom bg-light">
                     <div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-center gap-2">
