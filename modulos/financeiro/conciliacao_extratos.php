@@ -771,7 +771,7 @@ function analisarCsvMercadoPago(string $arquivo): ?array
     }
 
     if (!$linhas) {
-        throw new RuntimeException('O extrato Mercado Pago nao possui lancamentos validos.');
+        throw new RuntimeException('O arquivo do Mercado Pago nao possui lancamentos para importar. Verifique o periodo selecionado no banco.');
     }
 
     if ($resumo !== null) {
@@ -2561,8 +2561,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['acao'] ?? '') === 'importa
             if (!move_uploaded_file($_FILES['arquivo_extrato']['tmp_name'], $destino)) {
                 $mensagemErro = 'Nao foi possivel salvar o arquivo enviado.';
             } else {
-                $linhas = $extensao === 'ofx' ? lerOfxExtrato($destino) : lerCsvExtrato($destino);
+                try {
+                    $linhas = $extensao === 'ofx' ? lerOfxExtrato($destino) : lerCsvExtrato($destino);
+                } catch (Throwable $e) {
+                    @unlink($destino);
+                    $mensagemErro = $e->getMessage();
+                }
 
+                if ($mensagemErro === '') {
                 $stmtImp = $pdo_master->prepare("
                     INSERT INTO financeiro_extratos_importacoes
                         (empresa_id, cbcontador, nome_arquivo, arquivo_salvo, formato, total_linhas, usuario_id)
@@ -2770,6 +2776,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['acao'] ?? '') === 'importa
                     'duplicados' => $duplicados,
                 ]));
                 exit;
+                }
             }
         }
         }
