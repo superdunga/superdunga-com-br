@@ -859,6 +859,11 @@ function lerOfxExtrato(string $arquivo): array
         $instituicao = normalizarCabecalhoExtrato($instituicaoMatch[1]);
     }
     $bancoDoBrasil = $instituicao === 'banco_do_brasil';
+    $codigoBanco = '';
+    if (preg_match('/<BANKID>([^<\r\n]+)/i', $conteudo, $codigoBancoMatch)) {
+        $codigoBanco = trim($codigoBancoMatch[1]);
+    }
+    $sicoob = $instituicao === 'banco_cooperativo_do_brasil' || $codigoBanco === '756';
 
     preg_match_all('/<STMTTRN>(.*?)<\/STMTTRN>/is', $conteudo, $matches);
     $linhas = [];
@@ -873,6 +878,9 @@ function lerOfxExtrato(string $arquivo): array
 
         $valor = normalizarDecimalExtrato($capturar('TRNAMT'));
         $tipoOfx = strtoupper($capturar('TRNTYPE'));
+        if ($sicoob && $tipoOfx === 'OTHER') {
+            continue;
+        }
         $nome = $capturar('NAME');
         $memo = $capturar('MEMO');
         if ($bancoDoBrasil && in_array('saldo_anterior', [
