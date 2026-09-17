@@ -2769,8 +2769,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['acao'] ?? '') === 'importa
                 ");
                 $stmtUpd->execute([$importados, $duplicados, $importacaoId]);
 
+                $datasImportadas = array_keys($datasImportacao);
+                sort($datasImportadas);
+                $dataInicialImportada = $datasImportadas[0] ?? $dataIni;
+                $dataFinalImportada = !empty($datasImportadas) ? end($datasImportadas) : $dataFim;
+
                 header('Location: conciliacao_extratos.php?' . http_build_query([
                     'cbcontador' => $cbcontadorPost,
+                    'data_ini' => $dataInicialImportada,
+                    'data_fim' => $dataFinalImportada,
+                    'dc' => $dcFiltro,
+                    'historico' => $historicoFiltro,
+                    'situacao' => $situacaoFiltro,
                     'ok' => '1',
                     'importados' => $importados,
                     'duplicados' => $duplicados,
