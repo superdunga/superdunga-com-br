@@ -1986,8 +1986,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['acao'] ?? '') === 'gerar_r
             WHERE id = ?
               AND empresa_id = ?
         ");
+        $stmtRecebivelExistente = $pdo_master->prepare("
+            SELECT id
+            FROM armazem_conciliacao_recebimentos
+            WHERE empresa_id = ?
+              AND origem <> 'EXTRATO_BANCARIO'
+              AND DATE(data_venda) = ?
+              AND ABS(valor_bruto - ?) < 0.005
+              AND LOWER(TRIM(COALESCE(pagador, ''))) = LOWER(TRIM(?))
+            ORDER BY id
+            LIMIT 1
+        ");
 
         $gerados = 0;
+        $duplicadosIgnorados = 0;
         foreach ($extratosSelecionados as $extratoIdSelecionado) {
             $extratoIdSelecionado = (int)$extratoIdSelecionado;
             if ($extratoIdSelecionado <= 0) {
@@ -2012,6 +2024,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['acao'] ?? '') === 'gerar_r
             $documento = trim((string)($extratoRecebivel['documento'] ?? ''));
             $descricao = descricaoRecebivelExtratoBanco($extratoIdSelecionado, (int)$extratoRecebivel['cbcontador'], $documento);
             $pagador = pagadorRecebivelExtratoBanco($historico);
+            if ($pagador !== '') {
+                $stmtRecebivelExistente->execute([$empresaId, $dataRecebimento, $valor, $pagador]);
+                if ($stmtRecebivelExistente->fetchColumn()) {
+                    $duplicadosIgnorados++;
+                    continue;
+                }
+            }
             $identificador = 'EXTRATO_BANCO_' . $empresaId . '_' . $extratoIdSelecionado;
             $tipoOperacaoRecebivel = in_array((string)$extratoRecebivel['tipo'], ['C', 'D'], true) ? (string)$extratoRecebivel['tipo'] : 'C';
             $nsuTransacao = mb_substr((string)$extratoRecebivel['identificador_banco'], 0, 50);
@@ -2047,6 +2066,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['acao'] ?? '') === 'gerar_r
         header('Location: conciliacao_extratos.php?' . queryConciliacaoExtratos([
             'ok_recebiveis' => '1',
             'qtd_recebiveis' => $gerados,
+            'duplicados_recebiveis' => $duplicadosIgnorados,
         ]));
         exit;
     } catch (Throwable $e) {
@@ -2827,6 +2847,10 @@ if (($_GET['ok_match_desfeito'] ?? '') === '1') {
 
 if (($_GET['ok_recebiveis'] ?? '') === '1') {
     $mensagemOk = 'Recebiveis gerados a partir do extrato bancario: ' . (int)($_GET['qtd_recebiveis'] ?? 0) . '.';
+    $duplicadosRecebiveis = (int)($_GET['duplicados_recebiveis'] ?? 0);
+    if ($duplicadosRecebiveis > 0) {
+        $mensagemOk .= ' Ignorados por ja existirem nos recebiveis: ' . $duplicadosRecebiveis . '.';
+    }
 }
 
 if (($_GET['ok_recebivel_desfeito'] ?? '') === '1') {

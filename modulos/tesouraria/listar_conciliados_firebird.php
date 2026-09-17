@@ -33,6 +33,13 @@ try {
           AND recebimento_id IS NOT NULL
           AND COALESCE(excluido_firebird, 'N') <> 'S'
           AND COALESCE(enviado_firebird, 'N') IN ('N', 'E')
+          AND NOT EXISTS (
+              SELECT 1
+              FROM conciliacao_recebimentos_desvinculos_firebird d
+              WHERE d.empresa_id = armazem_cr001.EMPRESA
+                AND d.crcontador = armazem_cr001.CRCONTADOR
+                AND d.status IN ('PENDENTE', 'ERRO')
+          )
         ORDER BY CRCONTADOR
         LIMIT $limit OFFSET $offset
     ");
