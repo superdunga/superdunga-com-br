@@ -286,6 +286,7 @@ function validarPermissaoModuloAtual(): void
         'modulos/tesouraria/download.php' => 'tesouraria_extrato',
         'modulos/tesouraria/editar_movimentacao.php' => 'tesouraria_extrato',
         'modulos/tesouraria/inventario_resultado.php' => 'tesouraria_inventario',
+        'modulos/tesouraria/estoque_minimo.php' => 'tesouraria_inventario',
         'modulos/fechamentodecaixa/importar_recebimentos.php' => 'fechamento_importar_recebimentos',
         'modulos/fechamentodecaixa/extrato_caixa.php' => 'fechamento_caixa',
         'modulos/fechamentodecaixa/detalhar_fechamento.php' => 'fechamento_caixa',

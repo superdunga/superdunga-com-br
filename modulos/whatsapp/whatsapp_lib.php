@@ -1,5 +1,7 @@
 <?php
 
+require_once __DIR__ . '/../tesouraria/estoque_minimo_lib.php';
+
 function whatsappEnsureTables(PDO $pdo): void
 {
     static $executado = false;
@@ -332,6 +334,27 @@ function whatsappEnsureTables(PDO $pdo): void
         SET ativo = 'N'
         WHERE gerador_sistema = 'fechamento_compras_clientes_pdf'
     ");
+
+    try {
+        $empresaIds = $pdo->query("SELECT id FROM empresas ORDER BY id")->fetchAll(PDO::FETCH_COLUMN);
+        $stmt = $pdo->prepare("
+            INSERT INTO whatsapp_rotinas
+                (empresa_id, codigo, nome, descricao, mensagem_id, origem_mensagem, gerador_sistema, ativo, evitar_duplicidade_diaria, periodicidade, horario, dias_semana, proxima_execucao)
+            VALUES
+                (?, 'reposicao_tesouraria', 'Reposicao da Tesouraria', 'Alerta gerencial quando cedulas ou moedas ficam abaixo do estoque minimo.', NULL, 'SISTEMA', 'reposicao_tesouraria', 'N', 'S', 'MANUAL', '08:00:00', '1,2,3,4,5', NULL)
+            ON DUPLICATE KEY UPDATE
+                nome = VALUES(nome),
+                descricao = VALUES(descricao),
+                mensagem_id = NULL,
+                origem_mensagem = 'SISTEMA',
+                gerador_sistema = 'reposicao_tesouraria',
+                evitar_duplicidade_diaria = 'S'
+        ");
+        foreach ($empresaIds as $empresaRotinaId) {
+            $stmt->execute([(int)$empresaRotinaId]);
+        }
+    } catch (Throwable $e) {
+    }
 }
 
 function whatsappEnsureColumn(PDO $pdo, string $table, string $column, string $alterSql): void
@@ -439,6 +462,12 @@ function whatsappGeradoresSistema(): array
             'arquivo' => 'modulos/whatsapp/whatsapp_lib.php',
             'funcao' => 'whatsappMensagemConferenciaCaixaDetalhada',
         ],
+        'reposicao_tesouraria' => [
+            'nome' => 'Reposicao da Tesouraria',
+            'descricao' => 'Envia alerta somente quando cedulas ou moedas estiverem abaixo do estoque minimo da empresa.',
+            'arquivo' => 'modulos/whatsapp/whatsapp_lib.php',
+            'funcao' => 'whatsappMensagemReposicaoTesouraria',
+        ],
         'apresentacao_caixa_1' => [
             'nome' => 'Apresentacao do Caixa',
             'descricao' => 'Mostra a diferenca do dinheiro de todos os operadores do dia, das 07:00 ate 03:00.',
@@ -446,6 +475,76 @@ function whatsappGeradoresSistema(): array
             'funcao' => 'whatsappMensagemApresentacaoCaixa',
         ],
     ];
+}
+
+function whatsappItensReposicaoTesouraria(PDO $pdo, int $empresaId): array
+{
+    $itens = [];
+    foreach (listarEstoqueMinimo($pdo, $empresaId) as $item) {
+        $atual = (int)$item['quantidade_atual'];
+        $minimo = max(0, (int)$item['quantidade_minima']);
+        $repor = max(0, $minimo - $atual);
+        if ($minimo <= 0 || $repor <= 0) {
+            continue;
+        }
+
+        $item['quantidade_atual'] = $atual;
+        $item['quantidade_minima'] = $minimo;
+        $item['quantidade_repor'] = $repor;
+        $item['valor_reposicao'] = $repor * (float)$item['valor'];
+        $itens[] = $item;
+    }
+    return $itens;
+}
+
+function whatsappMensagemReposicaoTesouraria(PDO $pdo, int $empresaId): string
+{
+    $itens = whatsappItensReposicaoTesouraria($pdo, $empresaId);
+    $empresa = whatsappNomeEmpresa($pdo, $empresaId);
+    if (empty($itens)) {
+        return "*REPOSICAO DA TESOURARIA*\n\n"
+            . "Empresa: {$empresa}\n"
+            . "Verificacao: " . date('d/m/Y H:i') . "\n\n"
+            . "Nenhuma cedula ou moeda esta abaixo do estoque minimo configurado.\n"
+            . "Esta verificacao nao gera envio automatico.";
+    }
+
+    $grupos = ['CEDULA' => [], 'MOEDA' => []];
+    $quantidadeTotal = 0;
+    $valorTotal = 0.0;
+    foreach ($itens as $item) {
+        $tipo = strtoupper((string)$item['tipo']) === 'MOEDA' ? 'MOEDA' : 'CEDULA';
+        $grupos[$tipo][] = $item;
+        $quantidadeTotal += (int)$item['quantidade_repor'];
+        $valorTotal += (float)$item['valor_reposicao'];
+    }
+
+    $mensagem = "*ALERTA GERENCIAL - REPOSICAO DA TESOURARIA*\n\n";
+    $mensagem .= "Empresa: {$empresa}\n";
+    $mensagem .= "Verificacao: " . date('d/m/Y H:i') . "\n\n";
+    $mensagem .= "Foram identificadas denominacoes abaixo do estoque minimo:\n";
+
+    foreach (['CEDULA' => 'CEDULAS', 'MOEDA' => 'MOEDAS'] as $tipo => $titulo) {
+        if (empty($grupos[$tipo])) {
+            continue;
+        }
+        $mensagem .= "\n*{$titulo}*\n";
+        foreach ($grupos[$tipo] as $item) {
+            $mensagem .= (string)$item['descricao'] . "\n";
+            $mensagem .= "Atual: " . (int)$item['quantidade_atual']
+                . " | Minimo: " . (int)$item['quantidade_minima']
+                . " | Repor: " . (int)$item['quantidade_repor'] . "\n";
+            $mensagem .= "Valor para reposicao: R$ "
+                . number_format((float)$item['valor_reposicao'], 2, ',', '.') . "\n";
+        }
+    }
+
+    $mensagem .= "\n*RESUMO*\n";
+    $mensagem .= count($itens) . " denominacao(oes) abaixo do minimo\n";
+    $mensagem .= $quantidadeTotal . " unidade(s) para reposicao\n";
+    $mensagem .= "Valor estimado: R$ " . number_format($valorTotal, 2, ',', '.') . "\n\n";
+    $mensagem .= "Favor providenciar a reposicao da tesouraria.";
+    return $mensagem;
 }
 
 function whatsappSend(PDO $pdo, array $config, array $destinatario, string $mensagem, ?int $mensagemId, ?int $usuarioId, ?int $rotinaId = null): array
@@ -658,6 +757,28 @@ function whatsappEnviarRotina(PDO $pdo, array $rotina, string $mensagem, ?int $m
         throw new Exception('Rotina inativa.');
     }
 
+    if (($rotina['origem_mensagem'] ?? 'TEXTO') === 'SISTEMA' && ($rotina['gerador_sistema'] ?? '') === 'reposicao_tesouraria') {
+        if (empty(whatsappItensReposicaoTesouraria($pdo, $empresaId))) {
+            return ['ok' => 0, 'falha' => 0, 'ignorado' => 1, 'motivo' => 'Estoque dentro dos limites configurados'];
+        }
+
+        if (($rotina['evitar_duplicidade_diaria'] ?? 'N') === 'S') {
+            $stmt = $pdo->prepare("
+                SELECT COUNT(*)
+                FROM whatsapp_envios
+                WHERE empresa_id = ?
+                  AND rotina_id = ?
+                  AND status = 'OK'
+                  AND enviado_em >= CURDATE()
+                  AND enviado_em < DATE_ADD(CURDATE(), INTERVAL 1 DAY)
+            ");
+            $stmt->execute([$empresaId, (int)$rotina['id']]);
+            if ((int)$stmt->fetchColumn() > 0) {
+                return ['ok' => 0, 'falha' => 0, 'ignorado' => 1, 'motivo' => 'Alerta de reposicao ja enviado hoje'];
+            }
+        }
+    }
+
     if (($rotina['origem_mensagem'] ?? 'TEXTO') === 'SISTEMA' && ($rotina['gerador_sistema'] ?? '') === 'fechamento_compras_clientes_pdf') {
         $resultado = whatsappEnviarFechamentoComprasClientesPdf($pdo, $config, $rotina, $usuarioId);
         $stmt = $pdo->prepare("UPDATE whatsapp_rotinas SET ultima_execucao = NOW() WHERE id = ?");
@@ -818,6 +939,10 @@ function whatsappMensagemRotina(PDO $pdo, array $rotina): array
             return [whatsappMensagemConferenciaCaixaDetalhada($pdo, null, $empresaId), null];
         }
 
+        if ($gerador === 'reposicao_tesouraria') {
+            return [whatsappMensagemReposicaoTesouraria($pdo, $empresaId), null];
+        }
+
         throw new Exception('Gerador de mensagem do sistema nao encontrado.');
     }
 
@@ -866,6 +991,21 @@ function whatsappExecutarAgendamentos(PDO $pdo): array
         try {
             list($mensagem, $mensagemId) = whatsappMensagemRotina($pdo, $rotina);
             $envio = whatsappEnviarRotina($pdo, $rotina, $mensagem, $mensagemId, null);
+            if (!empty($envio['ignorado'])) {
+                $motivo = substr((string)($envio['motivo'] ?? 'Execucao sem envio'), 0, 120);
+                $pdo->prepare("INSERT IGNORE INTO whatsapp_agendamentos_ignorados (agendamento_id,empresa_id,previsto_em,motivo) VALUES (?,?,?,?)")
+                    ->execute([(int)$rotina['agendamento_id'], (int)$rotina['empresa_id'], $rotina['agendamento_previsto_em'], $motivo]);
+                $resultado[] = [
+                    'rotina' => $rotina['codigo'],
+                    'agendamento_id' => (int)$rotina['agendamento_id'],
+                    'status' => 'IGNORADO',
+                    'motivo' => $motivo,
+                ];
+                $pdo->prepare("UPDATE whatsapp_rotina_agendamentos SET ultima_execucao = NOW() WHERE id = ?")
+                    ->execute([(int)$rotina['agendamento_id']]);
+                whatsappAtualizarProximaAgendamento($pdo, (int)$rotina['agendamento_id']);
+                continue;
+            }
             $resultado[] = [
                 'rotina' => $rotina['codigo'],
                 'agendamento_id' => (int)$rotina['agendamento_id'],

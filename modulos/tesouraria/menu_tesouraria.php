@@ -2,9 +2,23 @@
 require '../../config/auth.php';
 require '../../config/conexao.php';
 require_once '../../config/modulos.php';
+require_once 'estoque_minimo_lib.php';
 require '../../layout/header.php';
 
 $empresaId = (int)($_SESSION['empresa_id'] ?? 0);
+garantirTabelaEstoqueMinimo($pdo_master);
+$resumoEstoqueMinimo = resumirEstoqueMinimo(listarEstoqueMinimo($pdo_master, $empresaId));
+
+if ($resumoEstoqueMinimo['alertas'] > 0) {
+    $descricaoEstoqueMinimo = $resumoEstoqueMinimo['alertas'] . ' denominacao(oes) precisam de reposicao.';
+    $botaoEstoqueMinimo = 'btn-danger';
+} elseif ($resumoEstoqueMinimo['configurados'] > 0) {
+    $descricaoEstoqueMinimo = 'Estoque dentro dos limites configurados.';
+    $botaoEstoqueMinimo = 'btn-outline-success';
+} else {
+    $descricaoEstoqueMinimo = 'Cadastre os limites desejados para gerar alertas de reposicao.';
+    $botaoEstoqueMinimo = 'btn-outline-primary';
+}
 
 $opcoes = [
     [
@@ -36,6 +50,14 @@ $opcoes = [
         'modulo' => 'tesouraria_inventario',
         'icone' => 'IF',
         'botao' => 'btn-info',
+    ],
+    [
+        'titulo' => 'Estoque Minimo',
+        'descricao' => $descricaoEstoqueMinimo,
+        'href' => 'estoque_minimo.php',
+        'modulo' => 'tesouraria_inventario',
+        'icone' => 'EM',
+        'botao' => $botaoEstoqueMinimo,
     ],
     [
         'titulo' => 'Historico de Inventarios',

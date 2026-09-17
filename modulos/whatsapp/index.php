@@ -314,7 +314,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             list($mensagem, $mensagemId) = whatsappMensagemRotina($pdo_master, $rotina);
 
             $resultado = whatsappEnviarRotina($pdo_master, $rotina, $mensagem, $mensagemId, $_SESSION['usuario_id'] ?? null);
-            $alerta = "Rotina enviada: {$resultado['ok']} OK, {$resultado['falha']} erro(s).";
+            if (!empty($resultado['ignorado'])) {
+                $alerta = 'Rotina verificada sem envio: ' . ($resultado['motivo'] ?? 'nenhum alerta necessario.');
+            } else {
+                $alerta = "Rotina enviada: {$resultado['ok']} OK, {$resultado['falha']} erro(s).";
+            }
         }
 
         if ($acao === 'preview_rotina') {
