@@ -16,6 +16,11 @@ $alerta = null;
 $erro = null;
 $previewRotina = null;
 $previewMensagem = null;
+$secoesWhatsapp = ['painel', 'rotinas', 'destinatarios', 'mensagens', 'historico', 'configuracoes'];
+$secaoWhatsapp = strtolower(trim((string)($_GET['secao'] ?? 'painel')));
+if (!in_array($secaoWhatsapp, $secoesWhatsapp, true)) {
+    $secaoWhatsapp = 'painel';
+}
 
 function postValue(string $key, string $default = ''): string
 {
@@ -470,6 +475,35 @@ $stmt = $pdo_master->prepare("
 $stmt->execute([$empresaId]);
 $agendamentosIgnorados = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
+$rotinasAtivas = count(array_filter($rotinas, static function (array $rotina): bool {
+    return ($rotina['ativo'] ?? 'N') === 'S';
+}));
+$destinatariosAtivos = count(array_filter($destinatarios, static function (array $destinatario): bool {
+    return ($destinatario['ativo'] ?? 'N') === 'S';
+}));
+$enviosComErro = count(array_filter($historico, static function (array $envio): bool {
+    return ($envio['status'] ?? '') !== 'OK' || ($envio['entrega_status'] ?? '') === 'FALHA';
+}));
+$proximosEnvios = [];
+foreach ($agendamentosRotina as $rotinaId => $agendamentos) {
+    foreach ($agendamentos as $agendamento) {
+        if (($agendamento['ativo'] ?? 'N') === 'S' && !empty($agendamento['proxima_execucao'])) {
+            $proximosEnvios[] = [
+                'rotina_id' => (int)$rotinaId,
+                'proxima_execucao' => (string)$agendamento['proxima_execucao'],
+            ];
+        }
+    }
+}
+usort($proximosEnvios, static function (array $a, array $b): int {
+    return strcmp($a['proxima_execucao'], $b['proxima_execucao']);
+});
+$proximoEnvio = $proximosEnvios[0] ?? null;
+$rotinasPorId = [];
+foreach ($rotinas as $rotina) {
+    $rotinasPorId[(int)$rotina['id']] = $rotina;
+}
+
 $cronUrl = '';
 if (!empty($config['agendamento_token'])) {
     $scheme = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ? 'https' : 'http';
@@ -485,12 +519,33 @@ require __DIR__ . '/../../layout/header.php';
     <div>
         <span class="badge text-bg-success mb-2">WhatsApp</span>
         <h1 class="h3 fw-bold mb-1">WhatsApp Gerencial</h1>
-        <p class="text-muted mb-0">Rotinas gerenciais de todas as empresas pela instancia compartilhada.</p>
+        <p class="text-muted mb-0">Acompanhe rotinas, destinatarios e entregas da empresa atual.</p>
     </div>
-    <a href="../../index.php" class="btn btn-outline-secondary">Voltar ao painel</a>
+    <div class="d-flex gap-2">
+        <a href="../whatsapp_operacional/index.php" class="btn btn-outline-success">Abrir operacional</a>
+        <a href="../../index.php" class="btn btn-outline-secondary">Voltar ao painel</a>
+    </div>
 </div>
 
-<?php if ($cronUrl): ?>
+<nav class="border-bottom mb-4" aria-label="Navegacao do WhatsApp Gerencial">
+    <div class="d-flex gap-1 overflow-auto">
+        <?php foreach ([
+            'painel' => 'Painel',
+            'rotinas' => 'Rotinas',
+            'destinatarios' => 'Destinatarios',
+            'mensagens' => 'Mensagens',
+            'historico' => 'Historico',
+            'configuracoes' => 'Configuracoes',
+        ] as $chaveSecao => $tituloSecao): ?>
+            <a href="?secao=<?= urlencode($chaveSecao) ?>"
+               class="btn rounded-0 border-0 border-bottom border-3 <?= $secaoWhatsapp === $chaveSecao ? 'border-primary text-primary fw-semibold' : 'border-transparent text-secondary' ?>">
+                <?= htmlspecialchars($tituloSecao) ?>
+            </a>
+        <?php endforeach; ?>
+    </div>
+</nav>
+
+<?php if ($secaoWhatsapp === 'configuracoes' && $cronUrl): ?>
     <div class="alert alert-info">
         <div class="fw-semibold mb-1">URL do agendador interno</div>
         <div class="small mb-2">
@@ -532,8 +587,106 @@ require __DIR__ . '/../../layout/header.php';
     </div>
 <?php endif; ?>
 
+<?php if ($secaoWhatsapp === 'painel'): ?>
+    <?php
+        $cronAtivo = !empty($config['cron_ultimo_contato_em'])
+            && time() - strtotime((string)$config['cron_ultimo_contato_em']) <= 15 * 60;
+        $instanciaAtiva = ($config['ativo'] ?? 'N') === 'S';
+    ?>
+    <div class="row g-3 mb-4">
+        <div class="col-sm-6 col-xl-3">
+            <div class="card shadow-sm h-100">
+                <div class="card-body">
+                    <div class="text-muted small mb-1">Instancia gerencial</div>
+                    <div class="h5 mb-1"><?= htmlspecialchars($config['instancia'] ?? 'Nao configurada') ?></div>
+                    <span class="badge text-bg-<?= $instanciaAtiva ? 'success' : 'danger' ?>"><?= $instanciaAtiva ? 'Ativa' : 'Inativa' ?></span>
+                </div>
+            </div>
+        </div>
+        <div class="col-sm-6 col-xl-3">
+            <div class="card shadow-sm h-100">
+                <div class="card-body">
+                    <div class="text-muted small mb-1">Rotinas ativas</div>
+                    <div class="display-6 fw-semibold"><?= $rotinasAtivas ?></div>
+                    <div class="small text-muted">de <?= count($rotinas) ?> cadastradas</div>
+                </div>
+            </div>
+        </div>
+        <div class="col-sm-6 col-xl-3">
+            <div class="card shadow-sm h-100">
+                <div class="card-body">
+                    <div class="text-muted small mb-1">Proximo envio</div>
+                    <?php if ($proximoEnvio): ?>
+                        <div class="h5 mb-1"><?= htmlspecialchars(date('d/m/Y H:i', strtotime($proximoEnvio['proxima_execucao']))) ?></div>
+                        <div class="small text-muted"><?= htmlspecialchars($rotinasPorId[$proximoEnvio['rotina_id']]['nome'] ?? 'Rotina') ?></div>
+                    <?php else: ?>
+                        <div class="h5 mb-1">Sem agendamento</div>
+                    <?php endif; ?>
+                </div>
+            </div>
+        </div>
+        <div class="col-sm-6 col-xl-3">
+            <div class="card shadow-sm h-100">
+                <div class="card-body">
+                    <div class="text-muted small mb-1">Agendador</div>
+                    <div class="h5 mb-1"><?= $cronAtivo ? 'Em funcionamento' : 'Requer atencao' ?></div>
+                    <span class="badge text-bg-<?= $cronAtivo ? 'success' : 'warning' ?>"><?= $cronAtivo ? 'Atualizado' : 'Atrasado' ?></span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <section class="mb-4">
+        <div class="d-flex justify-content-between align-items-center mb-2">
+            <div>
+                <h2 class="h5 fw-bold mb-1">Rotinas gerenciais</h2>
+                <p class="text-muted small mb-0">Situacao consolidada das comunicacoes automaticas.</p>
+            </div>
+            <a href="?secao=rotinas" class="btn btn-primary">Gerenciar rotinas</a>
+        </div>
+        <div class="table-responsive bg-white border rounded shadow-sm">
+            <table class="table table-hover align-middle mb-0">
+                <thead class="table-light"><tr><th>Rotina</th><th>Destinatarios</th><th>Proximo envio</th><th>Ultima execucao</th><th>Status</th></tr></thead>
+                <tbody>
+                <?php foreach ($rotinas as $rotina): ?>
+                    <?php
+                        $agendamentosPainel = $agendamentosRotina[(int)$rotina['id']] ?? [];
+                        $proximaRotina = null;
+                        foreach ($agendamentosPainel as $agendamentoPainel) {
+                            if (($agendamentoPainel['ativo'] ?? 'N') === 'S' && !empty($agendamentoPainel['proxima_execucao'])) {
+                                $proximaRotina = $agendamentoPainel['proxima_execucao'];
+                                break;
+                            }
+                        }
+                        $qtdDestinatariosRotina = count($rotinaDestinatarios[(int)$rotina['id']] ?? []);
+                        $rotinaExigeAgenda = strtoupper((string)($rotina['periodicidade'] ?? 'MANUAL')) !== 'MANUAL';
+                        $temAlertaRotina = ($rotina['ativo'] ?? 'N') === 'S'
+                            && ($qtdDestinatariosRotina === 0 || ($rotinaExigeAgenda && $proximaRotina === null));
+                    ?>
+                    <tr>
+                        <td><strong><?= htmlspecialchars($rotina['nome']) ?></strong><br><small class="text-muted"><?= htmlspecialchars($rotina['descricao'] ?? '') ?></small></td>
+                        <td><?= $qtdDestinatariosRotina ?></td>
+                        <td><?= $proximaRotina ? htmlspecialchars(date('d/m/Y H:i', strtotime($proximaRotina))) : '-' ?></td>
+                        <td><?= !empty($rotina['ultima_execucao']) ? htmlspecialchars(date('d/m/Y H:i', strtotime($rotina['ultima_execucao']))) : '-' ?></td>
+                        <td><span class="badge text-bg-<?= $temAlertaRotina ? 'warning' : (($rotina['ativo'] ?? 'N') === 'S' ? 'success' : 'secondary') ?>"><?= $temAlertaRotina ? 'Requer atencao' : (($rotina['ativo'] ?? 'N') === 'S' ? 'Ativa' : 'Inativa') ?></span></td>
+                    </tr>
+                <?php endforeach; ?>
+                </tbody>
+            </table>
+        </div>
+    </section>
+
+    <div class="row g-3">
+        <div class="col-md-4"><a class="card card-body shadow-sm text-decoration-none h-100" href="?secao=destinatarios"><strong class="text-dark">Destinatarios</strong><span class="text-muted small mt-1"><?= $destinatariosAtivos ?> ativos</span></a></div>
+        <div class="col-md-4"><a class="card card-body shadow-sm text-decoration-none h-100" href="?secao=historico"><strong class="text-dark">Historico de envios</strong><span class="text-muted small mt-1"><?= $enviosComErro ?> erro(s) nos registros recentes</span></a></div>
+        <div class="col-md-4"><a class="card card-body shadow-sm text-decoration-none h-100" href="?secao=configuracoes"><strong class="text-dark">Configuracoes</strong><span class="text-muted small mt-1">Instancia, provedor e agendador</span></a></div>
+    </div>
+<?php endif; ?>
+
+<?php if (in_array($secaoWhatsapp, ['configuracoes', 'destinatarios'], true)): ?>
 <div class="row g-3 mb-3">
-    <div class="col-xl-5">
+    <?php if ($secaoWhatsapp === 'configuracoes'): ?>
+    <div class="col-12">
         <div class="card shadow-sm h-100">
             <div class="card-header">
                 <h2 class="h5 mb-0">Instancia gerencial compartilhada</h2>
@@ -623,8 +776,10 @@ require __DIR__ . '/../../layout/header.php';
             </div>
         </div>
     </div>
+    <?php endif; ?>
 
-    <div class="col-xl-7">
+    <?php if ($secaoWhatsapp === 'destinatarios'): ?>
+    <div class="col-12">
         <div class="card shadow-sm h-100">
             <div class="card-header">
                 <h2 class="h5 mb-0">Destinatarios</h2>
@@ -718,16 +873,21 @@ require __DIR__ . '/../../layout/header.php';
             </div>
         </div>
     </div>
+    <?php endif; ?>
 </div>
+<?php endif; ?>
 
+<?php if ($secaoWhatsapp === 'rotinas'): ?>
 <div class="card shadow-sm mb-3">
     <div class="card-header d-flex justify-content-between align-items-center">
         <div>
             <h2 class="h5 mb-1">Rotinas de Envio</h2>
             <p class="text-muted mb-0 small">Controle quais destinatarios recebem cada rotina e dispare envios manuais quando precisar.</p>
         </div>
+        <button class="btn btn-primary" type="button" data-bs-toggle="collapse" data-bs-target="#nova-rotina">Nova rotina</button>
     </div>
     <div class="card-body">
+        <div class="collapse" id="nova-rotina">
         <form method="post" class="row g-2 mb-3">
             <input type="hidden" name="csrf" value="<?= htmlspecialchars($csrf) ?>">
             <input type="hidden" name="acao" value="salvar_rotina">
@@ -836,6 +996,7 @@ require __DIR__ . '/../../layout/header.php';
                 <button class="btn btn-primary w-100">Cadastrar rotina</button>
             </div>
         </form>
+        </div>
 
         <div class="table-responsive">
             <table class="table table-sm table-striped align-middle">
@@ -1129,7 +1290,9 @@ require __DIR__ . '/../../layout/header.php';
         </div>
     </div>
 </div>
+<?php endif; ?>
 
+<?php if ($secaoWhatsapp === 'mensagens'): ?>
 <div class="row g-3 mb-3">
     <div class="col-xl-5">
         <div class="card shadow-sm h-100">
@@ -1263,7 +1426,9 @@ require __DIR__ . '/../../layout/header.php';
         </div>
     </div>
 </div>
+<?php endif; ?>
 
+<?php if ($secaoWhatsapp === 'historico'): ?>
 <div class="card shadow-sm">
     <div class="card-header">
         <h2 class="h5 mb-0">Historico de Envios</h2>
@@ -1307,7 +1472,15 @@ require __DIR__ . '/../../layout/header.php';
                                 'ENTREGUE' => 'Confirmada pela Evolution',
                             ][$h['entrega_status'] ?? ''] ?? ($h['status'] === 'OK' ? 'Sem confirmacao historica' : '-')) ?></td>
                             <td class="small">
-                                <?= htmlspecialchars($h['erro'] ?: ($h['resposta_api'] ?? '')) ?>
+                                <?php $detalheEnvio = trim((string)($h['erro'] ?: ($h['resposta_api'] ?? ''))); ?>
+                                <?php if ($detalheEnvio !== ''): ?>
+                                    <details>
+                                        <summary class="text-primary" style="cursor: pointer;">Detalhes</summary>
+                                        <pre class="small bg-light border rounded p-2 mt-2 mb-0 text-break" style="max-width: 34rem; max-height: 12rem; overflow: auto; white-space: pre-wrap;"><?= htmlspecialchars($detalheEnvio) ?></pre>
+                                    </details>
+                                <?php else: ?>
+                                    -
+                                <?php endif; ?>
                             </td>
                         </tr>
                     <?php endforeach; ?>
@@ -1329,6 +1502,7 @@ require __DIR__ . '/../../layout/header.php';
         </table>
     </div>
 </div>
+<?php endif; ?>
 <?php endif; ?>
 
 <?php require __DIR__ . '/../../layout/footer.php'; ?>
