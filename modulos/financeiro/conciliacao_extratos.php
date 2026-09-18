@@ -1562,6 +1562,10 @@ $dataFim = trim($_GET['data_fim'] ?? date('Y-m-d'));
 $dcFiltro = strtoupper(trim((string)($_GET['dc'] ?? '')));
 $historicoFiltro = trim((string)($_GET['historico'] ?? ''));
 $situacaoFiltro = trim((string)($_GET['situacao'] ?? 'pendentes'));
+$valorDeFiltro = trim((string)($_GET['valor_de'] ?? ''));
+$valorAteFiltro = trim((string)($_GET['valor_ate'] ?? ''));
+$valorDe = $valorDeFiltro !== '' ? abs(normalizarDecimalExtrato($valorDeFiltro)) : null;
+$valorAte = $valorAteFiltro !== '' ? abs(normalizarDecimalExtrato($valorAteFiltro)) : null;
 
 if (!in_array($dcFiltro, ['D', 'C'], true)) {
     $dcFiltro = '';
@@ -2809,6 +2813,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['acao'] ?? '') === 'importa
                     'dc' => $dcFiltro,
                     'historico' => $historicoFiltro,
                     'situacao' => $situacaoFiltro,
+                    'valor_de' => $valorDeFiltro,
+                    'valor_ate' => $valorAteFiltro,
                     'ok' => '1',
                     'importados' => $importados,
                     'duplicados' => $duplicados,
@@ -2929,6 +2935,14 @@ if ($dcFiltro !== '') {
 if ($historicoFiltro !== '') {
     $whereExtrato[] = 'e.historico LIKE ?';
     $paramsExtrato[] = '%' . $historicoFiltro . '%';
+}
+if ($valorDe !== null) {
+    $whereExtrato[] = 'ABS(e.valor) >= ?';
+    $paramsExtrato[] = $valorDe;
+}
+if ($valorAte !== null) {
+    $whereExtrato[] = 'ABS(e.valor) <= ?';
+    $paramsExtrato[] = $valorAte;
 }
 
 $whereExtratoSql = implode(' AND ', $whereExtrato);
@@ -3065,7 +3079,9 @@ if (in_array($exportarExtrato, ['csv', 'pdf'], true)) {
             ' ate ' . ($dataFim !== '' ? date('d/m/Y', strtotime($dataFim)) : 'fim'),
         'Filtro: D/C ' . ($dcFiltro !== '' ? $dcFiltro : 'Todos') .
             ' | Historico: ' . ($historicoFiltro !== '' ? $historicoFiltro : 'Todos') .
-            ' | Situacao: ' . ucfirst($situacaoFiltro),
+            ' | Situacao: ' . ucfirst($situacaoFiltro) .
+            ' | Valor: ' . ($valorDe !== null ? moedaExtratoBanco($valorDe) : 'inicio') .
+            ' ate ' . ($valorAte !== null ? moedaExtratoBanco($valorAte) : 'fim'),
         'Quantidade: ' . (int)$totalExtratoFiltrado['qtd'] .
             ' | Saldo C-D: ' . moedaExtratoBanco((float)$totalExtratoFiltrado['total']) .
             ' | Creditos: ' . moedaExtratoBanco((float)$totalExtratoFiltrado['total_credito']) .
@@ -3145,6 +3161,14 @@ if ($dcFiltro !== '') {
 if ($historicoFiltro !== '') {
     $whereBnc[] = 'b.HISTMOV LIKE ?';
     $paramsBnc[] = '%' . $historicoFiltro . '%';
+}
+if ($valorDe !== null) {
+    $whereBnc[] = 'ABS(b.VALORMOV) >= ?';
+    $paramsBnc[] = $valorDe;
+}
+if ($valorAte !== null) {
+    $whereBnc[] = 'ABS(b.VALORMOV) <= ?';
+    $paramsBnc[] = $valorAte;
 }
 $whereBncSql = implode(' AND ', $whereBnc);
 
@@ -3646,61 +3670,6 @@ require '../../layout/header.php';
         Importacao bloqueada para esta empresa/conta: <?= htmlspecialchars($bloqueioImportacaoConta) ?>
     </div>
 <?php endif; ?>
-
-<section class="mb-4">
-    <div class="bg-white border rounded-2 shadow-sm p-3">
-        <form method="GET" class="row g-3 align-items-end">
-            <div class="col-lg-3">
-                <label class="form-label">Conta</label>
-                <select name="cbcontador" class="form-select">
-                    <option value="">Todas</option>
-                    <?php foreach ($contas as $conta): ?>
-                        <option value="<?= (int)$conta['CBCONTADOR'] ?>" <?= $cbcontador === (int)$conta['CBCONTADOR'] ? 'selected' : '' ?>>
-                            <?= (int)$conta['CBCONTADOR'] ?> - <?= htmlspecialchars($conta['nome_conta']) ?>
-                        </option>
-                    <?php endforeach; ?>
-                </select>
-            </div>
-            <div class="col-md-3 col-lg-2">
-                <label class="form-label">Data inicial</label>
-                <input type="date" name="data_ini" class="form-control" value="<?= htmlspecialchars($dataIni) ?>">
-            </div>
-            <div class="col-md-3 col-lg-2">
-                <label class="form-label">Data final</label>
-                <input type="date" name="data_fim" class="form-control" value="<?= htmlspecialchars($dataFim) ?>">
-            </div>
-            <div class="col-md-3 col-lg-2">
-                <label class="form-label">D/C</label>
-                <select name="dc" class="form-select">
-                    <option value="">Debito e credito</option>
-                    <option value="D" <?= $dcFiltro === 'D' ? 'selected' : '' ?>>Debito</option>
-                    <option value="C" <?= $dcFiltro === 'C' ? 'selected' : '' ?>>Credito</option>
-                </select>
-            </div>
-            <div class="col-lg-3">
-                <label class="form-label">Historico</label>
-                <input type="text" name="historico" class="form-control" value="<?= htmlspecialchars($historicoFiltro) ?>" placeholder="Buscar no historico">
-            </div>
-            <div class="col-md-3 col-lg-2">
-                <label class="form-label">Situacao</label>
-                <select name="situacao" class="form-select">
-                    <option value="pendentes" <?= $situacaoFiltro === 'pendentes' ? 'selected' : '' ?>>Nao conciliados</option>
-                    <option value="conciliados" <?= $situacaoFiltro === 'conciliados' ? 'selected' : '' ?>>Conciliados</option>
-                    <option value="todos" <?= $situacaoFiltro === 'todos' ? 'selected' : '' ?>>Todos</option>
-                </select>
-            </div>
-            <div class="col-md-3 col-lg-1">
-                <button type="submit" class="btn btn-primary w-100">Filtrar</button>
-            </div>
-            <div class="col-md-3 col-lg-1">
-                <a class="btn btn-outline-success w-100" href="conciliacao_extratos.php?<?= htmlspecialchars(queryConciliacaoExtratos(['exportar' => 'csv'])) ?>">CSV</a>
-            </div>
-            <div class="col-md-3 col-lg-1">
-                <a class="btn btn-outline-danger w-100" href="conciliacao_extratos.php?<?= htmlspecialchars(queryConciliacaoExtratos(['exportar' => 'pdf'])) ?>">PDF</a>
-            </div>
-        </form>
-    </div>
-</section>
 
 <section class="mb-4">
     <div class="bg-white border rounded-2 shadow-sm p-3">
@@ -4326,6 +4295,72 @@ function validarLancamentoBnc001Extrato() {
     return confirm('Lancar os extratos selecionados no BNC001 e conciliar automaticamente?');
 }
 </script>
+
+<section class="mb-4">
+    <div class="bg-white border rounded-2 shadow-sm p-3">
+        <form method="GET" class="row g-3 align-items-end">
+            <div class="col-lg-3">
+                <label class="form-label">Conta</label>
+                <select name="cbcontador" class="form-select">
+                    <option value="">Todas</option>
+                    <?php foreach ($contas as $conta): ?>
+                        <option value="<?= (int)$conta['CBCONTADOR'] ?>" <?= $cbcontador === (int)$conta['CBCONTADOR'] ? 'selected' : '' ?>>
+                            <?= (int)$conta['CBCONTADOR'] ?> - <?= htmlspecialchars($conta['nome_conta']) ?>
+                        </option>
+                    <?php endforeach; ?>
+                </select>
+            </div>
+            <div class="col-md-3 col-lg-2">
+                <label class="form-label">Data inicial</label>
+                <input type="date" name="data_ini" class="form-control" value="<?= htmlspecialchars($dataIni) ?>">
+            </div>
+            <div class="col-md-3 col-lg-2">
+                <label class="form-label">Data final</label>
+                <input type="date" name="data_fim" class="form-control" value="<?= htmlspecialchars($dataFim) ?>">
+            </div>
+            <div class="col-md-3 col-lg-2">
+                <label class="form-label">D/C</label>
+                <select name="dc" class="form-select">
+                    <option value="">Debito e credito</option>
+                    <option value="D" <?= $dcFiltro === 'D' ? 'selected' : '' ?>>Debito</option>
+                    <option value="C" <?= $dcFiltro === 'C' ? 'selected' : '' ?>>Credito</option>
+                </select>
+            </div>
+            <div class="col-lg-3">
+                <label class="form-label">Historico</label>
+                <input type="text" name="historico" class="form-control" value="<?= htmlspecialchars($historicoFiltro) ?>" placeholder="Buscar no historico">
+            </div>
+            <div class="col-md-3 col-lg-2">
+                <label class="form-label">Situacao</label>
+                <select name="situacao" class="form-select">
+                    <option value="pendentes" <?= $situacaoFiltro === 'pendentes' ? 'selected' : '' ?>>Nao conciliados</option>
+                    <option value="conciliados" <?= $situacaoFiltro === 'conciliados' ? 'selected' : '' ?>>Conciliados</option>
+                    <option value="todos" <?= $situacaoFiltro === 'todos' ? 'selected' : '' ?>>Todos</option>
+                </select>
+            </div>
+            <div class="col-md-3 col-lg-2">
+                <label class="form-label">Valor de</label>
+                <input type="text" name="valor_de" class="form-control" inputmode="decimal" value="<?= htmlspecialchars($valorDeFiltro) ?>" placeholder="0,00">
+            </div>
+            <div class="col-md-3 col-lg-2">
+                <label class="form-label">Valor ate</label>
+                <input type="text" name="valor_ate" class="form-control" inputmode="decimal" value="<?= htmlspecialchars($valorAteFiltro) ?>" placeholder="0,00">
+            </div>
+            <div class="col-md-3 col-lg-1">
+                <button type="submit" class="btn btn-primary w-100">Filtrar</button>
+            </div>
+            <div class="col-md-3 col-lg-2">
+                <a class="btn btn-outline-secondary w-100" href="conciliacao_extratos.php">Limpar filtros</a>
+            </div>
+            <div class="col-md-3 col-lg-1">
+                <a class="btn btn-outline-success w-100" href="conciliacao_extratos.php?<?= htmlspecialchars(queryConciliacaoExtratos(['exportar' => 'csv'])) ?>">CSV</a>
+            </div>
+            <div class="col-md-3 col-lg-1">
+                <a class="btn btn-outline-danger w-100" href="conciliacao_extratos.php?<?= htmlspecialchars(queryConciliacaoExtratos(['exportar' => 'pdf'])) ?>">PDF</a>
+            </div>
+        </form>
+    </div>
+</section>
 
 <section class="mb-4 comparacao-extratos-layout">
     <div class="row g-3">
