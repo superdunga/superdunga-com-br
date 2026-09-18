@@ -55,6 +55,47 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['arquivo'])) {
 
             $linha = 0;
             $importados = 0;
+            $atualizados = 0;
+            $ambiguos = 0;
+
+            $checkIdentificador = $pdo_master->prepare("
+                SELECT id
+                FROM armazem_conciliacao_recebimentos
+                WHERE empresa_id = ?
+                  AND identificador = ?
+                LIMIT 1
+            ");
+            $checkExtratoExistente = $pdo_master->prepare("
+                SELECT id
+                FROM armazem_conciliacao_recebimentos
+                WHERE empresa_id = ?
+                  AND origem = 'EXTRATO_BANCARIO'
+                  AND DATE(data_venda) = ?
+                  AND ABS(valor_bruto - ?) < 0.005
+                  AND LOWER(TRIM(COALESCE(pagador, ''))) = LOWER(TRIM(?))
+                ORDER BY id
+                LIMIT 2
+            ");
+            $atualizarRecebivelExtrato = $pdo_master->prepare("
+                UPDATE armazem_conciliacao_recebimentos
+                SET origem = ?,
+                    data_venda = ?,
+                    valor_bruto = ?,
+                    valor_desconto = 0,
+                    valor_liquido = ?,
+                    identificador = ?,
+                    descricao = 'PAGSEGURO PIX',
+                    pagador = ?,
+                    status = 'LIQUIDADA',
+                    arquivo_origem = ?,
+                    CMCONTADOR = ?,
+                    tipo_operacao = 'P',
+                    nsu_transacao = ?,
+                    numero_estabelecimento = ''
+                WHERE id = ?
+                  AND empresa_id = ?
+                  AND origem = 'EXTRATO_BANCARIO'
+            ");
 
             while (($dados = fgetcsv($handle, 0, ';')) !== false) {
 
@@ -81,9 +122,33 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['arquivo'])) {
                 $identificador = $codigo;
 
                 // DUPLICIDADE
-                $check = $pdo_master->prepare("SELECT id FROM armazem_conciliacao_recebimentos WHERE empresa_id = ? AND identificador = ?");
-                $check->execute([$empresa_id, $identificador]);
-                if ($check->fetch()) continue;
+                $checkIdentificador->execute([$empresa_id, $identificador]);
+                if ($checkIdentificador->fetchColumn()) continue;
+
+                $dataComparacao = date('Y-m-d', strtotime($data_formatada));
+                $checkExtratoExistente->execute([$empresa_id, $dataComparacao, $valor_float, $descricao]);
+                $recebiveisExtrato = $checkExtratoExistente->fetchAll(PDO::FETCH_COLUMN);
+                if (count($recebiveisExtrato) > 1) {
+                    $ambiguos++;
+                    continue;
+                }
+                if (count($recebiveisExtrato) === 1) {
+                    $atualizarRecebivelExtrato->execute([
+                        $regraImportacao['origem'],
+                        $data_formatada,
+                        $valor_float,
+                        $valor_float,
+                        $identificador,
+                        $descricao,
+                        $nomeArquivo,
+                        (int)$regraImportacao['cm_pix'],
+                        $codigo,
+                        (int)$recebiveisExtrato[0],
+                        $empresa_id,
+                    ]);
+                    $atualizados += $atualizarRecebivelExtrato->rowCount();
+                    continue;
+                }
 
                 // INSERT 100% ALINHADO
                 $stmt = $pdo_master->prepare("
@@ -136,8 +201,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['arquivo'])) {
             fclose($handle);
 
             echo "<div class='alert alert-success'>
-                    Importação concluída! Registros importados: <strong>{$importados}</strong>
+                    Importação concluída! Registros importados: <strong>{$importados}</strong>.
+                    Recebíveis do extrato atualizados: <strong>{$atualizados}</strong>.
                   </div>";
+            if ($ambiguos > 0) {
+                echo "<div class='alert alert-warning'>
+                        Registros não importados por possuírem mais de um recebível do extrato compatível: <strong>{$ambiguos}</strong>.
+                      </div>";
+            }
         }
     }
 }
