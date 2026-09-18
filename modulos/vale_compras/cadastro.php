@@ -100,8 +100,25 @@ if ($fBusca !== '') {
 }
 
 $vales = [];
+$valesResumoCadastro = [];
 $totaisVales = ['saldo_inicial' => 0.0, 'compras' => 0.0, 'vendas' => 0.0, 'saldo' => 0.0];
 if ($permitido && $empresaId === 2) {
+    $stmt = $pdo->prepare("
+        SELECT v.id, v.identificacao,
+               v.saldo_inicial
+               + COALESCE(SUM(CASE WHEN m.tipo = 'COMPRA' THEN m.valor_nominal ELSE 0 END), 0)
+               - COALESCE(SUM(CASE WHEN m.tipo = 'VENDA' THEN m.valor ELSE 0 END), 0) AS saldo_atual
+        FROM vale_compras_vales v
+        LEFT JOIN vale_compras_movimentos m ON m.vale_id = v.id AND m.empresa_id = v.empresa_id
+        WHERE v.empresa_id = ?
+          AND v.status <> 'ENCERRADO'
+        GROUP BY v.id, v.identificacao, v.saldo_inicial
+        ORDER BY v.identificacao ASC, v.id ASC
+        LIMIT 300
+    ");
+    $stmt->execute([$empresaId]);
+    $valesResumoCadastro = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
     $stmt = $pdo->prepare("
         SELECT v.*,
                COALESCE(SUM(CASE WHEN m.tipo = 'COMPRA' THEN m.valor_nominal ELSE 0 END), 0) AS total_compras,
@@ -294,6 +311,29 @@ require '../../layout/header.php';
                     <?php endif; ?>
                 </div>
             <?php endif; ?>
+            <div class="vc-scroll mt-4">
+                <table class="vc-table">
+                    <thead>
+                        <tr>
+                            <th>Vale</th>
+                            <th>Identificação</th>
+                            <th class="text-end">Saldo atual</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <?php foreach ($valesResumoCadastro as $valeResumo): ?>
+                            <tr>
+                                <td><a href="cadastro.php?editar=<?= (int)$valeResumo['id'] ?>">#<?= (int)$valeResumo['id'] ?></a></td>
+                                <td><?= vcH($valeResumo['identificacao']) ?></td>
+                                <td class="text-end fw-semibold"><?= vcMoeda($valeResumo['saldo_atual']) ?></td>
+                            </tr>
+                        <?php endforeach; ?>
+                        <?php if (!$valesResumoCadastro): ?>
+                            <tr><td colspan="3" class="text-center text-muted py-3">Nenhum vale-compra aberto.</td></tr>
+                        <?php endif; ?>
+                    </tbody>
+                </table>
+            </div>
         </section>
 
         <section class="vc-card">
