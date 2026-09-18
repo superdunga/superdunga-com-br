@@ -626,10 +626,15 @@ function gerarIdentificadorNaturalExtrato(string $chaveNatural, int $ocorrenciaN
     return sha1('natural|' . $chaveNatural . '|' . max(1, $ocorrenciaNatural));
 }
 
-function gerarHashIdentificadorExternoExtrato(string $identificador): ?string
+function gerarHashIdentificadorExternoExtrato(string $identificador, string $escopo = ''): ?string
 {
     $identificador = mb_strtolower(trim($identificador));
-    return $identificador !== '' ? sha1($identificador) : null;
+    if ($identificador === '') {
+        return null;
+    }
+
+    $escopo = mb_strtolower(trim($escopo));
+    return sha1($escopo !== '' ? $escopo . '|' . $identificador : $identificador);
 }
 
 function detectarDelimitadorCsv(string $linha): string
@@ -864,6 +869,11 @@ function lerOfxExtrato(string $arquivo): array
         $codigoBanco = trim($codigoBancoMatch[1]);
     }
     $sicoob = $instituicao === 'banco_cooperativo_do_brasil' || $codigoBanco === '756';
+    $contaOfx = '';
+    if (preg_match('/<ACCTID>([^<\r\n]+)/i', $conteudo, $contaOfxMatch)) {
+        $contaOfx = trim($contaOfxMatch[1]);
+    }
+    $escopoIdentificador = $sicoob ? implode('|', ['sicoob', $codigoBanco, $contaOfx]) : '';
 
     preg_match_all('/<STMTTRN>(.*?)<\/STMTTRN>/is', $conteudo, $matches);
     $linhas = [];
@@ -903,6 +913,7 @@ function lerOfxExtrato(string $arquivo): array
             'valor' => $valor,
             'tipo' => in_array($tipoOfx, ['CREDIT', 'DEP', 'DIRECTDEP', 'INT'], true) ? 'C' : 'D',
             'identificador' => normalizarTextoExtrato($capturar('FITID')),
+            'identificador_escopo' => $escopoIdentificador,
         ];
     }
 
@@ -1058,7 +1069,10 @@ function importarLinhasExtratoBanco(PDO $pdo, int $empresaId, int $usuarioId, in
         $ocorrenciaNatural = $ocorrenciasNaturaisImportacao[$chaveNatural];
         $datasImportacao[date('Y-m-d', strtotime((string)$linha['data_movimento']))] = true;
         $identificadorOriginal = (string)$linha['identificador'];
-        $identificadorExternoHash = gerarHashIdentificadorExternoExtrato($identificadorOriginal);
+        $identificadorExternoHash = gerarHashIdentificadorExternoExtrato(
+            $identificadorOriginal,
+            (string)($linha['identificador_escopo'] ?? '')
+        );
         $identificadorNatural = gerarIdentificadorNaturalExtrato($chaveNatural, $ocorrenciaNatural);
         $identificador = $identificadorOriginal !== ''
             ? gerarIdentificadorExtrato($empresaId, $cbcontador, (string)$linha['data_movimento'], $valor, $tipo, $historicoLinha, $documentoLinha, $identificadorOriginal)
@@ -2630,7 +2644,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['acao'] ?? '') === 'importa
                     $ocorrenciaNatural = $ocorrenciasNaturaisImportacao[$chaveNatural];
                     $datasImportacao[date('Y-m-d', strtotime((string)$linha['data_movimento']))] = true;
                     $identificadorOriginal = (string)$linha['identificador'];
-                    $identificadorExternoHash = gerarHashIdentificadorExternoExtrato($identificadorOriginal);
+                    $identificadorExternoHash = gerarHashIdentificadorExternoExtrato(
+                        $identificadorOriginal,
+                        (string)($linha['identificador_escopo'] ?? '')
+                    );
                     $identificadorNatural = gerarIdentificadorNaturalExtrato($chaveNatural, $ocorrenciaNatural);
                     $identificador = $identificadorOriginal !== ''
                         ? gerarIdentificadorExtrato($empresaId, $cbcontadorPost, (string)$linha['data_movimento'], $valor, $tipo, $historicoLinha, $documentoLinha, $identificadorOriginal)
