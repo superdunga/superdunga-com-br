@@ -1069,6 +1069,62 @@ try {
         $mensagemOk = 'Escala e valores salvos.';
     }
 
+    if ($acao === 'excluir_acerto') {
+        if (!$podeVerDetalhesBeneficios) {
+            throw new RuntimeException('Somente usuarios MASTER ou GERENTE podem excluir acertos zerados.');
+        }
+
+        $acertoIdExcluir = (int)($_POST['acerto_id'] ?? 0);
+        $pdo_master->beginTransaction();
+        try {
+            $stmtExcluir = $pdo_master->prepare("
+                SELECT a.id, a.status,
+                       COALESCE((SELECT SUM(i.total_geral) FROM colaboradores_vales_itens i WHERE i.empresa_id = a.empresa_id AND i.acerto_id = a.id), 0) AS total_geral,
+                       (SELECT COUNT(*) FROM colaboradores_vales_dias d WHERE d.empresa_id = a.empresa_id AND d.acerto_id = a.id) AS total_dias,
+                       (SELECT COUNT(*) FROM colaboradores_vales_status_historico h WHERE h.empresa_id = a.empresa_id AND h.acerto_id = a.id) AS total_historico
+                FROM colaboradores_vales_acertos a
+                WHERE a.empresa_id = ?
+                  AND a.referencia = ?
+                  AND a.id = ?
+                FOR UPDATE
+            ");
+            $stmtExcluir->execute([$empresaId, $referencia, $acertoIdExcluir]);
+            $acertoExcluir = $stmtExcluir->fetch(PDO::FETCH_ASSOC);
+            if (!$acertoExcluir) {
+                throw new RuntimeException('Acerto nao encontrado.');
+            }
+            if ((string)$acertoExcluir['status'] !== 'ABERTO') {
+                throw new RuntimeException('Somente acertos abertos podem ser excluidos.');
+            }
+            if (abs((float)$acertoExcluir['total_geral']) > 0.0001 || (int)$acertoExcluir['total_dias'] > 0) {
+                throw new RuntimeException('Somente acertos zerados e sem dias marcados podem ser excluidos.');
+            }
+            if ((int)$acertoExcluir['total_historico'] > 0) {
+                throw new RuntimeException('Acertos com historico de status nao podem ser excluidos.');
+            }
+
+            $stmt = $pdo_master->prepare("DELETE FROM colaboradores_vales_dias WHERE empresa_id = ? AND acerto_id = ?");
+            $stmt->execute([$empresaId, $acertoIdExcluir]);
+            $stmt = $pdo_master->prepare("DELETE FROM colaboradores_vales_itens WHERE empresa_id = ? AND acerto_id = ?");
+            $stmt->execute([$empresaId, $acertoIdExcluir]);
+            $stmt = $pdo_master->prepare("DELETE FROM colaboradores_vales_status_historico WHERE empresa_id = ? AND acerto_id = ?");
+            $stmt->execute([$empresaId, $acertoIdExcluir]);
+            $stmt = $pdo_master->prepare("DELETE FROM colaboradores_vales_acertos WHERE empresa_id = ? AND id = ? AND status = 'ABERTO'");
+            $stmt->execute([$empresaId, $acertoIdExcluir]);
+            if ($stmt->rowCount() !== 1) {
+                throw new RuntimeException('O acerto foi alterado por outro usuario. Atualize a pagina.');
+            }
+
+            $pdo_master->commit();
+            $mensagemOk = 'Acerto zerado excluido.';
+        } catch (Throwable $e) {
+            if ($pdo_master->inTransaction()) {
+                $pdo_master->rollBack();
+            }
+            throw $e;
+        }
+    }
+
     if (in_array($acao, ['fechar', 'pagar', 'reabrir'], true)) {
         $acerto = buscarAcertoVales($pdo_master, $empresaId, (int)($_POST['acerto_id'] ?? 0), $referencia);
         if (!$acerto) {
@@ -1191,6 +1247,16 @@ foreach ($itens as $item) {
 }
 
 $podeEditar = $acertoAtual && ($acertoAtual['status'] ?? '') === 'ABERTO';
+$podeExcluirAcerto = false;
+if ($podeVerDetalhesBeneficios && $podeEditar && abs((float)$totais['geral']) <= 0.0001 && (int)$totais['dias'] === 0) {
+    $stmtHistoricoAcerto = $pdo_master->prepare("
+        SELECT COUNT(*)
+        FROM colaboradores_vales_status_historico
+        WHERE empresa_id = ? AND acerto_id = ?
+    ");
+    $stmtHistoricoAcerto->execute([$empresaId, (int)$acertoAtual['id']]);
+    $podeExcluirAcerto = (int)$stmtHistoricoAcerto->fetchColumn() === 0;
+}
 
 if ($acertoAtual && in_array(($_GET['recibo'] ?? ''), ['empresa', 'colaboradores'], true)) {
     $tipoRecibo = (string)$_GET['recibo'];
@@ -1456,6 +1522,14 @@ require '../../layout/header.php';
                         <input type="hidden" name="acerto_id" value="<?= (int)$acertoAtual['id'] ?>">
                         <input type="hidden" name="acao" value="atualizar_colaboradores">
                         <button class="btn btn-outline-secondary btn-sm">Atualizar colaboradores</button>
+                    </form>
+                <?php endif; ?>
+                <?php if ($podeExcluirAcerto): ?>
+                    <form method="post" onsubmit="return confirm('Excluir definitivamente este acerto zerado?');">
+                        <input type="hidden" name="referencia" value="<?= htmlspecialchars($referencia) ?>">
+                        <input type="hidden" name="acerto_id" value="<?= (int)$acertoAtual['id'] ?>">
+                        <input type="hidden" name="acao" value="excluir_acerto">
+                        <button class="btn btn-outline-danger btn-sm">Excluir acerto zerado</button>
                     </form>
                 <?php endif; ?>
                 <?php if ($podeEditar): ?>
