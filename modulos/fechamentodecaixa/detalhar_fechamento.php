@@ -6,6 +6,7 @@ $data = $_GET['data'] ?? '';
 $usuario = $_GET['user'] ?? '';
 $empresa_id = (int)$_SESSION['empresa_id'];
 $produtoFiltro = trim((string)($_GET['produto'] ?? ''));
+$clienteFiltro = trim((string)($_GET['cliente'] ?? ''));
 $vendaPdfIndividual = (int)($_GET['venda'] ?? 0);
 
 if (!$data || !$usuario) {
@@ -123,7 +124,7 @@ function enviarPdfDetalheCaixa(array $paginas, string $arquivo): void
     exit;
 }
 
-function gerarPdfDetalheFechamentoCaixa(array $vendasRelatorio, array $itensPorVenda, string $data, string $usuario, string $dataInicio, string $dataFim, string $produtoFiltro, int $vendaIndividual, float $totalRelatorio): void
+function gerarPdfDetalheFechamentoCaixa(array $vendasRelatorio, array $itensPorVenda, string $data, string $usuario, string $dataInicio, string $dataFim, string $produtoFiltro, string $clienteFiltro, int $vendaIndividual, float $totalRelatorio): void
 {
     $largura = 842;
     $altura = 595;
@@ -132,7 +133,7 @@ function gerarPdfDetalheFechamentoCaixa(array $vendasRelatorio, array $itensPorV
     $conteudo = '';
     $y = 0.0;
 
-    $novaPagina = static function () use (&$conteudo, &$y, $largura, $altura, $margem, $data, $usuario, $dataInicio, $dataFim, $produtoFiltro, $vendaIndividual, $totalRelatorio): void {
+    $novaPagina = static function () use (&$conteudo, &$y, $largura, $altura, $margem, $data, $usuario, $dataInicio, $dataFim, $produtoFiltro, $clienteFiltro, $vendaIndividual, $totalRelatorio): void {
         $conteudo = '';
         $conteudo .= "0.07 0.20 0.42 rg\n";
         $conteudo .= retanguloPdfDetalheCaixa(0, $altura - 70, $largura, 70);
@@ -146,7 +147,10 @@ function gerarPdfDetalheFechamentoCaixa(array $vendasRelatorio, array $itensPorV
             $conteudo .= textoCmdPdfDetalheCaixa($largura - 250, $altura - 61, 8, textoPdfDetalheCaixa('Produto: ' . $produtoFiltro, 45));
         }
         $conteudo .= "0 0 0 rg\n";
-        $y = $altura - 94;
+        if ($clienteFiltro !== '') {
+            $conteudo .= textoCmdPdfDetalheCaixa($margem, $altura - 84, 8, textoPdfDetalheCaixa('Cliente: ' . $clienteFiltro, 90));
+        }
+        $y = $altura - ($clienteFiltro !== '' ? 108 : 94);
     };
 
     $salvarPagina = static function () use (&$paginas, &$conteudo, $largura, $altura): void {
@@ -349,6 +353,15 @@ if ($produtoFiltroNormalizado !== '') {
     }
 }
 
+$clienteFiltroNormalizado = normalizarBuscaDetalheCaixa($clienteFiltro);
+if ($clienteFiltroNormalizado !== '') {
+    $vendasRelatorio = array_values(array_filter($vendasRelatorio, static function ($vendaFiltro) use ($clienteFiltroNormalizado) {
+        $codigo = (string)($vendaFiltro['CLIENTE'] ?? '');
+        $nome = normalizarBuscaDetalheCaixa((string)($vendaFiltro['nome_cliente'] ?? ''));
+        return $codigo === $clienteFiltroNormalizado || strpos($nome, $clienteFiltroNormalizado) !== false;
+    }));
+}
+
 if ($vendaPdfIndividual > 0) {
     $vendasRelatorio = array_values(array_filter($vendasRelatorio, static function ($vendaFiltro) use ($vendaPdfIndividual) {
         return (int)($vendaFiltro['VENDACONTADOR'] ?? 0) === $vendaPdfIndividual;
@@ -366,7 +379,7 @@ foreach ($vendasRelatorio as $vendaTotalRelatorio) {
 }
 
 if (($_GET['exportar_vendas'] ?? '') === 'pdf') {
-    gerarPdfDetalheFechamentoCaixa($vendasRelatorio, $itensPorVenda, $data, (string)$usuario, $data_inicio, $data_fim, $produtoFiltro, $vendaPdfIndividual, $total_venda_relatorio);
+    gerarPdfDetalheFechamentoCaixa($vendasRelatorio, $itensPorVenda, $data, (string)$usuario, $data_inicio, $data_fim, $produtoFiltro, $clienteFiltro, $vendaPdfIndividual, $total_venda_relatorio);
 ?>
 <style>
     .relatorio-vendas-caixa {
@@ -466,6 +479,9 @@ if (($_GET['exportar_vendas'] ?? '') === 'pdf') {
         <?php if ($produtoFiltro !== ''): ?>
             <div>Produto: <?= htmlspecialchars($produtoFiltro) ?></div>
         <?php endif; ?>
+        <?php if ($clienteFiltro !== ''): ?>
+            <div>Cliente: <?= htmlspecialchars($clienteFiltro) ?></div>
+        <?php endif; ?>
         <?php if ($vendaPdfIndividual > 0): ?>
             <div>Venda: <?= (int)$vendaPdfIndividual ?></div>
         <?php endif; ?>
@@ -480,17 +496,21 @@ if (($_GET['exportar_vendas'] ?? '') === 'pdf') {
             <?php if ($vendaPdfIndividual > 0): ?>
                 <input type="hidden" name="venda" value="<?= (int)$vendaPdfIndividual ?>">
             <?php endif; ?>
-            <div class="col-md-7">
+            <div class="col-md-4">
                 <label class="form-label mb-1">Produto</label>
                 <input type="text" name="produto" value="<?= htmlspecialchars($produtoFiltro) ?>" class="form-control form-control-sm" placeholder="Ex.: CERV. 473ML BRAHMA">
+            </div>
+            <div class="col-md-3">
+                <label class="form-label mb-1">Cliente</label>
+                <input type="text" name="cliente" value="<?= htmlspecialchars($clienteFiltro) ?>" class="form-control form-control-sm" placeholder="Nome ou codigo">
             </div>
             <div class="col-md-5 d-flex gap-2">
                 <button type="submit" class="btn btn-sm btn-outline-primary">Filtrar</button>
                 <a href="detalhar_fechamento.php?data=<?= urlencode($data) ?>&user=<?= urlencode($usuario) ?>&exportar_vendas=pdf" class="btn btn-sm btn-outline-secondary">Completo</a>
-                <a href="detalhar_fechamento.php?data=<?= urlencode($data) ?>&user=<?= urlencode($usuario) ?>&exportar_vendas=pdf<?= $vendaPdfIndividual > 0 ? '&venda=' . (int)$vendaPdfIndividual : '' ?><?= $produtoFiltro !== '' ? '&produto=' . urlencode($produtoFiltro) : '' ?>" class="btn btn-sm btn-primary">Baixar PDF</a>
+                <a href="detalhar_fechamento.php?data=<?= urlencode($data) ?>&user=<?= urlencode($usuario) ?>&exportar_vendas=pdf<?= $vendaPdfIndividual > 0 ? '&venda=' . (int)$vendaPdfIndividual : '' ?><?= $produtoFiltro !== '' ? '&produto=' . urlencode($produtoFiltro) : '' ?><?= $clienteFiltro !== '' ? '&cliente=' . urlencode($clienteFiltro) : '' ?>" class="btn btn-sm btn-primary">Baixar PDF</a>
             </div>
         </form>
-        <a href="detalhar_fechamento.php?data=<?= urlencode($data) ?>&user=<?= urlencode($usuario) ?>" class="btn btn-sm btn-outline-secondary">Voltar</a>
+        <a href="detalhar_fechamento.php?data=<?= urlencode($data) ?>&user=<?= urlencode($usuario) ?><?= $produtoFiltro !== '' ? '&produto=' . urlencode($produtoFiltro) : '' ?><?= $clienteFiltro !== '' ? '&cliente=' . urlencode($clienteFiltro) : '' ?>" class="btn btn-sm btn-outline-secondary">Voltar</a>
     </div>
 
     <?php if (empty($vendasRelatorio)): ?>
@@ -562,7 +582,7 @@ require '../../layout/header.php';
         <small>Data: <?php echo date('d/m/Y', strtotime($data)); ?> | Operador: <?php echo $usuario; ?></small>
         </div>
         <a
-            href="detalhar_fechamento.php?data=<?= urlencode($data) ?>&user=<?= urlencode($usuario) ?>&exportar_vendas=pdf<?= $produtoFiltro !== '' ? '&produto=' . urlencode($produtoFiltro) : '' ?>"
+            href="detalhar_fechamento.php?data=<?= urlencode($data) ?>&user=<?= urlencode($usuario) ?>&exportar_vendas=pdf<?= $produtoFiltro !== '' ? '&produto=' . urlencode($produtoFiltro) : '' ?><?= $clienteFiltro !== '' ? '&cliente=' . urlencode($clienteFiltro) : '' ?>"
             class="btn btn-sm btn-outline-primary"
         >
             Exportar vendas PDF
@@ -579,20 +599,24 @@ require '../../layout/header.php';
         <form method="get" class="row g-2 align-items-end mb-3">
             <input type="hidden" name="data" value="<?= htmlspecialchars($data) ?>">
             <input type="hidden" name="user" value="<?= htmlspecialchars($usuario) ?>">
-            <div class="col-md-7">
+            <div class="col-md-4">
                 <label class="form-label mb-1">Produto</label>
                 <input type="text" name="produto" value="<?= htmlspecialchars($produtoFiltro) ?>" class="form-control form-control-sm" placeholder="Ex.: CERV. 473ML BRAHMA">
+            </div>
+            <div class="col-md-3">
+                <label class="form-label mb-1">Cliente</label>
+                <input type="text" name="cliente" value="<?= htmlspecialchars($clienteFiltro) ?>" class="form-control form-control-sm" placeholder="Nome ou codigo">
             </div>
             <div class="col-md-5 d-flex gap-2">
                 <button type="submit" class="btn btn-sm btn-outline-primary">Filtrar</button>
                 <a href="detalhar_fechamento.php?data=<?= urlencode($data) ?>&user=<?= urlencode($usuario) ?>" class="btn btn-sm btn-outline-secondary">Completo</a>
-                <a href="detalhar_fechamento.php?data=<?= urlencode($data) ?>&user=<?= urlencode($usuario) ?>&exportar_vendas=pdf<?= $produtoFiltro !== '' ? '&produto=' . urlencode($produtoFiltro) : '' ?>" class="btn btn-sm btn-outline-success">PDF</a>
+                <a href="detalhar_fechamento.php?data=<?= urlencode($data) ?>&user=<?= urlencode($usuario) ?>&exportar_vendas=pdf<?= $produtoFiltro !== '' ? '&produto=' . urlencode($produtoFiltro) : '' ?><?= $clienteFiltro !== '' ? '&cliente=' . urlencode($clienteFiltro) : '' ?>" class="btn btn-sm btn-outline-success">PDF</a>
             </div>
         </form>
 
-        <?php if ($produtoFiltro !== ''): ?>
+        <?php if ($produtoFiltro !== '' || $clienteFiltro !== ''): ?>
             <div class="alert alert-info py-2">
-                Exibindo vendas com produto contendo: <strong><?= htmlspecialchars($produtoFiltro) ?></strong>
+                Exibindo vendas<?php if ($clienteFiltro !== ''): ?> do cliente <strong><?= htmlspecialchars($clienteFiltro) ?></strong><?php endif; ?><?php if ($produtoFiltro !== ''): ?> com produto contendo <strong><?= htmlspecialchars($produtoFiltro) ?></strong><?php endif; ?>
             </div>
         <?php endif; ?>
 
