@@ -110,7 +110,7 @@ function retanguloPdfEnergia(float $x, float $y, float $w, float $h): string
     return number_format($x, 2, '.', '') . ' ' . number_format($y, 2, '.', '') . ' ' . number_format($w, 2, '.', '') . ' ' . number_format($h, 2, '.', '') . " re f\n";
 }
 
-function enviarPdfEnergia(string $conteudo, string $arquivo): void
+function montarPdfEnergia(string $conteudo): string
 {
     $largura = 595;
     $altura = 842;
@@ -137,6 +137,85 @@ function enviarPdfEnergia(string $conteudo, string $arquivo): void
     }
     $pdf .= "trailer\n<< /Size " . (count($objetos) + 1) . " /Root 1 0 R >>\nstartxref\n{$xref}\n%%EOF";
 
+    return $pdf;
+}
+
+function comporPdfEnergiaUmaPagina(string $pdfDemonstrativo, string $arquivoOriginal): string
+{
+    if (!is_file($arquivoOriginal)) {
+        throw new RuntimeException('A conta original da CEMIG nao foi encontrada para anexar ao demonstrativo.');
+    }
+
+    $temporarioDemonstrativo = tempnam(sys_get_temp_dir(), 'energia_dem_');
+    $temporarioSaida = tempnam(sys_get_temp_dir(), 'energia_pdf_');
+    if ($temporarioDemonstrativo === false || $temporarioSaida === false) {
+        throw new RuntimeException('Nao foi possivel preparar o PDF completo.');
+    }
+
+    file_put_contents($temporarioDemonstrativo, $pdfDemonstrativo);
+    $composto = false;
+
+    try {
+        $scriptPython = tempnam(sys_get_temp_dir(), 'energia_merge_');
+        if ($scriptPython !== false) {
+            file_put_contents($scriptPython, implode("\n", [
+                'import sys',
+                'from pypdf import PdfReader, PdfWriter, Transformation',
+                'pagina = PdfReader(sys.argv[1]).pages[0]',
+                'conta = PdfReader(sys.argv[2]).pages[0]',
+                'largura = float(conta.mediabox.width)',
+                'altura = float(conta.mediabox.height)',
+                'escala = min(523.0 / largura, 520.0 / altura)',
+                'x = (595.0 - (largura * escala)) / 2.0',
+                'y = 10.0',
+                'pagina.merge_transformed_page(conta, Transformation().scale(escala).translate(x, y), over=True)',
+                'writer = PdfWriter()',
+                'writer.add_page(pagina)',
+                'with open(sys.argv[3], "wb") as destino:',
+                '    writer.write(destino)',
+            ]));
+
+            $pythonConfigurado = trim((string)getenv('ENERGIA_PYTHON'));
+            $candidatosPython = PHP_OS_FAMILY === 'Windows'
+                ? ['py -3', 'python', 'python3']
+                : ['python3', 'python'];
+            if ($pythonConfigurado !== '') {
+                array_unshift($candidatosPython, escapeshellarg($pythonConfigurado));
+            }
+            foreach ($candidatosPython as $python) {
+                $comando = $python
+                    . ' ' . escapeshellarg($scriptPython)
+                    . ' ' . escapeshellarg($temporarioDemonstrativo)
+                    . ' ' . escapeshellarg($arquivoOriginal)
+                    . ' ' . escapeshellarg($temporarioSaida)
+                    . ' 2>&1';
+                @shell_exec($comando);
+                if (is_file($temporarioSaida) && filesize($temporarioSaida) > 0) {
+                    $composto = true;
+                    break;
+                }
+            }
+            @unlink($scriptPython);
+        }
+
+        if (!$composto) {
+            throw new RuntimeException('Nao foi possivel compor o demonstrativo e a conta original em uma pagina.');
+        }
+
+        return (string)file_get_contents($temporarioSaida);
+    } finally {
+        @unlink($temporarioDemonstrativo);
+        @unlink($temporarioSaida);
+    }
+}
+
+function enviarPdfEnergia(string $conteudo, string $arquivo, string $arquivoOriginal = ''): void
+{
+    $pdf = montarPdfEnergia($conteudo);
+    if ($arquivoOriginal !== '') {
+        $pdf = comporPdfEnergiaUmaPagina($pdf, $arquivoOriginal);
+    }
+
     header('Content-Type: application/pdf');
     header('Content-Disposition: attachment; filename="' . $arquivo . '.pdf"');
     header('Content-Length: ' . strlen($pdf));
@@ -148,6 +227,7 @@ function gerarPdfDemonstrativoEnergia(PDO $pdo, int $empresaId, int $operacaoId)
 {
     $stmt = $pdo->prepare("
         SELECT o.*, c.referencia, c.vencimento, c.logradouro_complemento, c.unidade_consumidora,
+               c.arquivo_caminho,
                c.valor_total, c.consumo_kwh, c.valor_unitario_kw, c.franquia_minima,
                c.custo_disponibilidade, c.contribuicao_iluminacao,
                COALESCE(NULLIF(cli.APELIDO, ''), cli.NOME, CONCAT('Cliente ', o.cliente_id)) AS cliente_nome,
@@ -183,28 +263,24 @@ function gerarPdfDemonstrativoEnergia(PDO $pdo, int $empresaId, int $operacaoId)
     $margem = 36;
     $conteudo = '';
     $conteudo .= corPdfEnergia(0.05, 0.20, 0.45);
-    $conteudo .= retanguloPdfEnergia(0, $altura - 96, $largura, 96);
+    $conteudo .= retanguloPdfEnergia(0, $altura - 30, $largura, 30);
     $conteudo .= "1 1 1 rg\n";
-    $conteudo .= textoCmdPdfEnergia($margem, $altura - 36, 18, textoPdfEnergia((string)$op['empresa_nome'], 60), true);
-    $conteudo .= textoCmdPdfEnergia($margem, $altura - 55, 9, textoPdfEnergia((string)($op['razao_social'] ?: ''), 80));
-    $conteudo .= textoCmdPdfEnergia($largura - 250, $altura - 36, 15, textoPdfEnergia('Demonstrativo de Energia'), true);
-    $conteudo .= textoCmdPdfEnergia($largura - 250, $altura - 55, 10, textoPdfEnergia('Operacao #' . $operacaoId . ' - ' . (string)$op['referencia'], 45));
-    $conteudo .= textoCmdPdfEnergia($largura - 250, $altura - 72, 9, textoPdfEnergia('Gerado em ' . date('d/m/Y H:i'), 45));
+    $tituloCabecalho = 'Demonstrativo de Energia Operacao #' . $operacaoId . ' - ' . (string)$op['referencia'];
+    $conteudo .= textoCmdPdfEnergia($margem, $altura - 20, 9, textoPdfEnergia($tituloCabecalho, 80), true);
     $conteudo .= "0 g\n";
 
-    $y = $altura - 130;
+    $y = $altura - 48;
     $conteudo .= corPdfEnergia(0.94, 0.97, 1.00);
-    $conteudo .= retanguloPdfEnergia($margem, $y - 70, $largura - ($margem * 2), 84);
+    $conteudo .= retanguloPdfEnergia($margem, $y - 39, $largura - ($margem * 2), 49);
     $conteudo .= "0 g\n";
-    $conteudo .= textoCmdPdfEnergia($margem + 14, $y, 12, textoPdfEnergia('Dados do cliente e da unidade'), true);
-    $y -= 20;
-    $conteudo .= textoCmdPdfEnergia($margem + 14, $y, 10, textoPdfEnergia('Cliente: ' . (string)($op['cliente_nome'] ?: 'Nao informado'), 82), true);
-    $y -= 16;
-    $conteudo .= textoCmdPdfEnergia($margem + 14, $y, 9, textoPdfEnergia('Endereco: ' . (string)$op['logradouro_complemento'], 95));
-    $y -= 15;
-    $conteudo .= textoCmdPdfEnergia($margem + 14, $y, 9, textoPdfEnergia('Unidade consumidora: ' . (string)$op['unidade_consumidora'] . ' | Referencia: ' . (string)$op['referencia'] . ' | Vencimento: ' . ($op['vencimento'] ? date('d/m/Y', strtotime((string)$op['vencimento'])) : '-'), 105));
+    $conteudo .= textoCmdPdfEnergia($margem + 10, $y, 9, textoPdfEnergia('Dados do cliente e da unidade'), true);
+    $y -= 13;
+    $conteudo .= textoCmdPdfEnergia($margem + 10, $y, 8, textoPdfEnergia('Cliente: ' . (string)($op['cliente_nome'] ?: 'Nao informado'), 82), true);
+    $conteudo .= textoCmdPdfEnergia($margem + 190, $y, 7, textoPdfEnergia('Endereco: ' . (string)$op['logradouro_complemento'], 64));
+    $y -= 12;
+    $conteudo .= textoCmdPdfEnergia($margem + 10, $y, 7, textoPdfEnergia('Unidade consumidora: ' . (string)$op['unidade_consumidora'] . ' | Referencia: ' . (string)$op['referencia'] . ' | Vencimento: ' . ($op['vencimento'] ? date('d/m/Y', strtotime((string)$op['vencimento'])) : '-'), 105));
 
-    $y = $altura - 255;
+    $y = $altura - 113;
     $linhas = [
         ['Custo de disponibilidade', 'R$ ' . moedaEnergiaOperacao($custoDisponibilidade)],
         ['Taxa de iluminacao publica', 'R$ ' . moedaEnergiaOperacao($iluminacao)],
@@ -216,35 +292,42 @@ function gerarPdfDemonstrativoEnergia(PDO $pdo, int $empresaId, int $operacaoId)
         ['Economia concedida no kW', 'R$ ' . moedaEnergiaOperacao($economia)],
     ];
 
-    $conteudo .= textoCmdPdfEnergia($margem, $y + 22, 13, textoPdfEnergia('Composicao dos valores cobrados'), true);
-    $linhaAltura = 28;
+    $conteudo .= textoCmdPdfEnergia($margem, $y + 15, 9, textoPdfEnergia('Composicao dos valores cobrados'), true);
+    $linhaAltura = 16;
     foreach ($linhas as $idx => $linha) {
-        if ($idx % 2 === 0) {
+        $ehEconomia = $idx === count($linhas) - 1;
+        if ($ehEconomia) {
+            $conteudo .= corPdfEnergia(0.84, 0.95, 0.88);
+            $conteudo .= retanguloPdfEnergia($margem, $y - 5, $largura - ($margem * 2), 14);
+            $conteudo .= corPdfEnergia(0.00, 0.42, 0.22);
+        } elseif ($idx % 2 === 0) {
             $conteudo .= corPdfEnergia(0.97, 0.98, 0.99);
-            $conteudo .= retanguloPdfEnergia($margem, $y - 8, $largura - ($margem * 2), 24);
+            $conteudo .= retanguloPdfEnergia($margem, $y - 5, $largura - ($margem * 2), 14);
             $conteudo .= "0 g\n";
         }
-        $conteudo .= textoCmdPdfEnergia($margem + 12, $y, 10, textoPdfEnergia($linha[0], 70));
-        $conteudo .= textoCmdPdfEnergia($largura - 210, $y, 10, textoPdfEnergia($linha[1], 35), true);
+        $conteudo .= textoCmdPdfEnergia($margem + 10, $y, $ehEconomia ? 8 : 7, textoPdfEnergia($linha[0], 70), $ehEconomia);
+        $conteudo .= textoCmdPdfEnergia($largura - 185, $y, $ehEconomia ? 9 : 8, textoPdfEnergia($linha[1], 35), true);
+        $conteudo .= "0 g\n";
         $y -= $linhaAltura;
     }
 
-    $y -= 8;
+    $y -= 2;
     $conteudo .= corPdfEnergia(0.05, 0.20, 0.45);
-    $conteudo .= retanguloPdfEnergia($margem, $y - 28, $largura - ($margem * 2), 46);
+    $conteudo .= retanguloPdfEnergia($margem, $y - 15, 318, 24);
     $conteudo .= "1 1 1 rg\n";
-    $conteudo .= textoCmdPdfEnergia($margem + 14, $y, 12, textoPdfEnergia('Valor total da conta com desconto'), true);
-    $conteudo .= textoCmdPdfEnergia($largura - 210, $y, 14, textoPdfEnergia('R$ ' . moedaEnergiaOperacao($valorContaComDesconto)), true);
+    $conteudo .= textoCmdPdfEnergia($margem + 10, $y - 1, 8, textoPdfEnergia('Valor total da conta com desconto'), true);
+    $conteudo .= textoCmdPdfEnergia($margem + 235, $y - 1, 10, textoPdfEnergia('R$ ' . moedaEnergiaOperacao($valorContaComDesconto)), true);
     $conteudo .= "0 g\n";
 
-    $y -= 72;
-    $conteudo .= textoCmdPdfEnergia($margem, $y, 9, textoPdfEnergia('Formula utilizada: (kW consumido/compensado x valor unitario do kW x (1 - desconto)) + custo de disponibilidade + taxa de iluminacao publica.', 120));
-    $y -= 16;
-    $conteudo .= textoCmdPdfEnergia($margem, $y, 8, textoPdfEnergia('Consumo total informado na fatura original: ' . qtdEnergiaOperacao((float)$op['consumo_kwh']) . ' kWh. Este demonstrativo considera a quantidade de kW informada na operacao comercial.', 125));
-    $conteudo .= "0.35 0.40 0.48 rg\n";
-    $conteudo .= textoCmdPdfEnergia($margem, 24, 8, textoPdfEnergia('SuperDunga - Demonstrativo gerado automaticamente'));
-
-    enviarPdfEnergia($conteudo, 'demonstrativo_energia_op_' . $operacaoId);
+    $arquivoOriginal = realpath(__DIR__ . '/../../' . ltrim((string)$op['arquivo_caminho'], '/\\'));
+    if ($arquivoOriginal === false) {
+        throw new RuntimeException('A conta original da CEMIG nao foi encontrada para anexar ao demonstrativo.');
+    }
+    enviarPdfEnergia(
+        $conteudo,
+        'demonstrativo_energia_op_' . $operacaoId,
+        $arquivoOriginal
+    );
 }
 
 if (isset($_GET['pdf_cliente'])) {
