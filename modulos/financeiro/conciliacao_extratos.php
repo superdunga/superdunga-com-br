@@ -912,12 +912,39 @@ function lerOfxExtrato(string $arquivo): array
             'documento' => normalizarTextoExtrato($capturar('CHECKNUM') ?: $capturar('REFNUM')),
             'valor' => $valor,
             'tipo' => in_array($tipoOfx, ['CREDIT', 'DEP', 'DIRECTDEP', 'INT'], true) ? 'C' : 'D',
-            'identificador' => normalizarTextoExtrato($capturar('FITID')),
+            // O Sicoob renumera o FITID quando novos lancamentos entram no mesmo dia/valor.
+            // A chave natural com ocorrencia preserva os repetidos reais sem perder movimentos novos.
+            'identificador' => $sicoob ? '' : normalizarTextoExtrato($capturar('FITID')),
             'identificador_escopo' => $escopoIdentificador,
         ];
     }
 
     return $linhas;
+}
+
+function validarContaOfxSicoob(string $arquivo, int $empresaId, int $cbcontador): void
+{
+    $conteudo = file_get_contents($arquivo);
+    if ($conteudo === false || !preg_match('/<BANKID>([^<\r\n]+)/i', $conteudo, $banco) || trim($banco[1]) !== '756') {
+        return;
+    }
+    if (!preg_match('/<ACCTID>([^<\r\n]+)/i', $conteudo, $conta)) {
+        throw new RuntimeException('O arquivo Sicoob nao informa o numero da conta.');
+    }
+
+    $contasConhecidas = [1 => [18 => '36277-8', 22 => '10000157-2']];
+    $contaArquivo = preg_replace('/\D/', '', $conta[1]);
+    $contaEsperada = $contasConhecidas[$empresaId][$cbcontador] ?? null;
+    if ($contaEsperada !== null && $contaArquivo !== preg_replace('/\D/', '', $contaEsperada)) {
+        throw new RuntimeException('O extrato Sicoob pertence a conta ' . trim($conta[1]) . ', diferente da conta selecionada.');
+    }
+    if ($contaEsperada === null && isset($contasConhecidas[$empresaId])) {
+        foreach ($contasConhecidas[$empresaId] as $outraConta => $numero) {
+            if ($contaArquivo === preg_replace('/\D/', '', $numero)) {
+                throw new RuntimeException('O extrato Sicoob pertence a conta ' . $outraConta . '. Selecione essa conta para importar.');
+            }
+        }
+    }
 }
 
 function pastaInterExtratoEmpresa(int $empresaId): string
@@ -2608,6 +2635,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['acao'] ?? '') === 'importa
                 $mensagemErro = 'Nao foi possivel salvar o arquivo enviado.';
             } else {
                 try {
+                    if ($extensao === 'ofx') {
+                        validarContaOfxSicoob($destino, $empresaId, $cbcontadorPost);
+                    }
                     $linhas = $extensao === 'ofx' ? lerOfxExtrato($destino) : lerCsvExtrato($destino);
                 } catch (Throwable $e) {
                     @unlink($destino);
