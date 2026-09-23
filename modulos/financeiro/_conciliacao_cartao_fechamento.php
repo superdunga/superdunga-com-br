@@ -75,6 +75,13 @@ function cccBaixarCpsFatura(PDO $pdo,int $empresa,int $faturaId,int $usuario,str
         $s->execute([$faturaId,$empresa]);$creditos=$s->fetch(PDO::FETCH_ASSOC);
         $estornado=(int)round((float)$creditos['estornos_debito']*100);
         if($estornado!==(int)round((float)$creditos['estornos_credito']*100) || (int)round((float)$creditos['devolucoes']*100)+$estornado!==(int)round((float)$f['total_creditos']*100))throw new RuntimeException('Os estornos e creditos da fatura nao fecham. Confira a composicao antes de encerrar.');
+        $s=$pdo->prepare("SELECT c.id FROM financeiro_cc_itens c LEFT JOIN financeiro_cc_creditos_aplicados a ON a.credito_id=c.id AND a.empresa_id=c.empresa_id LEFT JOIN financeiro_cc_creditos_avulsos v ON v.credito_id=c.id AND v.empresa_id=c.empresa_id WHERE c.fatura_id=? AND c.empresa_id=? AND c.natureza='C' AND c.status<>'ESTORNADO' AND a.id IS NULL AND v.credito_id IS NULL LIMIT 1");
+        $s->execute([$faturaId,$empresa]);$creditoSemDestino=$s->fetchColumn();
+        if($creditoSemDestino)throw new RuntimeException('O credito #'.$creditoSemDestino.' precisa ser classificado como estorno de compra anterior ou credito avulso antes da baixa dos CPs.');
+        $s=$pdo->prepare("SELECT COALESCE(SUM(COALESCE(a.valor,v.valor)),0) FROM financeiro_cc_itens c LEFT JOIN financeiro_cc_creditos_aplicados a ON a.credito_id=c.id AND a.empresa_id=c.empresa_id LEFT JOIN financeiro_cc_creditos_avulsos v ON v.credito_id=c.id AND v.empresa_id=c.empresa_id WHERE c.fatura_id=? AND c.empresa_id=? AND c.natureza='C' AND c.status<>'ESTORNADO'");
+        $s->execute([$faturaId,$empresa]);if((int)round((float)$s->fetchColumn()*100)!==(int)round((float)$creditos['devolucoes']*100))throw new RuntimeException('Os creditos classificados nao fecham com os creditos importados.');
+        $s=$pdo->prepare("SELECT c.id FROM financeiro_cc_itens c LEFT JOIN financeiro_cc_creditos_aplicados a ON a.credito_id=c.id AND a.empresa_id=c.empresa_id LEFT JOIN financeiro_cc_creditos_avulsos v ON v.credito_id=c.id AND v.empresa_id=c.empresa_id LEFT JOIN armazem_bnc001 b ON b.EMPRESA=c.empresa_id AND b.MOVCONTADOR=COALESCE(a.mov_credito_39,v.mov_credito_39) WHERE c.fatura_id=? AND c.empresa_id=? AND c.natureza='C' AND c.status<>'ESTORNADO' AND (b.MOVCONTADOR IS NULL OR COALESCE(b.deletado,'N')='S' OR b.CBCONTADOR<>39 OR b.TIPOMOV<>'C' OR ABS(b.VALORMOV-c.valor)>=0.01) LIMIT 1");
+        $s->execute([$faturaId,$empresa]);if($s->fetchColumn())throw new RuntimeException('O movimento na conta 39 de um credito da fatura esta ausente ou divergente.');
         $total=0;$baixas=[];
         foreach($itens as $i){
             $valor=(int)round((float)$i['valor']*100);$restante=(int)round((float)$i['VLRRESTANTE']*100);

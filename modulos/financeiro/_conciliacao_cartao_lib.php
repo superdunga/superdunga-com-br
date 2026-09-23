@@ -127,9 +127,36 @@ function cccVincular(PDO $pdo,int $empresaId,int $itemId,int $cp,int $usuarioId)
     $pdo->prepare("UPDATE financeiro_cc_itens SET cpcontador=?,status='CONCILIADO',usuario_id=?,conciliado_em=NOW() WHERE id=?")->execute([$cp,$usuarioId?:null,$itemId]);
 }
 
+function cccDesfazerVinculo(PDO $pdo,int $empresa,int $faturaId,int $itemId,int $usuario): string
+{
+    $pdo->beginTransaction();
+    try {
+        $s=$pdo->prepare("SELECT i.cpcontador,i.status AS item_status,f.status AS fatura_status FROM financeiro_cc_itens i JOIN financeiro_cc_faturas f ON f.id=i.fatura_id AND f.empresa_id=i.empresa_id WHERE i.id=? AND i.fatura_id=? AND i.empresa_id=? AND i.natureza='D' FOR UPDATE");
+        $s->execute([$itemId,$faturaId,$empresa]);$item=$s->fetch(PDO::FETCH_ASSOC);
+        if(!$item || $item['fatura_status']!=='IMPORTADA' || !in_array($item['item_status'],['CONCILIADO','GERADO'],true) || !(int)$item['cpcontador'])throw new RuntimeException('Somente matches de faturas abertas podem ser desfeitos.');
+        $s=$pdo->prepare("SELECT 1 FROM financeiro_cc_creditos_esperados WHERE debito_id=?");$s->execute([$itemId]);if($s->fetchColumn())throw new RuntimeException('Cancele primeiro a espera pelo credito desta compra.');
+        $cpId=(int)$item['cpcontador'];
+        $s=$pdo->prepare("SELECT STATUS,DTPAGTO,VLRPAGO,CHAVEINTEGRACAO,excluido_firebird FROM armazem_cp001 WHERE EMPRESA=? AND CPCONTADOR=? FOR UPDATE");$s->execute([$empresa,$cpId]);$cp=$s->fetch(PDO::FETCH_ASSOC);
+        if(!$cp || $cp['STATUS']!=='AB' || $cp['DTPAGTO'] || (float)$cp['VLRPAGO']>0 || ($cp['excluido_firebird']??'N')==='S')throw new RuntimeException('O CP ja foi alterado ou baixado. O match nao pode ser desfeito.');
+        $gerado=$item['item_status']==='GERADO';
+        if($gerado){
+            if((string)$cp['CHAVEINTEGRACAO']!=='CC-FATURA:'.$empresa.':'.$itemId)throw new RuntimeException('O CP nao foi criado por este item da fatura.');
+            $s=$pdo->prepare("SELECT 1 FROM financeiro_cc_baixas WHERE empresa_id=? AND cpcontador=? LIMIT 1");$s->execute([$empresa,$cpId]);if($s->fetchColumn())throw new RuntimeException('CP com baixa registrada nao pode ser cancelado.');
+            $s=$pdo->prepare("SELECT 1 FROM movimentacao_baixa_cp_cr_vinculos WHERE empresa_id=? AND cpcontador=? AND status='ATIVO' LIMIT 1");$s->execute([$empresa,$cpId]);if($s->fetchColumn())throw new RuntimeException('CP com contas a receber vinculado nao pode ser cancelado.');
+            $s=$pdo->prepare("SELECT 1 FROM armazem_bnc001 WHERE EMPRESA=? AND TIPODOCORIGEM='CP001' AND NUMDOCORIGEM=? AND COALESCE(deletado,'N')<>'S' LIMIT 1");$s->execute([$empresa,$cpId]);if($s->fetchColumn())throw new RuntimeException('CP com movimento bancario nao pode ser cancelado.');
+            $s=$pdo->prepare("UPDATE armazem_cp001 SET excluido_firebird='S',data_exclusao_firebird=NOW(),motivo_sync='CANCELADO_CONCILIACAO_CARTAO',USERALT=?,DTALT=NOW(),REGSTAMP=NOW() WHERE EMPRESA=? AND CPCONTADOR=? AND STATUS='AB' AND DTPAGTO IS NULL AND COALESCE(VLRPAGO,0)=0 AND COALESCE(excluido_firebird,'N')<>'S'");
+            $s->execute([$usuario?:null,$empresa,$cpId]);if($s->rowCount()!==1)throw new RuntimeException('Nao foi possivel cancelar o CP gerado.');
+        }
+        $s=$pdo->prepare("UPDATE financeiro_cc_itens SET cpcontador=NULL,status='PENDENTE',usuario_id=?,conciliado_em=NULL WHERE id=? AND fatura_id=? AND empresa_id=? AND cpcontador=?");
+        $s->execute([$usuario?:null,$itemId,$faturaId,$empresa,$cpId]);if($s->rowCount()!==1)throw new RuntimeException('Nao foi possivel desfazer o vinculo.');
+        $pdo->prepare("INSERT INTO financeiro_cc_match_correcoes (empresa_id,fatura_id,item_id,cpcontador,cp_cancelado,usuario_id) VALUES (?,?,?,?,?,?)")->execute([$empresa,$faturaId,$itemId,$cpId,$gerado?'S':'N',$usuario?:null]);
+        $pdo->commit();return $gerado?'CP gerado cancelado e match desfeito.':'Match desfeito. O CP original continua aberto.';
+    }catch(Throwable $e){if($pdo->inTransaction())$pdo->rollBack();throw $e;}
+}
+
 function cccGerarCp(PDO $pdo,array $item,array $fatura,int $usuarioId,int $tipoes): int
 {
-    $chave='CC-FATURA:'.(int)$item['empresa_id'].':'.(int)$item['id'];$s=$pdo->prepare("SELECT CPCONTADOR FROM armazem_cp001 WHERE EMPRESA=? AND CHAVEINTEGRACAO=?");$s->execute([(int)$item['empresa_id'],$chave]);if($id=(int)$s->fetchColumn())return $id;
+    $chave='CC-FATURA:'.(int)$item['empresa_id'].':'.(int)$item['id'];$s=$pdo->prepare("SELECT CPCONTADOR FROM armazem_cp001 WHERE EMPRESA=? AND CHAVEINTEGRACAO=? AND COALESCE(excluido_firebird,'N')<>'S'");$s->execute([(int)$item['empresa_id'],$chave]);if($id=(int)$s->fetchColumn())return $id;
     $cp=proximoCpcontadorCartao($pdo,(int)$item['empresa_id']);$titulo=mb_substr($item['descricao'],0,255);$obs=mb_substr('Fatura '.$fatura['cartao_nome'].' '.$fatura['competencia'].' | item #'.$item['id'],0,500);
     $sql="INSERT INTO armazem_cp001 (EMPRESA,CPCONTADOR,DTCOMPRA,NUMPARCELA,TITULO,VALORCOMPRA,FCONTADOR,OBSERVACAO,DTEMISSAO,VLRPARCELA,PARCELA,DTVENC,VLRRESTANTE,VLRPAGO,STATUS,TIPODOCORIGEM,NUMDOCORIGEM,CONTROLE,TIPOCP,TIPOES,REGSTAMP,REGIMPORT,USERLANC,DTLANC,USERALT,DTALT,CHAVEINTEGRACAO,financeiro_verificado,excluido_firebird) VALUES (:empresa,:cp,:compra,1,:titulo,:valor,:fornecedor,:observacao,:emissao,:parcela_valor,'1/1',:vencimento,:restante,0,'AB','CARTAO',:documento,'CONCILIACAO_CARTAO','CP',:tipoes,NOW(),'S',:userlanc,NOW(),:useralt,NOW(),:chave,'N','N')";
     $pdo->prepare($sql)->execute(['empresa'=>(int)$item['empresa_id'],'cp'=>$cp,'compra'=>$item['data_compra'],'titulo'=>$titulo,'valor'=>(float)$item['valor'],'fornecedor'=>(int)$fatura['fornecedor_fcontador'],'observacao'=>$obs,'emissao'=>$item['data_compra'],'parcela_valor'=>(float)$item['valor'],'vencimento'=>$fatura['vencimento'],'restante'=>(float)$item['valor'],'documento'=>'FATURA-'.$item['fatura_id'],'tipoes'=>$tipoes,'userlanc'=>$usuarioId?:null,'useralt'=>$usuarioId?:null,'chave'=>$chave]);return $cp;
