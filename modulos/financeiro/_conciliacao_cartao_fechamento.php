@@ -44,14 +44,6 @@ function cccContaCartao(PDO $pdo, int $empresa): bool
     return strpos(strtoupper((string)$s->fetchColumn()),'CART')!==false;
 }
 
-function cccTipoesFechamento(PDO $pdo, int $empresa, string $nome, string $mov): int
-{
-    $s=$pdo->prepare("SELECT ESCONTADOR,CONTRAP_TIPOES FROM armazem_bnc005 WHERE EMPRESA=? AND UPPER(TRIM(DESCES))=? AND TIPOMOV=? AND COALESCE(REGDISAB,'N')<>'S' AND COALESCE(excluido_firebird,'N')<>'S'");
-    $s->execute([$empresa,$nome,$mov]);$tipos=$s->fetchAll(PDO::FETCH_ASSOC);
-    if(count($tipos)!==1 || (int)($tipos[0]['CONTRAP_TIPOES']??0)>0)throw new RuntimeException('Configure um unico TIPOES '.$nome.' ('.$mov.'), sem contrapartida automatica, para esta empresa.');
-    return (int)$tipos[0]['ESCONTADOR'];
-}
-
 function cccInserirMovimentoFatura(PDO $pdo,int $empresa,int $conta,int $tipoes,string $mov,string $data,string $historico,int $faturaId,int $usuario,int $centavos,string $origem,int $documentoOrigem=0,int $fornecedor=0): int
 {
     if($centavos<=0)throw new RuntimeException('Valor de movimento invalido.');
@@ -66,47 +58,58 @@ function cccInserirMovimentoFatura(PDO $pdo,int $empresa,int $conta,int $tipoes,
     throw new RuntimeException('Nao foi possivel reservar o numero do movimento.');
 }
 
-function cccPagarFatura(PDO $pdo,int $empresa,int $faturaId,int $usuario,int $contaPagamento,string $data): void
+function cccBaixarCpsFatura(PDO $pdo,int $empresa,int $faturaId,int $usuario,string $data): void
 {
-    if(!preg_match('/^\d{4}-\d{2}-\d{2}$/',$data) || date('Y-m-d',strtotime($data))!==$data)throw new RuntimeException('Informe uma data de pagamento valida.');
-    if($contaPagamento===39 || !cccContaCartao($pdo,$empresa) || !cccContaAtiva($pdo,$empresa,$contaPagamento))throw new RuntimeException('Confira a conta 39 de cartoes e selecione outra conta ativa para o pagamento.');
-    $tipoCredito=cccTipoesFechamento($pdo,$empresa,'C CONTRA PARTIDA CREDITO','C');
-    $tipoDebito=cccTipoesFechamento($pdo,$empresa,'D CONTRA PARTIDA CREDITO','D');
+    if(!preg_match('/^\d{4}-\d{2}-\d{2}$/',$data) || date('Y-m-d',strtotime($data))!==$data)throw new RuntimeException('Informe uma data de baixa valida.');
+    if(!cccContaCartao($pdo,$empresa))throw new RuntimeException('A conta 39 de cartoes nao esta ativa para esta empresa.');
     $pdo->beginTransaction();
     try{
         $s=$pdo->prepare("SELECT * FROM financeiro_cc_faturas WHERE id=? AND empresa_id=? FOR UPDATE");$s->execute([$faturaId,$empresa]);$f=$s->fetch(PDO::FETCH_ASSOC);
-        if(!$f || $f['status']!=='IMPORTADA')throw new RuntimeException('Fatura nao encontrada ou ja processada.');
+        if(!$f || $f['status']!=='IMPORTADA')throw new RuntimeException('Fatura nao encontrada ou CPs ja baixados.');
         $s=$pdo->prepare("SELECT 1 FROM financeiro_cc_fechamentos WHERE fatura_id=?");$s->execute([$faturaId]);if($s->fetchColumn())throw new RuntimeException('Esta fatura ja possui pagamento registrado.');
-        $s=$pdo->prepare("SELECT i.id,i.valor,i.cpcontador,cp.STATUS,cp.DTPAGTO,cp.VLRPAGO,cp.VLRRESTANTE,cp.VLRPARCELA,cp.TIPOES,cp.FCONTADOR,cp.excluido_firebird,t.TIPOMOV,t.CONTRAP_TIPOES,t.REGDISAB,t.excluido_firebird AS tipo_excluido FROM financeiro_cc_itens i LEFT JOIN armazem_cp001 cp ON cp.EMPRESA=i.empresa_id AND cp.CPCONTADOR=i.cpcontador LEFT JOIN armazem_bnc005 t ON t.EMPRESA=cp.EMPRESA AND t.ESCONTADOR=cp.TIPOES WHERE i.fatura_id=? AND i.empresa_id=? AND i.natureza='D' ORDER BY i.id FOR UPDATE");
+        $s=$pdo->prepare("SELECT 1 FROM financeiro_cc_baixas WHERE fatura_id=? LIMIT 1");$s->execute([$faturaId]);if($s->fetchColumn())throw new RuntimeException('Esta fatura ja possui CPs baixados.');
+        $s=$pdo->prepare("SELECT i.id,i.valor,i.cpcontador,cp.STATUS,cp.DTPAGTO,cp.VLRPAGO,cp.VLRRESTANTE,cp.VLRPARCELA,cp.TIPOES,cp.FCONTADOR,cp.excluido_firebird,t.TIPOMOV,t.CONTRAP_TIPOES,t.CONTRAP_TIPOMOV,t.CONTRAP_CBCONTADOR,t.REGDISAB,t.excluido_firebird AS tipo_excluido,xt.TIPOMOV AS investimento_tipomov,xt.REGDISAB AS investimento_desabilitado,xt.excluido_firebird AS investimento_excluido,v.crcontador,cr.STATUS AS cr_status,cr.DTPAGTO AS cr_pagto,cr.VLRPAGO AS cr_pago,cr.VLRRESTANTE AS cr_restante,cr.TIPOES AS cr_tipoes,cr.excluido_firebird AS cr_excluido,ct.TIPOMOV AS cr_tipomov,ct.CONTRAP_TIPOES AS cr_contrap,ct.REGDISAB AS cr_tipo_desabilitado,ct.excluido_firebird AS cr_tipo_excluido FROM financeiro_cc_itens i LEFT JOIN armazem_cp001 cp ON cp.EMPRESA=i.empresa_id AND cp.CPCONTADOR=i.cpcontador LEFT JOIN armazem_bnc005 t ON t.EMPRESA=cp.EMPRESA AND t.ESCONTADOR=cp.TIPOES LEFT JOIN armazem_bnc005 xt ON xt.EMPRESA=t.EMPRESA AND xt.ESCONTADOR=t.CONTRAP_TIPOES LEFT JOIN movimentacao_baixa_cp_cr_vinculos v ON v.empresa_id=i.empresa_id AND v.cpcontador=i.cpcontador AND v.status='ATIVO' LEFT JOIN armazem_cr001 cr ON cr.EMPRESA=v.empresa_id AND cr.CRCONTADOR=v.crcontador LEFT JOIN armazem_bnc005 ct ON ct.EMPRESA=cr.EMPRESA AND ct.ESCONTADOR=cr.TIPOES WHERE i.fatura_id=? AND i.empresa_id=? AND i.natureza='D' AND i.status<>'ESTORNADO' ORDER BY i.id FOR UPDATE");
         $s->execute([$faturaId,$empresa]);$itens=$s->fetchAll(PDO::FETCH_ASSOC);
         if(!$itens)throw new RuntimeException('A fatura nao possui compras para baixar.');
-        $s=$pdo->prepare("SELECT COALESCE(SUM(CASE WHEN natureza='C' THEN valor ELSE 0 END),0) AS devolucoes, COALESCE(SUM(CASE WHEN natureza='P' THEN valor ELSE 0 END),0) AS pagamentos FROM financeiro_cc_itens WHERE fatura_id=? AND empresa_id=?");
+        $s=$pdo->prepare("SELECT COALESCE(SUM(CASE WHEN natureza='C' AND status<>'ESTORNADO' THEN valor ELSE 0 END),0) AS devolucoes, COALESCE(SUM(CASE WHEN natureza='P' THEN valor ELSE 0 END),0) AS pagamentos, COALESCE(SUM(CASE WHEN natureza='D' AND status='ESTORNADO' THEN valor ELSE 0 END),0) AS estornos_debito, COALESCE(SUM(CASE WHEN natureza='C' AND status='ESTORNADO' THEN valor ELSE 0 END),0) AS estornos_credito FROM financeiro_cc_itens WHERE fatura_id=? AND empresa_id=?");
         $s->execute([$faturaId,$empresa]);$creditos=$s->fetch(PDO::FETCH_ASSOC);
-        if((int)round((float)$creditos['devolucoes']*100)!==(int)round((float)$f['total_creditos']*100))throw new RuntimeException('Os creditos da fatura incluem pagamentos ou diferem das devolucoes. Confira a composicao antes de encerrar.');
+        $estornado=(int)round((float)$creditos['estornos_debito']*100);
+        if($estornado!==(int)round((float)$creditos['estornos_credito']*100) || (int)round((float)$creditos['devolucoes']*100)+$estornado!==(int)round((float)$f['total_creditos']*100))throw new RuntimeException('Os estornos e creditos da fatura nao fecham. Confira a composicao antes de encerrar.');
         $total=0;$baixas=[];
         foreach($itens as $i){
             $valor=(int)round((float)$i['valor']*100);$restante=(int)round((float)$i['VLRRESTANTE']*100);
             if(!$i['cpcontador'] || $i['STATUS']!=='AB' || $i['DTPAGTO'] || (float)$i['VLRPAGO']>0 || ($i['excluido_firebird']??'N')==='S' || $restante!==$valor)throw new RuntimeException('O item #'.$i['id'].' nao possui CP aberto pelo valor integral.');
-            if($i['TIPOMOV']!=='D' || (int)$i['TIPOES']<=0 || (int)($i['CONTRAP_TIPOES']??0)>0 || ($i['REGDISAB']??'N')==='S' || ($i['tipo_excluido']??'N')==='S')throw new RuntimeException('O TIPOES do CP #'.$i['cpcontador'].' nao permite baixa simples na conta 39.');
+            if($i['TIPOMOV']!=='D' || (int)$i['TIPOES']<=0 || ($i['REGDISAB']??'N')==='S' || ($i['tipo_excluido']??'N')==='S')throw new RuntimeException('O TIPOES do CP #'.$i['cpcontador'].' nao permite baixa na conta 39.');
+            $modo='comum';
+            if($i['crcontador']){
+                if((int)($i['CONTRAP_TIPOES']??0)<=0 || $i['cr_status']!=='AB' || $i['cr_pagto'] || (float)$i['cr_pago']>0 || (int)round((float)$i['cr_restante']*100)!==$valor || ($i['cr_excluido']??'N')==='S' || $i['cr_tipomov']!=='C' || (int)$i['cr_tipoes']!==(int)$i['CONTRAP_TIPOES'] || (int)$i['cr_contrap']!==(int)$i['TIPOES'] || ($i['cr_tipo_desabilitado']??'N')==='S' || ($i['cr_tipo_excluido']??'N')==='S')throw new RuntimeException('O par CP/CR do CP #'.$i['cpcontador'].' nao esta integro e em aberto.');
+                $modo='par_cp_cr';
+            }elseif((int)($i['CONTRAP_TIPOES']??0)>0){
+                $contaInvestimento=(int)($i['CONTRAP_CBCONTADOR']??0);
+                $movInvestimento=strtoupper(trim((string)($i['CONTRAP_TIPOMOV']?:'C')));
+                if($contaInvestimento<=0 || $contaInvestimento===39 || !cccContaAtiva($pdo,$empresa,$contaInvestimento) || !in_array($movInvestimento,['C','D'],true) || $i['investimento_tipomov']!==$movInvestimento || ($i['investimento_desabilitado']??'N')==='S' || ($i['investimento_excluido']??'N')==='S')throw new RuntimeException('O CP #'.$i['cpcontador'].' exige conta e TIPOES de investimento/contrapartida validos.');
+                $modo='investimento';
+            }
+            $i['modo_baixa']=$modo;
             $total+=$valor;$baixas[]=[$i,$valor];
         }
-        $credito=(int)round((float)$f['total_creditos']*100);$pagamento=(int)round((float)$f['total_fatura']*100);
-        if($pagamento<=0 || $total-$credito!==$pagamento || $total!==(int)round((float)$f['total_debitos']*100))throw new RuntimeException('A soma dos CPs nao fecha com o total liquido da fatura. Confira creditos e itens antes de pagar.');
-        $historico='PAGTO FATURA '.substr($f['competencia'],5,2).'/'.substr($f['competencia'],0,4);
+        $credito=(int)round((float)$creditos['devolucoes']*100);$pagamento=(int)round((float)$f['total_fatura']*100);
+        if($pagamento<=0 || $total-$credito!==$pagamento || $total+$estornado!==(int)round((float)$f['total_debitos']*100))throw new RuntimeException('A soma dos CPs e estornos nao fecha com o total liquido da fatura. Confira creditos e itens antes de baixar.');
+        $historico='FATURA '.substr($f['competencia'],5,2).'/'.substr($f['competencia'],0,4);
         $up=$pdo->prepare("UPDATE armazem_cp001 SET STATUS='QT',DTPAGTO=?,VLRPAGO=?,VLRRESTANTE=0,CBCONTADOR=39,USERALT=?,DTALT=NOW(),REGSTAMP=NOW() WHERE EMPRESA=? AND CPCONTADOR=? AND STATUS<>'QT' AND DTPAGTO IS NULL AND COALESCE(VLRPAGO,0)=0");
         $log=$pdo->prepare("INSERT INTO financeiro_cc_baixas(fatura_id,empresa_id,cpcontador,movcontador,valor) VALUES(?,?,?,?,?)");
         foreach($baixas as [$i,$valor]){
-            $mov=cccInserirMovimentoFatura($pdo,$empresa,39,(int)$i['TIPOES'],'D',$data,'BAIXA CP '.$i['cpcontador'].' - '.$historico,$faturaId,$usuario,$valor,'CP001',(int)$i['cpcontador'],(int)$i['FCONTADOR']);
+            $descricaoBaixa='BAIXA CP '.$i['cpcontador'].' - '.$historico;
+            $mov=cccInserirMovimentoFatura($pdo,$empresa,39,(int)$i['TIPOES'],'D',$data,$descricaoBaixa,$faturaId,$usuario,$valor,'CP001',(int)$i['cpcontador'],(int)$i['FCONTADOR']);
+            if($i['modo_baixa']==='investimento'){
+                $contrap=cccInserirMovimentoFatura($pdo,$empresa,(int)$i['CONTRAP_CBCONTADOR'],(int)$i['CONTRAP_TIPOES'],strtoupper(trim((string)($i['CONTRAP_TIPOMOV']?:'C'))),$data,'CONTRAPARTIDA - '.$descricaoBaixa,$faturaId,$usuario,$valor,'CP001',(int)$i['cpcontador'],(int)$i['FCONTADOR']);
+                $pdo->prepare("UPDATE armazem_bnc001 SET CONTRAPARTIDA='S' WHERE EMPRESA=? AND MOVCONTADOR=?")->execute([$empresa,$mov]);
+                $pdo->prepare("UPDATE armazem_bnc001 SET ORIGEMCPART=? WHERE EMPRESA=? AND MOVCONTADOR=?")->execute([$mov,$empresa,$contrap]);
+            }
             $up->execute([$data,$valor/100,$usuario?:null,$empresa,(int)$i['cpcontador']]);if($up->rowCount()!==1)throw new RuntimeException('CP #'.$i['cpcontador'].' foi alterado durante o fechamento.');
             $log->execute([$faturaId,$empresa,(int)$i['cpcontador'],$mov,$valor/100]);
         }
-        $credito39=cccInserirMovimentoFatura($pdo,$empresa,39,$tipoCredito,'C',$data,$historico,$faturaId,$usuario,$pagamento,'FATURA_CC');
-        $debitoConta=cccInserirMovimentoFatura($pdo,$empresa,$contaPagamento,$tipoDebito,'D',$data,$historico,$faturaId,$usuario,$pagamento,'FATURA_CC');
-        $pdo->prepare("UPDATE armazem_bnc001 SET CONTRAPARTIDA='S' WHERE EMPRESA=? AND MOVCONTADOR=?")->execute([$empresa,$credito39]);
-        $pdo->prepare("UPDATE armazem_bnc001 SET ORIGEMCPART=? WHERE EMPRESA=? AND MOVCONTADOR=?")->execute([$credito39,$empresa,$debitoConta]);
-        $s=$pdo->prepare("INSERT INTO financeiro_cc_fechamentos(fatura_id,empresa_id,data_pagamento,conta_pagamento,total_cps,total_pagamento,total_ajuste,mov_credito_39,mov_debito_pagamento,usuario_id) VALUES(?,?,?,?,?,?,?,?,?,?)");
-        $s->execute([$faturaId,$empresa,$data,$contaPagamento,$total/100,$pagamento,$credito/100,$credito39,$debitoConta,$usuario?:null]);
-        $pdo->prepare("UPDATE financeiro_cc_faturas SET status=? WHERE id=? AND empresa_id=?")->execute([$credito>0?'AJUSTE_PENDENTE':'ENCERRADA',$faturaId,$empresa]);
+        $pdo->prepare("UPDATE financeiro_cc_faturas SET status='ENCERRADA' WHERE id=? AND empresa_id=? AND status='IMPORTADA'")->execute([$faturaId,$empresa]);
         $pdo->commit();
     }catch(Throwable $e){if($pdo->inTransaction())$pdo->rollBack();throw $e;}
 }
