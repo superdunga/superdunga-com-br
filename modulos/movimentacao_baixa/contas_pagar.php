@@ -4,12 +4,14 @@ require '../../config/conexao.php';
 require_once '../../config/modulos.php';
 require __DIR__ . '/_empresa2_guard.php';
 require_once __DIR__ . '/_acertos_lib.php';
+require_once __DIR__ . '/_cp_cr_vinculos.php';
 require_once __DIR__ . '/_exportacao_filtros.php';
 
 $pdo = $pdo_master;
 $empresaId = (int)($_SESSION['empresa_id'] ?? 0);
 $usuarioId = (int)($_SESSION['usuario_id'] ?? 0);
 mbaGarantirEstrutura($pdo);
+mbaGarantirVinculosCpCr($pdo);
 
 function cpbH($valor)
 {
@@ -120,6 +122,7 @@ function cpbBuscarTipoes(PDO $pdo, $empresaId, $tipoes)
         FROM armazem_bnc005
         WHERE EMPRESA = ?
           AND ESCONTADOR = ?
+          AND TIPOMOV = 'D'
           AND COALESCE(REGDISAB, 'N') <> 'S'
           AND COALESCE(excluido_firebird, 'N') <> 'S'
         LIMIT 1
@@ -184,6 +187,7 @@ function cpbSalvar(PDO $pdo, $empresaId, $usuarioId, array $dados, $cpcontadorEd
     $numParcela = max(1, $numParcela);
 
     if ($cpcontadorEdicao) {
+        if (mbaVinculoCpCr($pdo,(int)$empresaId,'CP',(int)$cpcontadorEdicao))throw new RuntimeException('CP vinculado a um CR nao pode ser editado isoladamente.');
         $stmt = $pdo->prepare("
             SELECT *
             FROM armazem_cp001
@@ -713,6 +717,7 @@ function cpbMovimentoConciliadoExtrato(PDO $pdo, $empresaId, $movcontador)
 
 function cpbExcluirTitulo(PDO $pdo, $empresaId, $usuarioId, $cpcontador)
 {
+    if (mbaVinculoCpCr($pdo,(int)$empresaId,'CP',(int)$cpcontador))return mbaExcluirParCpCr($pdo,(int)$empresaId,(int)$usuarioId,'CP',(int)$cpcontador);
     $stmt = $pdo->prepare("
         SELECT *
         FROM armazem_cp001
@@ -938,8 +943,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     } elseif ($acao === 'excluir_titulo') {
         try {
             $cpcontadorExcluir = (int)($_POST['cpcontador'] ?? 0);
-            cpbExcluirTitulo($pdo, $empresaId, $usuarioId, $cpcontadorExcluir);
-            $mensagem = 'Titulo CP #' . $cpcontadorExcluir . ' excluido com sucesso.';
+            $parExcluido=cpbExcluirTitulo($pdo, $empresaId, $usuarioId, $cpcontadorExcluir);
+            $mensagem = $parExcluido ? 'Par CP #' . $parExcluido[0] . ' e CR #' . $parExcluido[1] . ' excluido com sucesso.' : 'Titulo CP #' . $cpcontadorExcluir . ' excluido com sucesso.';
         } catch (Throwable $e) {
             $erro = $e->getMessage();
         }
@@ -954,10 +959,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     } else {
         try {
             $cpcontadorEdicao = !empty($_POST['cpcontador_edicao']) ? (int)$_POST['cpcontador_edicao'] : null;
-            $resultado = cpbSalvar($pdo, $empresaId, $usuarioId, $_POST, $cpcontadorEdicao);
+            $gerarCr=!$cpcontadorEdicao && ($_POST['gerar_cr']??'')==='S';
+            if($gerarCr){
+                $cliente=(int)($_POST['clicontador_cr']??0);
+                $dadosPareados=$_POST;$dadosPareados['tipoes']=mbaTipoesParCpCr($pdo,$empresaId)['cp'];
+                $pdo->beginTransaction();
+                try{$resultado=cpbSalvar($pdo,$empresaId,$usuarioId,$dadosPareados);$crCriados=mbaCriarCrDosCp($pdo,$empresaId,$usuarioId,$resultado,$cliente);$pdo->commit();}
+                catch(Throwable $e){if($pdo->inTransaction())$pdo->rollBack();throw $e;}
+            }else{$resultado=cpbSalvar($pdo, $empresaId, $usuarioId, $_POST, $cpcontadorEdicao);}
             $mensagem = $cpcontadorEdicao
                 ? 'Titulo CP #' . (int)$resultado . ' atualizado com sucesso.'
-                : count($resultado) . ' titulo(s) gravado(s) com sucesso: #' . implode(', #', array_map('intval', $resultado)) . '.';
+                : count($resultado) . ' CP(s) gravado(s): #' . implode(', #', array_map('intval', $resultado)) . '.' . ($gerarCr?' CR(s) vinculados: #'.implode(', #',$crCriados).'.':'');
             $_GET['editar'] = null;
         } catch (Throwable $e) {
             $erro = $e->getMessage();
@@ -987,6 +999,10 @@ $stmtTipoes = $pdo->prepare("
 ");
 $stmtTipoes->execute([$empresaId]);
 $tipos = $stmtTipoes->fetchAll(PDO::FETCH_ASSOC);
+
+$stmtClientesReembolso=$pdo->prepare("SELECT CLICONTADOR,COALESCE(NULLIF(APELIDO,''),NOME,CONCAT('Cliente ',CLICONTADOR)) nome FROM armazem_cr002 WHERE EMPRESA=? AND COALESCE(excluido_firebird,'N')<>'S' ORDER BY nome,CLICONTADOR");
+$stmtClientesReembolso->execute([$empresaId]);$clientesReembolso=$stmtClientesReembolso->fetchAll(PDO::FETCH_ASSOC);
+$tipoesPar=null;try{$tipoesPar=mbaTipoesParCpCr($pdo,$empresaId);}catch(RuntimeException $e){}
 
 $stmtContas = $pdo->prepare("
     SELECT CBCONTADOR, NUMERO, DESCABREV, TITULAR
@@ -1168,6 +1184,7 @@ if (in_array(($_GET['exportar'] ?? ''), ['csv', 'pdf'], true)) {
 $stmtLista = $pdo->prepare($sqlListaBase . ' LIMIT 200');
 $stmtLista->execute($params);
 $titulos = $stmtLista->fetchAll(PDO::FETCH_ASSOC);
+$stmtVinculos=$pdo->prepare("SELECT cpcontador,crcontador FROM movimentacao_baixa_cp_cr_vinculos WHERE empresa_id=? AND status='ATIVO'");$stmtVinculos->execute([$empresaId]);$vinculosCp=[];foreach($stmtVinculos->fetchAll(PDO::FETCH_ASSOC) as $v){$vinculosCp[(int)$v['cpcontador']]=(int)$v['crcontador'];}
 
 $totalValorLista = 0.0;
 $totalRestanteLista = 0.0;
@@ -1574,6 +1591,11 @@ require '../../layout/header.php';
                     <label for="observacao">Observacao</label>
                     <textarea id="observacao" name="observacao"><?= cpbH($form['observacao']) ?></textarea>
                 </div>
+                <?php if(!$tituloEdicao): ?>
+                    <div class="cpb-field w12"><label><input type="checkbox" id="gerar_cr" name="gerar_cr" value="S" style="width:auto" <?=($_POST['gerar_cr']??'')==='S'?'checked':''?> <?=$tipoesPar?'':'disabled'?>> Gerar contas a receber do cliente no mesmo valor e nas mesmas datas</label><?php if(!$tipoesPar):?><small>Configure os TIPOES de contrapartida do CP e CR antes de usar esta opcao.</small><?php endif;?></div>
+                    <div class="cpb-field w4 cpb-reembolso"><label for="clicontador_cr">Cliente do reembolso</label><select id="clicontador_cr" name="clicontador_cr"><option value="">Selecione</option><?php foreach($clientesReembolso as $cliente):?><option value="<?=(int)$cliente['CLICONTADOR']?>" <?=(string)($_POST['clicontador_cr']??'')===(string)$cliente['CLICONTADOR']?'selected':''?>><?=cpbH($cliente['nome'].' ('.$cliente['CLICONTADOR'].')')?></option><?php endforeach;?></select></div>
+                    <div class="cpb-field w4 cpb-reembolso"><label>TIPOES do CP / CR</label><div>D CONTRAPARTIDA PAGAR / C CONTRA PARTIDA RECEBER</div></div>
+                <?php endif; ?>
             </div>
 
             <div class="cpb-actions">
@@ -1583,6 +1605,7 @@ require '../../layout/header.php';
                 <?php endif; ?>
             </div>
         </form>
+        <?php if(!$tituloEdicao):?><script>const reembolso=document.getElementById('gerar_cr');const tipoesCp=document.getElementById('tipoes');const tipoesOriginal=tipoesCp.value;function atualizarReembolso(){document.querySelectorAll('.cpb-reembolso').forEach(campo=>{campo.hidden=!reembolso.checked;const selecao=campo.querySelector('select');if(selecao)selecao.required=reembolso.checked;});tipoesCp.disabled=reembolso.checked;if(reembolso.checked)tipoesCp.value='<?=((int)($tipoesPar['cp']??0))?>';else tipoesCp.value=tipoesOriginal;}reembolso.addEventListener('change',atualizarReembolso);atualizarReembolso();</script><?php endif;?>
     </div>
 
     <div class="cpb-card">
@@ -1791,11 +1814,11 @@ require '../../layout/header.php';
                                         </button>
                                     <?php endif; ?>
                                     <?php if ($statusLinha !== 'QT' && ($titulo['TIPODOCORIGEM'] ?? '') === 'SUPERDUNGA' && ($titulo['CONTROLE'] ?? '') === 'MOVIMENTACAO_BAIXA'): ?>
-                                        <a class="cpb-btn light" href="contas_pagar.php?editar=<?= (int)$titulo['CPCONTADOR'] ?>">Editar</a>
-                                        <form method="post" style="display:inline;" onsubmit="return confirm('Excluir este titulo aberto? Esta acao nao sera permitida se ele estiver vinculado a acerto.');">
+                                        <?php if(!isset($vinculosCp[(int)$titulo['CPCONTADOR']])): ?><a class="cpb-btn light" href="contas_pagar.php?editar=<?= (int)$titulo['CPCONTADOR'] ?>">Editar</a><?php else: ?><span class="text-muted small">CR #<?=(int)$vinculosCp[(int)$titulo['CPCONTADOR']]?></span><?php endif; ?>
+                                        <form method="post" style="display:inline;" onsubmit="return confirm('<?=isset($vinculosCp[(int)$titulo['CPCONTADOR']])?'Excluir o CP e o CR vinculados?':'Excluir este titulo aberto?'?>');">
                                             <input type="hidden" name="acao" value="excluir_titulo">
                                             <input type="hidden" name="cpcontador" value="<?= (int)$titulo['CPCONTADOR'] ?>">
-                                            <button type="submit" class="cpb-btn secondary">Excluir</button>
+                                            <button type="submit" class="cpb-btn secondary"><?=isset($vinculosCp[(int)$titulo['CPCONTADOR']])?'Excluir par':'Excluir'?></button>
                                         </form>
                                     <?php elseif ($statusLinha === 'QT'): ?>
                                         <span class="text-muted small">Quitado</span>

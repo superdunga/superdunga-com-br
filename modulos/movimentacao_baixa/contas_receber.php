@@ -4,12 +4,14 @@ require '../../config/conexao.php';
 require_once '../../config/modulos.php';
 require __DIR__ . '/_empresa2_guard.php';
 require_once __DIR__ . '/_acertos_lib.php';
+require_once __DIR__ . '/_cp_cr_vinculos.php';
 require_once __DIR__ . '/_exportacao_filtros.php';
 
 $pdo = $pdo_master;
 $empresaId = (int)($_SESSION['empresa_id'] ?? 0);
 $usuarioId = (int)($_SESSION['usuario_id'] ?? 0);
 mbaGarantirEstrutura($pdo);
+mbaGarantirVinculosCpCr($pdo);
 
 function crbGarantirEstrutura(PDO $pdo)
 {
@@ -153,6 +155,7 @@ function crbBuscarTipoes(PDO $pdo, $empresaId, $tipoes)
         FROM armazem_bnc005
         WHERE EMPRESA = ?
           AND ESCONTADOR = ?
+          AND TIPOMOV = 'C'
           AND COALESCE(REGDISAB, 'N') <> 'S'
           AND COALESCE(excluido_firebird, 'N') <> 'S'
         LIMIT 1
@@ -217,6 +220,7 @@ function crbSalvar(PDO $pdo, $empresaId, $usuarioId, array $dados, $crcontadorEd
     $numParcela = max(1, $numParcela);
 
     if ($crcontadorEdicao) {
+        if (mbaVinculoCpCr($pdo,(int)$empresaId,'CR',(int)$crcontadorEdicao))throw new RuntimeException('CR vinculado a um CP nao pode ser editado isoladamente.');
         $stmt = $pdo->prepare("
             SELECT *
             FROM armazem_cr001
@@ -734,6 +738,7 @@ function crbMovimentosBaixaPorTitulo(PDO $pdo, $empresaId, array $crcontadores)
 
 function crbExcluirTitulo(PDO $pdo, $empresaId, $usuarioId, $crcontador)
 {
+    if (mbaVinculoCpCr($pdo,(int)$empresaId,'CR',(int)$crcontador))return mbaExcluirParCpCr($pdo,(int)$empresaId,(int)$usuarioId,'CR',(int)$crcontador);
     $stmt = $pdo->prepare("
         SELECT *
         FROM armazem_cr001
@@ -1083,8 +1088,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     } elseif ($acao === 'excluir_titulo') {
         try {
             $crcontadorExcluir = (int)($_POST['crcontador'] ?? 0);
-            crbExcluirTitulo($pdo, $empresaId, $usuarioId, $crcontadorExcluir);
-            $mensagem = 'Titulo CR #' . $crcontadorExcluir . ' excluido com sucesso.';
+            $parExcluido=crbExcluirTitulo($pdo, $empresaId, $usuarioId, $crcontadorExcluir);
+            $mensagem = $parExcluido ? 'Par CP #' . $parExcluido[0] . ' e CR #' . $parExcluido[1] . ' excluido com sucesso.' : 'Titulo CR #' . $crcontadorExcluir . ' excluido com sucesso.';
         } catch (Throwable $e) {
             $erro = $e->getMessage();
         }
@@ -1320,6 +1325,7 @@ if (in_array(($_GET['exportar'] ?? ''), ['csv', 'pdf'], true)) {
 $stmtLista = $pdo->prepare($sqlListaBase . ' LIMIT 200');
 $stmtLista->execute($params);
 $titulos = $stmtLista->fetchAll(PDO::FETCH_ASSOC);
+$stmtVinculos=$pdo->prepare("SELECT cpcontador,crcontador FROM movimentacao_baixa_cp_cr_vinculos WHERE empresa_id=? AND status='ATIVO'");$stmtVinculos->execute([$empresaId]);$vinculosCr=[];foreach($stmtVinculos->fetchAll(PDO::FETCH_ASSOC) as $v){$vinculosCr[(int)$v['crcontador']]=(int)$v['cpcontador'];}
 
 $totalValorLista = 0.0;
 $totalRestanteLista = 0.0;
@@ -1945,11 +1951,11 @@ require '../../layout/header.php';
                                         </button>
                                     <?php endif; ?>
                                     <?php if ($statusLinha !== 'QT' && ($titulo['TIPODOCORIGEM'] ?? '') === 'SUPERDUNGA' && ($titulo['CONTROLE'] ?? '') === 'MOVIMENTACAO_BAIXA'): ?>
-                                        <a class="crb-btn light" href="contas_receber.php?editar=<?= (int)$titulo['CRCONTADOR'] ?>">Editar</a>
-                                        <form method="post" style="display:inline;" onsubmit="return confirm('Excluir este titulo aberto? Esta acao nao sera permitida se ele estiver vinculado a acerto.');">
+                                        <?php if(!isset($vinculosCr[(int)$titulo['CRCONTADOR']])): ?><a class="crb-btn light" href="contas_receber.php?editar=<?= (int)$titulo['CRCONTADOR'] ?>">Editar</a><?php else: ?><span class="text-muted small">CP #<?=(int)$vinculosCr[(int)$titulo['CRCONTADOR']]?></span><?php endif; ?>
+                                        <form method="post" style="display:inline;" onsubmit="return confirm('<?=isset($vinculosCr[(int)$titulo['CRCONTADOR']])?'Excluir o CP e o CR vinculados?':'Excluir este titulo aberto?'?>');">
                                             <input type="hidden" name="acao" value="excluir_titulo">
                                             <input type="hidden" name="crcontador" value="<?= (int)$titulo['CRCONTADOR'] ?>">
-                                            <button type="submit" class="crb-btn secondary">Excluir</button>
+                                            <button type="submit" class="crb-btn secondary"><?=isset($vinculosCr[(int)$titulo['CRCONTADOR']])?'Excluir par':'Excluir'?></button>
                                         </form>
                                     <?php elseif ($statusLinha === 'QT'): ?>
                                         <span class="text-muted small">Quitado</span>
