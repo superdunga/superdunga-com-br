@@ -250,7 +250,7 @@ function mbMovimentoTemContrapartidaAberta(PDO $pdo, $empresaId, $movcontador)
     return (bool)mbCarregarContrapartidaAberta($pdo, $empresaId, $movcontador);
 }
 
-function mbValidarContrapartidaAberta(PDO $pdo, $empresaId, array $dados)
+function mbValidarContrapartidaAberta(PDO $pdo, $empresaId, array $dados, ?array $tipoPrincipal)
 {
     $erros = [];
     $criar = !empty($dados['criar_contrap_aberta']);
@@ -264,6 +264,22 @@ function mbValidarContrapartidaAberta(PDO $pdo, $empresaId, array $dados)
         $erros[] = 'Informe se a contrapartida em aberto sera a pagar ou a receber.';
     }
 
+    $tipomovPrincipal = strtoupper((string)($tipoPrincipal['TIPOMOV'] ?? ''));
+    $tipoesContrap = (int)($tipoPrincipal['CONTRAP_TIPOES'] ?? 0);
+    if ($tipoesContrap <= 0) {
+        $erros[] = 'O TIPOES do movimento precisa ter CONTRAP_TIPOES configurado para gerar um titulo em aberto.';
+    } else {
+        $tipoContrap = mbBuscarTipo($pdo, $empresaId, $tipoesContrap);
+        $tipomovContrap = strtoupper((string)($tipoContrap['TIPOMOV'] ?? ''));
+        if (!$tipoContrap || !in_array($tipomovPrincipal, ['C', 'D'], true)
+            || $tipomovContrap !== mbInvertirTipomov($tipomovPrincipal)) {
+            $erros[] = 'O TIPOES de contrapartida deve estar ativo e ter movimento oposto ao lancamento.';
+        }
+    }
+    if (($tipomovPrincipal === 'D' && $tipo !== 'CR') || ($tipomovPrincipal === 'C' && $tipo !== 'CP')) {
+        $erros[] = 'Debito deve gerar CR e credito deve gerar CP.';
+    }
+
     if (empty($dados['contrap_aberta_vencimento'])) {
         $erros[] = 'Informe o vencimento da contrapartida em aberto.';
     }
@@ -271,10 +287,6 @@ function mbValidarContrapartidaAberta(PDO $pdo, $empresaId, array $dados)
     $valorContrap = mbFloat($dados['contrap_aberta_valor'] ?? $dados['valor'] ?? 0);
     if ($valorContrap <= 0) {
         $erros[] = 'Informe um valor valido para a contrapartida em aberto.';
-    }
-
-    if (empty($dados['contrap_aberta_tipoes']) || !mbBuscarTipo($pdo, $empresaId, (int)$dados['contrap_aberta_tipoes'])) {
-        $erros[] = 'Informe um TIPOES valido para a contrapartida em aberto.';
     }
 
     if ($tipo === 'CP') {
@@ -290,7 +302,7 @@ function mbValidarContrapartidaAberta(PDO $pdo, $empresaId, array $dados)
     return $erros;
 }
 
-function mbCriarContrapartidaAberta(PDO $pdo, $empresaId, $usuarioId, $movcontador, array $dados)
+function mbCriarContrapartidaAberta(PDO $pdo, $empresaId, $usuarioId, $movcontador, array $dados, int $tipoes)
 {
     if (empty($dados['criar_contrap_aberta'])) {
         return null;
@@ -299,7 +311,6 @@ function mbCriarContrapartidaAberta(PDO $pdo, $empresaId, $usuarioId, $movcontad
     $tipo = strtoupper((string)($dados['contrap_aberta_tipo'] ?? ''));
     $valor = mbFloat($dados['contrap_aberta_valor'] ?? $dados['valor'] ?? 0);
     $vencimento = $dados['contrap_aberta_vencimento'];
-    $tipoes = (int)$dados['contrap_aberta_tipoes'];
     $historicoBase = trim((string)($dados['historico'] ?? ''));
     $historico = trim((string)($dados['contrap_aberta_historico'] ?? ''));
     if ($historico === '') {
@@ -438,7 +449,7 @@ function mbValidarLancamento(PDO $pdo, $empresaId, $dados)
         }
     }
 
-    $erros = array_merge($erros, mbValidarContrapartidaAberta($pdo, $empresaId, $dados));
+    $erros = array_merge($erros, mbValidarContrapartidaAberta($pdo, $empresaId, $dados, $tipo));
 
     return [$erros, $tipo];
 }
@@ -647,7 +658,7 @@ function mbSalvarLancamento(PDO $pdo, $empresaId, $usuarioId, $dados, $movcontad
                 ]);
             }
 
-            mbCriarContrapartidaAberta($pdo, $empresaId, $usuarioId, $movcontadorPrincipal, $dados);
+            mbCriarContrapartidaAberta($pdo, $empresaId, $usuarioId, $movcontadorPrincipal, $dados, $contrapTipoes);
         }
 
         $pdo->commit();
@@ -805,6 +816,7 @@ $tiposStmt = $pdo->prepare("
 ");
 $tiposStmt->execute([$empresaId]);
 $tipos = $tiposStmt->fetchAll(PDO::FETCH_ASSOC);
+$tiposPorId = array_column($tipos, null, 'ESCONTADOR');
 
 $fornecedoresStmt = $pdo->prepare("
     SELECT FCONTADOR, NOME, APELIDO
@@ -876,7 +888,6 @@ $form = [
     'contrap_aberta_fcontador' => '',
     'contrap_aberta_clicontador' => '',
     'contrap_aberta_vencimento' => date('Y-m-d'),
-    'contrap_aberta_tipoes' => '',
     'contrap_aberta_valor' => '',
     'contrap_aberta_historico' => '',
 ];
@@ -1312,6 +1323,7 @@ require_once __DIR__ . '/../../layout/header.php';
                                 value="<?= (int)$tipo['ESCONTADOR'] ?>"
                                 data-tipomov="<?= mbH($tipo['TIPOMOV'] ?? '') ?>"
                                 data-contrap="<?= $contrapTipo ?>"
+                                data-contrap-nome="<?= mbH($tiposPorId[$contrapTipo]['DESCES'] ?? '') ?>"
                                 data-contrap-conta="<?= mbH($contrapConta) ?>"
                                 <?= (string)$form['tipoes'] === (string)$tipo['ESCONTADOR'] ? 'selected' : '' ?>
                             >
@@ -1415,14 +1427,7 @@ require_once __DIR__ . '/../../layout/header.php';
                                 </div>
                                 <div class="mb-field w4">
                                     <label for="contrap_aberta_tipoes">TIPOES do titulo</label>
-                                    <select id="contrap_aberta_tipoes" name="contrap_aberta_tipoes">
-                                        <option value="">Selecione</option>
-                                        <?php foreach ($tipos as $tipo): ?>
-                                            <option value="<?= (int)$tipo['ESCONTADOR'] ?>">
-                                                <?= mbH(($tipo['DESCES'] ?? '') . ' (' . $tipo['ESCONTADOR'] . ')') ?>
-                                            </option>
-                                        <?php endforeach; ?>
-                                    </select>
+                                    <input type="text" id="contrap_aberta_tipoes" readonly value="Selecione o tipo de movimentacao">
                                 </div>
                                 <div class="mb-field w2">
                                     <label for="contrap_aberta_valor">Valor</label>
@@ -1653,15 +1658,24 @@ require_once __DIR__ . '/../../layout/header.php';
         const option = tipoSelect.options[tipoSelect.selectedIndex];
         const tipomov = option ? option.getAttribute('data-tipomov') : '';
         const contrap = option ? parseInt(option.getAttribute('data-contrap') || '0', 10) : 0;
+        const contrapNome = option ? option.getAttribute('data-contrap-nome') || '' : '';
         const contaPadrao = option ? option.getAttribute('data-contrap-conta') : '';
 
         tipoVisual.value = nomeTipoMov(tipomov);
 
-        if (contrapAbertaTipo && criarContrapAberta && criarContrapAberta.checked && !contrapAbertaTipo.value) {
-            contrapAbertaTipo.value = (tipomov || '').toUpperCase() === 'D' ? 'CR' : ((tipomov || '').toUpperCase() === 'C' ? 'CP' : '');
-        }
-
         const criarTituloAberto = criarContrapAberta && criarContrapAberta.checked;
+        if (contrapAbertaTipoes) {
+            contrapAbertaTipoes.value = criarTituloAberto
+                ? (contrap > 0 ? contrap + ' - ' + (contrapNome || 'TIPOES nao encontrado') : 'TIPOES sem contrapartida configurada')
+                : 'Selecione o tipo de movimentacao';
+        }
+        if (contrapAbertaTipo) {
+            const tipoEsperado = tipomov.toUpperCase() === 'D' ? 'CR' : (tipomov.toUpperCase() === 'C' ? 'CP' : '');
+            if (criarTituloAberto) contrapAbertaTipo.value = tipoEsperado;
+            Array.from(contrapAbertaTipo.options).forEach(function (opcao) {
+                opcao.disabled = criarTituloAberto && opcao.value !== tipoEsperado;
+            });
+        }
 
         if (contrap > 0 && !criarTituloAberto) {
             contrapBox.classList.add('active');
@@ -1678,7 +1692,7 @@ require_once __DIR__ . '/../../layout/header.php';
         }
     }
 
-    tipoSelect.addEventListener('change', atualizarTipo);
+    tipoSelect.addEventListener('change', atualizarContrapAberta);
     atualizarTipo();
 
     function atualizarContrapAberta() {
@@ -1689,12 +1703,6 @@ require_once __DIR__ . '/../../layout/header.php';
         const ativo = criarContrapAberta.checked;
         contrapAbertaBox.classList.toggle('active', ativo);
         atualizarTipo();
-
-        const option = tipoSelect.options[tipoSelect.selectedIndex];
-        const tipomov = option ? (option.getAttribute('data-tipomov') || '').toUpperCase() : '';
-        if (ativo && contrapAbertaTipo && !contrapAbertaTipo.value) {
-            contrapAbertaTipo.value = tipomov === 'D' ? 'CR' : (tipomov === 'C' ? 'CP' : '');
-        }
 
         if (ativo && contrapAbertaValor && !contrapAbertaValor.value && valorInput) {
             contrapAbertaValor.value = valorInput.value;
@@ -1712,7 +1720,7 @@ require_once __DIR__ . '/../../layout/header.php';
             campo.style.display = tipo === 'CP' ? '' : 'none';
         });
 
-        [contrapAbertaTipo, contrapAbertaValor, contrapAbertaVencimento, contrapAbertaTipoes].forEach(function (campo) {
+        [contrapAbertaTipo, contrapAbertaValor, contrapAbertaVencimento].forEach(function (campo) {
             if (campo) campo.required = ativo;
         });
         if (contrapAbertaCliente) {
