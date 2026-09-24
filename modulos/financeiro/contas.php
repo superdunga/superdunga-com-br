@@ -491,6 +491,74 @@ if (in_array($dc, ['C', 'D'], true)) {
 
 $whereSql = implode("\n      AND ", $where);
 
+$resultadosBuscaValor = [];
+$buscaValorLimitada = false;
+if ($valorMin !== null || $valorMax !== null) {
+    $whereBuscaValor = [
+        'b.EMPRESA = ?',
+        "COALESCE(b.deletado, 'N') <> 'S'",
+    ];
+    $paramsBuscaValor = [$empresaId];
+    if ($contasSelecionadas) {
+        $whereBuscaValor[] = 'b.CBCONTADOR IN (' . implode(',', array_fill(0, count($contasSelecionadas), '?')) . ')';
+        array_push($paramsBuscaValor, ...$contasSelecionadas);
+    }
+    if ($dataIni !== '') {
+        $whereBuscaValor[] = 'b.DTMOV >= ?';
+        $paramsBuscaValor[] = $dataIni;
+    }
+    if ($dataFim !== '') {
+        $whereBuscaValor[] = 'b.DTMOV < DATE_ADD(?, INTERVAL 1 DAY)';
+        $paramsBuscaValor[] = $dataFim;
+    }
+    if ($valorMin !== null) {
+        $whereBuscaValor[] = 'ABS(b.VALORMOV) >= ?';
+        $paramsBuscaValor[] = $valorMin;
+    }
+    if ($valorMax !== null) {
+        $whereBuscaValor[] = 'ABS(b.VALORMOV) <= ?';
+        $paramsBuscaValor[] = $valorMax;
+    }
+    if (in_array($dc, ['C', 'D'], true)) {
+        $whereBuscaValor[] = 'b.TIPOMOV = ?';
+        $paramsBuscaValor[] = $dc;
+    }
+    if ($tipoes !== '' && ctype_digit($tipoes)) {
+        $whereBuscaValor[] = 'b.TIPOES = ?';
+        $paramsBuscaValor[] = (int)$tipoes;
+    }
+    if ($historico !== '') {
+        $whereBuscaValor[] = 'b.HISTMOV LIKE ?';
+        $paramsBuscaValor[] = '%' . $historico . '%';
+    }
+    if ($documento !== '') {
+        $whereBuscaValor[] = '(b.NUMDOC LIKE ? OR b.NUMDOCORIGEM LIKE ? OR b.NUMCONTROLE LIKE ?)';
+        array_push($paramsBuscaValor, '%' . $documento . '%', '%' . $documento . '%', '%' . $documento . '%');
+    }
+    $stmtBuscaValor = $pdo_master->prepare("
+        SELECT b.MOVCONTADOR, b.DTMOV, b.CBCONTADOR, b.TIPOMOV, b.VALORMOV,
+               b.HISTMOV, b.NUMDOC, b.NUMDOCORIGEM, b.NUMCONTROLE,
+               COALESCE(c.TITULAR, c.DESCABREV, CONCAT('Conta ', b.CBCONTADOR)) AS conta_nome,
+               (SELECT a.id
+                FROM financeiro_acertos_extrato_itens ai
+                INNER JOIN financeiro_acertos_extrato a ON a.id = ai.acerto_id
+                    AND a.empresa_id = ai.empresa_id AND a.status = 'ATIVO'
+                WHERE ai.empresa_id = b.EMPRESA AND ai.movcontador = b.MOVCONTADOR
+                ORDER BY a.id DESC LIMIT 1) AS acerto_id
+        FROM armazem_bnc001 b
+        LEFT JOIN armazem_bnc002 c ON c.EMPRESA = b.EMPRESA AND c.CBCONTADOR = b.CBCONTADOR
+        WHERE " . implode(' AND ', $whereBuscaValor) . "
+        ORDER BY b.DTMOV DESC, b.MOVCONTADOR DESC
+        LIMIT 501
+    ");
+    $stmtBuscaValor->execute($paramsBuscaValor);
+    $resultadosBuscaValor = $stmtBuscaValor->fetchAll(PDO::FETCH_ASSOC);
+    $buscaValorLimitada = count($resultadosBuscaValor) > 500;
+    if ($buscaValorLimitada) {
+        array_pop($resultadosBuscaValor);
+    }
+}
+
 $stmtResumo = $pdo_master->prepare("
     SELECT
         COUNT(*) AS qtd,
@@ -1116,6 +1184,41 @@ require '../../layout/header.php';
         </div>
     </form>
 </section>
+
+<?php if ($valorMin !== null || $valorMax !== null): ?>
+<section class="mb-3" aria-label="Resultados da busca por valor">
+    <div class="bg-white border rounded-2 shadow-sm overflow-hidden">
+        <div class="p-3 border-bottom d-flex justify-content-between align-items-center gap-2">
+            <h2 class="h6 mb-0">Lancamentos encontrados por valor</h2>
+            <span class="badge text-bg-light border"><?= count($resultadosBuscaValor) ?> resultado(s)<?= $buscaValorLimitada ? '+' : '' ?></span>
+        </div>
+        <?php if ($buscaValorLimitada): ?>
+            <div class="alert alert-warning m-3 mb-0">Exibindo os 500 lancamentos mais recentes. Refine o periodo ou o valor para ver os demais.</div>
+        <?php endif; ?>
+        <div class="table-responsive">
+            <table class="table table-sm table-hover align-middle mb-0">
+                <thead class="table-primary"><tr><th>Data</th><th>Conta</th><th>Mov.</th><th>Historico</th><th>Documento</th><th>D/C</th><th class="text-end">Valor</th><th>Acerto</th></tr></thead>
+                <tbody>
+                    <?php foreach ($resultadosBuscaValor as $resultadoValor): ?>
+                        <?php $docValor = $resultadoValor['NUMDOC'] ?: ($resultadoValor['NUMDOCORIGEM'] ?: $resultadoValor['NUMCONTROLE']); ?>
+                        <tr>
+                            <td class="text-nowrap"><?= dataContasBanco($resultadoValor['DTMOV']) ?></td>
+                            <td><?= (int)$resultadoValor['CBCONTADOR'] ?> - <?= htmlspecialchars((string)$resultadoValor['conta_nome']) ?></td>
+                            <td><?= (int)$resultadoValor['MOVCONTADOR'] ?></td>
+                            <td><?= htmlspecialchars((string)$resultadoValor['HISTMOV']) ?></td>
+                            <td><?= htmlspecialchars((string)$docValor) ?></td>
+                            <td><?= htmlspecialchars((string)$resultadoValor['TIPOMOV']) ?></td>
+                            <td class="text-end text-nowrap"><?= moedaContasBanco(abs((float)$resultadoValor['VALORMOV'])) ?></td>
+                            <td class="text-nowrap"><?php if ($resultadoValor['acerto_id'] !== null): ?><a href="acerto_pdf.php?id=<?= (int)$resultadoValor['acerto_id'] ?>" target="_blank" rel="noopener">#<?= (int)$resultadoValor['acerto_id'] ?></a><?php else: ?>Sem acerto<?php endif; ?></td>
+                        </tr>
+                    <?php endforeach; ?>
+                    <?php if (!$resultadosBuscaValor): ?><tr><td colspan="8" class="text-center text-muted py-3">Nenhum lancamento encontrado no periodo e nas contas selecionadas.</td></tr><?php endif; ?>
+                </tbody>
+            </table>
+        </div>
+    </div>
+</section>
+<?php endif; ?>
 
 <?php if (!empty($_GET['ok_acerto'])): ?>
     <div class="alert alert-success">
