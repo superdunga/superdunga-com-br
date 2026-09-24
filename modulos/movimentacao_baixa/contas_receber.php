@@ -427,6 +427,31 @@ function crbBaixarTitulos(PDO $pdo, $empresaId, $usuarioId, array $dados)
             $tipomovPrincipal = strtoupper((string)$tipo['TIPOMOV']);
             $contrapTipoes = !empty($tipo['CONTRAP_TIPOES']) ? (int)$tipo['CONTRAP_TIPOES'] : 0;
             $exigeContrap = $contrapTipoes > 0;
+            if (($titulo['TIPODOCORIGEM'] ?? '') === 'SUPERDUNGA'
+                && ($titulo['CONTROLE'] ?? '') === 'MOV_BAIXA_CONTRAPARTIDA') {
+                if ($tipoes !== (int)$titulo['TIPOES'] || $tipomovPrincipal !== 'C' || !$exigeContrap) {
+                    throw new RuntimeException('Mantenha o TIPOES original para baixar o CR de contrapartida #' . (int)$titulo['CRCONTADOR'] . '.');
+                }
+                $stmtOrigem = $pdo->prepare("
+                    SELECT 1
+                    FROM mov_baixa_contrapartidas v
+                    INNER JOIN armazem_bnc001 b
+                        ON b.EMPRESA = v.empresa_id AND b.MOVCONTADOR = v.movcontador
+                    WHERE v.empresa_id = ?
+                      AND v.tipo_contrapartida = 'CR'
+                      AND v.contador_contrapartida = ?
+                      AND ABS(v.valor - ?) < 0.01
+                      AND b.TIPOMOV = 'D'
+                      AND b.TIPOES = ?
+                      AND COALESCE(b.deletado, 'N') <> 'S'
+                    LIMIT 1
+                ");
+                $stmtOrigem->execute([$empresaId, (int)$titulo['CRCONTADOR'], (float)$titulo['VALORVENDA'], $contrapTipoes]);
+                if (!$stmtOrigem->fetchColumn()) {
+                    throw new RuntimeException('A contrapartida original do CR #' . (int)$titulo['CRCONTADOR'] . ' nao foi encontrada. Baixa nao realizada.');
+                }
+                $exigeContrap = false;
+            }
             $contrapCbcontador = $exigeContrap ? (int)($tipo['CONTRAP_CBCONTADOR'] ?? 0) : 0;
             $contrapTipomov = null;
 
@@ -1519,7 +1544,7 @@ require '../../layout/header.php';
                                     <td><?= crbH(crbData($tituloBaixa['DTVENC'])) ?></td>
                                     <td><?= crbH(($tituloBaixa['CLICONTADOR'] ?? '') . ' - ' . ($tituloBaixa['cliente_nome'] ?? '')) ?></td>
                                     <td><?= crbH($tituloBaixa['TITULO'] ?? '') ?></td>
-                                    <td><?= crbH($tituloBaixa['TIPOES'] ?? '') ?></td>
+                                    <td><?= crbH($tituloBaixa['TIPOES'] ?? '') ?><?php if (($tituloBaixa['TIPODOCORIGEM'] ?? '') === 'SUPERDUNGA' && ($tituloBaixa['CONTROLE'] ?? '') === 'MOV_BAIXA_CONTRAPARTIDA'): ?><div class="text-muted small">Contrapartida no lancamento de origem</div><?php endif; ?></td>
                                     <td>
                                         <input type="text" name="valor_baixa[<?= (int)$tituloBaixa['CRCONTADOR'] ?>]" value="<?= crbH($valorCampo) ?>" inputmode="decimal" style="width:120px;text-align:right;">
                                         <div class="text-muted small">Restante: <?= crbH(crbMoeda($valorBaixa)) ?></div>
