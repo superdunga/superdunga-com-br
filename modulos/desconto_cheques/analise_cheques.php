@@ -25,6 +25,10 @@ $fValorMin = trim((string)($_GET['valor_min'] ?? ''));
 $fValorMax = trim((string)($_GET['valor_max'] ?? ''));
 $fStatus = trim((string)($_GET['status'] ?? ''));
 $fImagem = trim((string)($_GET['imagem'] ?? 'todos'));
+$fTipo = trim((string)($_GET['tipo_documento'] ?? 'todos'));
+if (!in_array($fTipo, ['todos', 'CHEQUE', 'BOLETO'], true)) {
+    $fTipo = 'todos';
+}
 
 function acqH($valor): string
 {
@@ -54,8 +58,12 @@ function acqImagemUrl(?string $caminho): string
     return '../../' . str_replace('\\', '/', $caminho);
 }
 
-$where = ["o.empresa_id = ?", "d.tipo_documento = 'CHEQUE'"];
+$where = ["o.empresa_id = ?", "d.tipo_documento IN ('CHEQUE', 'BOLETO')"];
 $params = [$empresaId];
+if ($fTipo !== 'todos') {
+    $where[] = 'd.tipo_documento = ?';
+    $params[] = $fTipo;
+}
 if ($fCliente > 0) {
     $where[] = 'o.cliente_id = ?';
     $params[] = $fCliente;
@@ -136,8 +144,8 @@ require '../../layout/header.php';
     <div class="p-4 bg-white border rounded-2 shadow-sm d-flex flex-wrap justify-content-between align-items-center gap-3">
         <div>
             <span class="badge text-bg-success mb-2">Desconto de Cheques</span>
-            <h1 class="h4 fw-bold mb-1">Analise de Cheques</h1>
-            <p class="text-muted mb-0">Consulta consolidada dos cheques cadastrados na empresa 2.</p>
+            <h1 class="h4 fw-bold mb-1">Analise de Documentos</h1>
+            <p class="text-muted mb-0">Consulta consolidada de cheques e boletos cadastrados na empresa 2.</p>
         </div>
         <a href="menu_desconto_cheques.php" class="btn btn-outline-secondary">Voltar</a>
     </div>
@@ -147,6 +155,7 @@ require '../../layout/header.php';
     <div class="card-header bg-white fw-semibold">Filtros</div>
     <div class="card-body">
         <form method="get" class="row g-3 align-items-end">
+            <div class="col-md-2"><label class="form-label small">Tipo de documento</label><select name="tipo_documento" class="form-select"><option value="todos" <?= $fTipo === 'todos' ? 'selected' : '' ?>>Cheques e boletos</option><option value="CHEQUE" <?= $fTipo === 'CHEQUE' ? 'selected' : '' ?>>Cheques</option><option value="BOLETO" <?= $fTipo === 'BOLETO' ? 'selected' : '' ?>>Boletos</option></select></div>
             <div class="col-md-3"><label class="form-label small">Cliente</label><select name="cliente_id" class="form-select"><option value="">Todos</option><?php foreach ($clientes as $cliente): ?><option value="<?= (int)$cliente['id'] ?>" <?= $fCliente === (int)$cliente['id'] ? 'selected' : '' ?>><?= acqH($cliente['nome']) ?></option><?php endforeach; ?></select></div>
             <div class="col-md-2"><label class="form-label small">Vencimento inicial</label><input type="date" name="venc_ini" value="<?= acqH($fVencIni) ?>" class="form-control"></div>
             <div class="col-md-2"><label class="form-label small">Vencimento final</label><input type="date" name="venc_fim" value="<?= acqH($fVencFim) ?>" class="form-control"></div>
@@ -165,15 +174,15 @@ require '../../layout/header.php';
 </section>
 
 <section class="row g-3 mb-3">
-    <div class="col-md-3"><div class="card shadow-sm"><div class="card-body"><small class="text-muted fw-semibold">CHEQUES</small><div class="h4 mb-0 mt-1"><?= number_format(count($cheques), 0, ',', '.') ?></div></div></div></div>
+    <div class="col-md-3"><div class="card shadow-sm"><div class="card-body"><small class="text-muted fw-semibold">DOCUMENTOS</small><div class="h4 mb-0 mt-1"><?= number_format(count($cheques), 0, ',', '.') ?></div></div></div></div>
     <div class="col-md-3"><div class="card shadow-sm"><div class="card-body"><small class="text-muted fw-semibold">VALOR TOTAL</small><div class="h4 mb-0 mt-1"><?= acqH(moedaDC($total)) ?></div></div></div></div>
 </section>
 
 <section class="card shadow-sm">
-    <div class="card-header bg-white fw-semibold">Cheques encontrados</div>
+    <div class="card-header bg-white fw-semibold">Documentos encontrados</div>
     <div class="table-responsive">
         <table class="table table-hover table-sm mb-0 acq-table">
-            <thead class="table-light"><tr><th>Cliente</th><th>Vencimento</th><th>Data operacao</th><th>CPF/CNPJ</th><th>Emissor</th><th>Cheque</th><th class="text-end">Valor</th><th>Status</th><th>Imagem</th></tr></thead>
+            <thead class="table-light"><tr><th>Cliente</th><th>Tipo</th><th>Vencimento</th><th>Data operacao</th><th>CPF/CNPJ</th><th>Emissor</th><th>Numero</th><th class="text-end">Valor</th><th>Status</th><th>Imagem</th></tr></thead>
             <tbody>
             <?php foreach ($cheques as $cheque): ?>
                 <?php
@@ -182,6 +191,7 @@ require '../../layout/header.php';
                 ?>
                 <tr>
                     <td><?= acqH($cheque['cliente_nome']) ?></td>
+                    <td><?= acqH($cheque['tipo_documento']) ?></td>
                     <td class="acq-nowrap"><?= acqH(dataBRDC($cheque['data_vencimento'])) ?></td>
                     <td class="acq-nowrap"><a href="operacoes.php?editar=<?= (int)$cheque['operacao_id'] ?>">#<?= (int)$cheque['operacao_id'] ?> - <?= acqH(dataBRDC($cheque['data_referencia'])) ?></a></td>
                     <td class="acq-nowrap"><?= acqH(formatarCpfCnpjDC($cheque['cnpj_cpf_emissor'])) ?></td>
@@ -198,7 +208,7 @@ require '../../layout/header.php';
                     </td>
                 </tr>
             <?php endforeach; ?>
-            <?php if (!$cheques): ?><tr><td colspan="9" class="text-center text-muted py-4">Nenhum cheque encontrado.</td></tr><?php endif; ?>
+            <?php if (!$cheques): ?><tr><td colspan="10" class="text-center text-muted py-4">Nenhum documento encontrado.</td></tr><?php endif; ?>
             </tbody>
         </table>
     </div>

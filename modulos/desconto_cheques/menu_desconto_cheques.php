@@ -40,7 +40,7 @@ $opcoes = [
 
 if ($empresaId === 2) {
     $opcoes[] = [
-        'titulo' => 'Analise de Cheques',
+        'titulo' => 'Analise de Documentos',
         'descricao' => 'Consulte cheques, emissores, vencimentos, valores e imagens.',
         'href' => 'analise_cheques.php',
         'modulo' => 'desconto_cheques_analise',
