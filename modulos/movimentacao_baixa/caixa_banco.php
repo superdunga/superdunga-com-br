@@ -259,12 +259,11 @@ function mbValidarContrapartidaAberta(PDO $pdo, $empresaId, array $dados, ?array
         return $erros;
     }
 
-    $tipo = strtoupper((string)($dados['contrap_aberta_tipo'] ?? ''));
-    if (!in_array($tipo, ['CP', 'CR'], true)) {
-        $erros[] = 'Informe se a contrapartida em aberto sera a pagar ou a receber.';
-    }
-
     $tipomovPrincipal = strtoupper((string)($tipoPrincipal['TIPOMOV'] ?? ''));
+    $tipo = $tipomovPrincipal === 'D' ? 'CR' : ($tipomovPrincipal === 'C' ? 'CP' : '');
+    if ($tipo === '') {
+        $erros[] = 'O tipo do movimento deve ser debito ou credito para gerar um titulo em aberto.';
+    }
     $tipoesContrap = (int)($tipoPrincipal['CONTRAP_TIPOES'] ?? 0);
     if ($tipoesContrap <= 0) {
         $erros[] = 'O TIPOES do movimento precisa ter CONTRAP_TIPOES configurado para gerar um titulo em aberto.';
@@ -276,15 +275,11 @@ function mbValidarContrapartidaAberta(PDO $pdo, $empresaId, array $dados, ?array
             $erros[] = 'O TIPOES de contrapartida deve estar ativo e ter movimento oposto ao lancamento.';
         }
     }
-    if (($tipomovPrincipal === 'D' && $tipo !== 'CR') || ($tipomovPrincipal === 'C' && $tipo !== 'CP')) {
-        $erros[] = 'Debito deve gerar CR e credito deve gerar CP.';
-    }
-
     if (empty($dados['contrap_aberta_vencimento'])) {
         $erros[] = 'Informe o vencimento da contrapartida em aberto.';
     }
 
-    $valorContrap = mbFloat($dados['contrap_aberta_valor'] ?? $dados['valor'] ?? 0);
+    $valorContrap = mbFloat($dados['valor'] ?? 0);
     if ($valorContrap <= 0) {
         $erros[] = 'Informe um valor valido para a contrapartida em aberto.';
     }
@@ -302,14 +297,13 @@ function mbValidarContrapartidaAberta(PDO $pdo, $empresaId, array $dados, ?array
     return $erros;
 }
 
-function mbCriarContrapartidaAberta(PDO $pdo, $empresaId, $usuarioId, $movcontador, array $dados, int $tipoes)
+function mbCriarContrapartidaAberta(PDO $pdo, $empresaId, $usuarioId, $movcontador, array $dados, int $tipoes, string $tipo)
 {
     if (empty($dados['criar_contrap_aberta'])) {
         return null;
     }
 
-    $tipo = strtoupper((string)($dados['contrap_aberta_tipo'] ?? ''));
-    $valor = mbFloat($dados['contrap_aberta_valor'] ?? $dados['valor'] ?? 0);
+    $valor = mbFloat($dados['valor'] ?? 0);
     $vencimento = $dados['contrap_aberta_vencimento'];
     $historicoBase = trim((string)($dados['historico'] ?? ''));
     $historico = trim((string)($dados['contrap_aberta_historico'] ?? ''));
@@ -658,7 +652,7 @@ function mbSalvarLancamento(PDO $pdo, $empresaId, $usuarioId, $dados, $movcontad
                 ]);
             }
 
-            mbCriarContrapartidaAberta($pdo, $empresaId, $usuarioId, $movcontadorPrincipal, $dados, $contrapTipoes);
+            mbCriarContrapartidaAberta($pdo, $empresaId, $usuarioId, $movcontadorPrincipal, $dados, $contrapTipoes, $tipomov === 'D' ? 'CR' : 'CP');
         }
 
         $pdo->commit();
@@ -888,7 +882,6 @@ $form = [
     'contrap_aberta_fcontador' => '',
     'contrap_aberta_clicontador' => '',
     'contrap_aberta_vencimento' => date('Y-m-d'),
-    'contrap_aberta_valor' => '',
     'contrap_aberta_historico' => '',
 ];
 
@@ -1335,7 +1328,7 @@ require_once __DIR__ . '/../../layout/header.php';
 
                 <div class="mb-field w2">
                     <label>Tipo do movimento</label>
-                    <input type="text" id="tipomov_visual" value="" readonly>
+                    <input type="text" id="tipomov_visual" value="" readonly tabindex="-1">
                 </div>
 
                 <div class="mb-field w2">
@@ -1393,11 +1386,7 @@ require_once __DIR__ . '/../../layout/header.php';
                             <div class="mb-grid">
                                 <div class="mb-field w3">
                                     <label for="contrap_aberta_tipo">Tipo</label>
-                                    <select id="contrap_aberta_tipo" name="contrap_aberta_tipo">
-                                        <option value="">Selecione</option>
-                                        <option value="CR">Conta a receber</option>
-                                        <option value="CP">Conta a pagar</option>
-                                    </select>
+                                    <input type="text" id="contrap_aberta_tipo" readonly tabindex="-1" value="Definido pelo movimento">
                                 </div>
                                 <div class="mb-field w3 mb-campo-cr">
                                     <label for="contrap_aberta_clicontador">Cliente</label>
@@ -1427,11 +1416,11 @@ require_once __DIR__ . '/../../layout/header.php';
                                 </div>
                                 <div class="mb-field w4">
                                     <label for="contrap_aberta_tipoes">TIPOES do titulo</label>
-                                    <input type="text" id="contrap_aberta_tipoes" readonly value="Selecione o tipo de movimentacao">
+                                    <input type="text" id="contrap_aberta_tipoes" readonly tabindex="-1" value="Selecione o tipo de movimentacao">
                                 </div>
                                 <div class="mb-field w2">
                                     <label for="contrap_aberta_valor">Valor</label>
-                                    <input type="text" id="contrap_aberta_valor" name="contrap_aberta_valor" inputmode="decimal" placeholder="Mesmo valor">
+                                    <input type="text" id="contrap_aberta_valor" readonly tabindex="-1" value="<?= mbH($form['valor']) ?>">
                                 </div>
                                 <div class="mb-field w6">
                                     <label for="contrap_aberta_historico">Historico do titulo</label>
@@ -1656,7 +1645,7 @@ require_once __DIR__ . '/../../layout/header.php';
 
     function atualizarTipo() {
         const option = tipoSelect.options[tipoSelect.selectedIndex];
-        const tipomov = option ? option.getAttribute('data-tipomov') : '';
+        const tipomov = option ? (option.getAttribute('data-tipomov') || '') : '';
         const contrap = option ? parseInt(option.getAttribute('data-contrap') || '0', 10) : 0;
         const contrapNome = option ? option.getAttribute('data-contrap-nome') || '' : '';
         const contaPadrao = option ? option.getAttribute('data-contrap-conta') : '';
@@ -1670,11 +1659,9 @@ require_once __DIR__ . '/../../layout/header.php';
                 : 'Selecione o tipo de movimentacao';
         }
         if (contrapAbertaTipo) {
-            const tipoEsperado = tipomov.toUpperCase() === 'D' ? 'CR' : (tipomov.toUpperCase() === 'C' ? 'CP' : '');
-            if (criarTituloAberto) contrapAbertaTipo.value = tipoEsperado;
-            Array.from(contrapAbertaTipo.options).forEach(function (opcao) {
-                opcao.disabled = criarTituloAberto && opcao.value !== tipoEsperado;
-            });
+            contrapAbertaTipo.value = criarTituloAberto
+                ? (tipomov === 'D' ? 'Conta a receber' : (tipomov === 'C' ? 'Conta a pagar' : 'Selecione o tipo de movimentacao'))
+                : 'Definido pelo movimento';
         }
 
         if (contrap > 0 && !criarTituloAberto) {
@@ -1704,7 +1691,7 @@ require_once __DIR__ . '/../../layout/header.php';
         contrapAbertaBox.classList.toggle('active', ativo);
         atualizarTipo();
 
-        if (ativo && contrapAbertaValor && !contrapAbertaValor.value && valorInput) {
+        if (contrapAbertaValor && valorInput) {
             contrapAbertaValor.value = valorInput.value;
         }
 
@@ -1712,7 +1699,9 @@ require_once __DIR__ . '/../../layout/header.php';
             contrapAbertaHistorico.value = 'CONTRAPARTIDA EM ABERTO - ' + historicoInput.value;
         }
 
-        const tipo = contrapAbertaTipo ? contrapAbertaTipo.value : '';
+        const option = tipoSelect.options[tipoSelect.selectedIndex];
+        const tipomov = option ? (option.getAttribute('data-tipomov') || '').toUpperCase() : '';
+        const tipo = tipomov === 'D' ? 'CR' : (tipomov === 'C' ? 'CP' : '');
         camposCr.forEach(function (campo) {
             campo.style.display = tipo === 'CR' ? '' : 'none';
         });
@@ -1720,7 +1709,7 @@ require_once __DIR__ . '/../../layout/header.php';
             campo.style.display = tipo === 'CP' ? '' : 'none';
         });
 
-        [contrapAbertaTipo, contrapAbertaValor, contrapAbertaVencimento].forEach(function (campo) {
+        [contrapAbertaVencimento].forEach(function (campo) {
             if (campo) campo.required = ativo;
         });
         if (contrapAbertaCliente) {
@@ -1733,9 +1722,6 @@ require_once __DIR__ . '/../../layout/header.php';
 
     if (criarContrapAberta) {
         criarContrapAberta.addEventListener('change', atualizarContrapAberta);
-    }
-    if (contrapAbertaTipo) {
-        contrapAbertaTipo.addEventListener('change', atualizarContrapAberta);
     }
     atualizarContrapAberta();
 
@@ -1765,32 +1751,24 @@ require_once __DIR__ . '/../../layout/header.php';
     if (valorInput) {
         valorInput.addEventListener('input', function () {
             this.value = this.value.replace(/[^\d.,]/g, '');
+            if (contrapAbertaValor) contrapAbertaValor.value = this.value;
         });
 
         valorInput.addEventListener('blur', function () {
             this.value = formatarValorDecimal(this.value);
-            if (contrapAbertaValor && criarContrapAberta && criarContrapAberta.checked && !contrapAbertaValor.value) {
-                contrapAbertaValor.value = this.value;
-            }
+            if (contrapAbertaValor) contrapAbertaValor.value = this.value;
         });
 
         const form = valorInput.closest('form');
         if (form) {
             form.addEventListener('submit', function () {
                 valorInput.value = formatarValorDecimal(valorInput.value);
+                if (contrapAbertaValor) contrapAbertaValor.value = valorInput.value;
             });
         }
 
         valorInput.value = formatarValorDecimal(valorInput.value);
-    }
-
-    if (contrapAbertaValor) {
-        contrapAbertaValor.addEventListener('input', function () {
-            this.value = this.value.replace(/[^\d.,]/g, '');
-        });
-        contrapAbertaValor.addEventListener('blur', function () {
-            this.value = formatarValorDecimal(this.value);
-        });
+        if (contrapAbertaValor) contrapAbertaValor.value = valorInput.value;
     }
 })();
 </script>

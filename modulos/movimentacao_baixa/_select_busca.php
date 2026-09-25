@@ -129,6 +129,7 @@
         parent.insertBefore(wrapper, select);
         wrapper.appendChild(select);
         select.classList.add('mb-select-search-native');
+        select.tabIndex = -1;
 
         const control = document.createElement('div');
         control.className = 'mb-select-search-control';
@@ -141,6 +142,7 @@
         const arrow = document.createElement('button');
         arrow.type = 'button';
         arrow.className = 'mb-select-search-arrow';
+        arrow.tabIndex = -1;
         arrow.textContent = 'v';
         arrow.disabled = select.disabled;
         const list = document.createElement('div');
