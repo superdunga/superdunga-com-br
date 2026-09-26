@@ -4,11 +4,20 @@ declare(strict_types=1);
 require __DIR__ . '/../../config/conexao.php';
 header('Content-Type: application/json; charset=utf-8');
 
-function responderAuxiliar(int $status, array $body): never
+function responderAuxiliar(int $status, array $body): void
 {
     http_response_code($status);
     echo json_encode($body, JSON_UNESCAPED_UNICODE | JSON_INVALID_UTF8_SUBSTITUTE);
     exit;
+}
+
+function listaAuxiliar(array $items): bool
+{
+    $expected = 0;
+    foreach (array_keys($items) as $key) {
+        if ($key !== $expected++) return false;
+    }
+    return true;
 }
 
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
@@ -16,8 +25,10 @@ if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
 }
 
 try {
-    $input = json_decode(file_get_contents('php://input'), true, 512, JSON_THROW_ON_ERROR);
-    if (!is_array($input)) throw new InvalidArgumentException('Corpo JSON invalido');
+    $input = json_decode(file_get_contents('php://input'), true);
+    if (json_last_error() !== JSON_ERROR_NONE || !is_array($input)) {
+        throw new InvalidArgumentException('Corpo JSON invalido');
+    }
     $source = (string)($input['source'] ?? '');
     $fbCompany = (int)($input['firebird_company'] ?? 0);
     $company = (int)($input['company'] ?? 0);
@@ -59,7 +70,7 @@ try {
 
     if ($action === 'start') {
         $schema = $input['schema'] ?? null;
-        if (!is_array($schema) || !array_is_list($schema) || count($schema) < 2 || count($schema) > 500) {
+        if (!is_array($schema) || !listaAuxiliar($schema) || count($schema) < 2 || count($schema) > 500) {
             throw new InvalidArgumentException('Esquema auxiliar invalido');
         }
         $columns = [];
@@ -117,16 +128,16 @@ try {
     }
     if ($action === 'batch') {
         $rows = $input['rows'] ?? null;
-        if (!is_array($rows) || !$rows || count($rows) > 1000 || !array_is_list($rows)) {
+        if (!is_array($rows) || !$rows || count($rows) > 1000 || !listaAuxiliar($rows)) {
             throw new InvalidArgumentException('Lote deve conter de 1 a 1000 registros');
         }
         $columns = $pdo_master->query("SHOW COLUMNS FROM $tableName")->fetchAll(PDO::FETCH_COLUMN);
         $excluded = ['empresa_firebird_origem', 'sync_id', 'excluido_firebird', 'data_exclusao_firebird', 'motivo_sync', 'ultima_presenca_firebird'];
         $dataColumns = array_values(array_diff($columns, $excluded));
         $writeColumns = array_merge($dataColumns, ['empresa_firebird_origem', 'sync_id', 'excluido_firebird', 'data_exclusao_firebird', 'motivo_sync', 'ultima_presenca_firebird']);
-        $quoted = implode(',', array_map(static fn($c) => "`$c`", $writeColumns));
+        $quoted = implode(',', array_map(static function ($c) { return "`$c`"; }, $writeColumns));
         $placeholders = implode(',', array_fill(0, count($writeColumns), '?'));
-        $updates = implode(',', array_map(static fn($c) => "`$c`=VALUES(`$c`)", array_diff($writeColumns, ['EMPRESA', $keyColumn])));
+        $updates = implode(',', array_map(static function ($c) { return "`$c`=VALUES(`$c`)"; }, array_diff($writeColumns, ['EMPRESA', $keyColumn])));
         $stmt = $pdo_master->prepare("INSERT INTO $tableName ($quoted) VALUES ($placeholders) ON DUPLICATE KEY UPDATE $updates");
         $seen = [];
         foreach ($rows as $row) {
