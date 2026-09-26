@@ -198,7 +198,6 @@ def sync_auxiliary(table, selected_company, page_size):
     )
     if not receiver.startswith("https://"):
         raise RuntimeError("O receptor deve usar HTTPS")
-    api = os.environ.get("AUXILIAR_API_URL", "http://127.0.0.1:5001").rstrip("/")
     session = requests.Session()
     session.headers.update({"X-Sync-Token": token})
     retry = Retry(
@@ -207,19 +206,21 @@ def sync_auxiliary(table, selected_company, page_size):
     )
     session.mount("https://", HTTPAdapter(max_retries=retry))
     session.mount("http://", HTTPAdapter(max_retries=retry))
-    schema_response = session.get(f"{api}/schema/{table}", timeout=180)
-    schema_response.raise_for_status()
-    schema = schema_response.json()["fields"]
+    local_client = app.test_client()
+
+    def local_get(path, **params):
+        response = local_client.get(path, query_string=params)
+        if response.status_code != 200:
+            raise RuntimeError(f"Falha na leitura local de {path}: HTTP {response.status_code}: {response.get_json()}")
+        return response.get_json()
+
+    schema = local_get(f"/schema/{table}")["fields"]
     key_column = TABLES[table][1]
     if not {"EMPRESA", key_column}.issubset({field["name"] for field in schema}):
         raise RuntimeError(f"{table} sem EMPRESA ou {key_column}")
 
     for firebird_company, company in mappings:
-        count_response = session.get(
-            f"{api}/contagem/{table}", params={"empresa": firebird_company}, timeout=180
-        )
-        count_response.raise_for_status()
-        source_count = int(count_response.json()["count"])
+        source_count = int(local_get(f"/contagem/{table}", empresa=firebird_company)["count"])
         if source_count == 0:
             raise RuntimeError(f"{table} vazia na empresa {firebird_company}; snapshot cancelado")
         sync_id = str(uuid.uuid4())
@@ -241,13 +242,9 @@ def sync_auxiliary(table, selected_company, page_size):
         after = 0
         total = 0
         while True:
-            response = session.get(
-                f"{api}/dados/{table}",
-                params={"empresa": firebird_company, "apos": after, "limite": page_size},
-                timeout=180,
-            )
-            response.raise_for_status()
-            rows = response.json()["rows"]
+            rows = local_get(
+                f"/dados/{table}", empresa=firebird_company, apos=after, limite=page_size
+            )["rows"]
             if not rows:
                 break
             keys = [int(row[key_column]) for row in rows]
@@ -259,11 +256,7 @@ def sync_auxiliary(table, selected_company, page_size):
             print(f"{table}: Firebird {firebird_company} -> SuperDunga {company}: {total}", flush=True)
         if total != source_count:
             raise RuntimeError(f"Snapshot incompleto: Firebird={source_count}, enviados={total}")
-        count_response = session.get(
-            f"{api}/contagem/{table}", params={"empresa": firebird_company}, timeout=180
-        )
-        count_response.raise_for_status()
-        final_source_count = int(count_response.json()["count"])
+        final_source_count = int(local_get(f"/contagem/{table}", empresa=firebird_company)["count"])
         if final_source_count != source_count:
             raise RuntimeError(
                 f"{table} mudou durante a leitura: inicio={source_count}, fim={final_source_count}"
