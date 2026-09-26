@@ -140,7 +140,8 @@ try {
         $writeColumns = array_merge($dataColumns, ['empresa_firebird_origem', 'sync_id', 'excluido_firebird', 'data_exclusao_firebird', 'motivo_sync', 'ultima_presenca_firebird']);
         $quoted = implode(',', array_map(static function ($c) { return "`$c`"; }, $writeColumns));
         $placeholders = implode(',', array_fill(0, count($writeColumns), '?'));
-        $updates = implode(',', array_map(static function ($c) { return "`$c`=VALUES(`$c`)"; }, array_diff($writeColumns, ['EMPRESA', $keyColumn])));
+        $unchanged = $action === 'delta_batch' ? ['EMPRESA', $keyColumn, 'sync_id'] : ['EMPRESA', $keyColumn];
+        $updates = implode(',', array_map(static function ($c) { return "`$c`=VALUES(`$c`)"; }, array_diff($writeColumns, $unchanged)));
         $stmt = $pdo_master->prepare("INSERT INTO $tableName ($quoted) VALUES ($placeholders) ON DUPLICATE KEY UPDATE $updates");
         $seen = [];
         foreach ($rows as $row) {
