@@ -4,9 +4,11 @@ import os
 import base64
 import sys
 import argparse
+import json
 import uuid
-from datetime import date, datetime, time
+from datetime import date, datetime, time, timedelta
 from decimal import Decimal
+from pathlib import Path
 
 from firebird.driver import connect, driver_config
 from flask import Flask, jsonify, request
@@ -265,24 +267,110 @@ def sync_auxiliary(table, selected_company, page_size):
         print(f"{table} finalizada: {result['received']} registros, {result['marked_absent']} ausentes", flush=True)
 
 
+def sync_incremental(table, selected_company, page_size):
+    import requests
+    from requests.adapters import HTTPAdapter
+    from urllib3.util.retry import Retry
+
+    source = os.environ.get("AUXILIAR_SOURCE", "").lower()
+    mappings = [pair for pair in MAPPINGS.get(source, []) if selected_company in (None, pair[0])]
+    if not mappings:
+        raise RuntimeError("Empresa nao mapeada para este servidor auxiliar")
+    token = os.environ.get("AUXILIAR_SYNC_TOKEN")
+    if not token:
+        raise RuntimeError("AUXILIAR_SYNC_TOKEN nao configurado")
+    receiver = os.environ.get(
+        "AUXILIAR_RECEIVER",
+        "https://www.superdunga.com.br/modulos/tesouraria/receber_auxiliar.php",
+    )
+    if not receiver.startswith("https://"):
+        raise RuntimeError("O receptor deve usar HTTPS")
+    session = requests.Session()
+    session.headers.update({"X-Sync-Token": token})
+    session.mount("https://", HTTPAdapter(max_retries=Retry(
+        total=3, backoff_factor=2, status_forcelist=[429, 500, 502, 503, 504],
+        allowed_methods=["POST"],
+    )))
+    state_dir = Path(os.environ.get("APPDATA", ".")) / "SuperDungaAuxiliar" / "state"
+    state_dir.mkdir(parents=True, exist_ok=True)
+    source_table, key_column = TABLES[table]
+
+    for firebird_company, company in mappings:
+        state_file = state_dir / f"{source}-{table}-{firebird_company}.json"
+        connection = firebird_connection()
+        try:
+            cursor = connection.cursor()
+            cursor.execute("SELECT CURRENT_TIMESTAMP FROM RDB$DATABASE")
+            cutoff = cursor.fetchone()[0] - timedelta(minutes=2)
+            if state_file.exists():
+                state = json.loads(state_file.read_text(encoding="utf-8"))
+                since = datetime.fromisoformat(state["cutoff"]) - timedelta(minutes=10)
+            else:
+                since = cutoff - timedelta(days=1)
+            if cutoff <= since:
+                raise RuntimeError("Janela incremental invalida; verifique o relogio do Firebird")
+
+            common = {
+                "source": source, "firebird_company": firebird_company,
+                "company": company, "table": table, "sync_id": str(uuid.uuid4()),
+            }
+
+            def send(action, **extra):
+                response = session.post(receiver, json={**common, "action": action, **extra}, timeout=180)
+                response.raise_for_status()
+                body = response.json()
+                if body.get("status") != "ok":
+                    raise RuntimeError(body.get("erro", "Resposta inesperada do receptor"))
+                return body
+
+            send("ping")
+            cursor.execute(
+                f"SELECT * FROM {source_table} WHERE EMPRESA = ? "
+                "AND REGSTAMP >= ? AND REGSTAMP < ? "
+                f"ORDER BY REGSTAMP, {key_column}",
+                (firebird_company, since, cutoff),
+            )
+            columns = [column[0] for column in cursor.description]
+            total = 0
+            while True:
+                batch = cursor.fetchmany(page_size)
+                if not batch:
+                    break
+                rows = [dict(zip(columns, map(convert, row))) for row in batch]
+                send("delta_batch", rows=rows)
+                total += len(rows)
+            temporary = state_file.with_suffix(".tmp")
+            temporary.write_text(json.dumps({"cutoff": cutoff.isoformat()}), encoding="utf-8")
+            os.replace(temporary, state_file)
+            print(
+                f"{table} incremental: Firebird {firebird_company} -> SuperDunga {company}: "
+                f"{total} registros; ate {cutoff.isoformat(sep=' ')}", flush=True,
+            )
+        finally:
+            connection.close()
+
+
 if __name__ == "__main__":
     if not allowed_companies():
         raise SystemExit("Defina AUXILIAR_SOURCE=armazem ou emporio")
     parser = argparse.ArgumentParser()
     parser.add_argument("--inspect-est026", action="store_true")
     parser.add_argument("--sync-table", choices=TABLES)
+    parser.add_argument("--incremental-table", choices=TABLES)
     parser.add_argument("--company", type=int)
     parser.add_argument("--page-size", type=int, default=100)
     args = parser.parse_args()
     if not 1 <= args.page_size <= 1000:
         parser.error("--page-size deve estar entre 1 e 1000")
-    if args.inspect_est026 and args.sync_table:
-        parser.error("Escolha apenas inspecao ou sincronizacao")
+    if sum((bool(args.inspect_est026), bool(args.sync_table), bool(args.incremental_table))) > 1:
+        parser.error("Escolha apenas uma operacao")
     if args.inspect_est026:
         inspect_est026()
     elif args.sync_table:
         sync_auxiliary(args.sync_table, args.company, args.page_size)
+    elif args.incremental_table:
+        sync_incremental(args.incremental_table, args.company, args.page_size)
     elif not sys.argv[1:]:
         app.run(host="127.0.0.1", port=int(os.environ.get("AUXILIAR_API_PORT", "5001")))
     else:
-        parser.error("Informe --inspect-est026 ou --sync-table")
+        parser.error("Informe --inspect-est026, --sync-table ou --incremental-table")

@@ -1,6 +1,8 @@
 param(
     [ValidateSet('armazem', 'emporio')]
     [string]$Source = 'armazem',
+    [ValidateSet('Completa', 'Incremental')]
+    [string]$Mode = 'Completa',
     [string]$Database = 'C:\Administrativo\Data\ESTOQUE.FDB',
     [string]$Client = 'C:\Program Files\Firebird\Firebird_4_0\fbclient.dll'
 )
@@ -13,12 +15,17 @@ $log = Join-Path $logDir ('sync-' + (Get-Date -Format 'yyyy-MM-dd') + '.log')
 
 try {
     try {
-        $acquired = $mutex.WaitOne(0)
+        $wait = if ($Mode -eq 'Completa') { 300000 } else { 0 }
+        $acquired = $mutex.WaitOne($wait)
     } catch [System.Threading.AbandonedMutexException] {
         $acquired = $true
     }
     if (-not $acquired) {
-        throw 'Outra sincronizacao auxiliar esta em andamento.'
+        if ($Mode -eq 'Incremental') {
+            Write-Output 'Incremental ignorada: sincronizacao completa em andamento.'
+            exit 0
+        }
+        throw 'Outra sincronizacao auxiliar esta em andamento ha mais de cinco minutos.'
     }
 
     New-Item -ItemType Directory -Path $logDir -Force | Out-Null
@@ -43,15 +50,16 @@ try {
         [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($ptr)
     }
 
-    "$(Get-Date -Format s) Inicio: $Source" | Tee-Object -FilePath $log -Append
+    "$(Get-Date -Format s) Inicio: $Source $Mode" | Tee-Object -FilePath $log -Append
     foreach ($table in @('est026_auxiliar', 'est007_auxiliar')) {
-        & $python -u $script --sync-table $table --page-size 50 2>&1 |
+        $operation = if ($Mode -eq 'Incremental') { '--incremental-table' } else { '--sync-table' }
+        & $python -u $script $operation $table --page-size 50 2>&1 |
             Tee-Object -FilePath $log -Append
         if ($LASTEXITCODE -ne 0) {
             throw "Falha na sincronizacao de $table (codigo $LASTEXITCODE)."
         }
     }
-    "$(Get-Date -Format s) Concluido: $Source" | Tee-Object -FilePath $log -Append
+    "$(Get-Date -Format s) Concluido: $Source $Mode" | Tee-Object -FilePath $log -Append
 } catch {
     if (Test-Path -LiteralPath $logDir) {
         "$(Get-Date -Format s) ERRO: $($_.Exception.Message)" | Tee-Object -FilePath $log -Append

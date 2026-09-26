@@ -1,7 +1,10 @@
 """Focused route tests without a Firebird connection."""
 
 import os
+import tempfile
 import unittest
+from datetime import datetime
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import est007_api
@@ -83,6 +86,30 @@ class AuxiliaryApiTests(unittest.TestCase):
         est007_api.sync_auxiliary("est026_auxiliar", 1, 50)
         remote.get.assert_not_called()
         self.assertEqual(remote.post.call_count, 4)
+
+    @patch.dict(os.environ, {"AUXILIAR_SYNC_TOKEN": "test-token"})
+    @patch("requests.Session")
+    @patch.object(est007_api, "firebird_connection")
+    def test_incremental_advances_state_only_after_success(self, connect, session_factory):
+        with tempfile.TemporaryDirectory() as directory, patch.dict(os.environ, {"APPDATA": directory}):
+            cursor = connect.return_value.cursor.return_value
+            cursor.fetchone.return_value = (datetime(2026, 9, 26, 12, 0),)
+            cursor.description = [("EMPRESA",), ("NFCONTADOR",), ("REGSTAMP",)]
+            cursor.fetchmany.side_effect = [[(1, 14, datetime(2026, 9, 26, 11, 50))], []]
+            response = session_factory.return_value.post.return_value
+            response.json.return_value = {"status": "ok"}
+            state = Path(directory) / "SuperDungaAuxiliar/state/armazem-est026_auxiliar-1.json"
+
+            response.raise_for_status.side_effect = [None, RuntimeError("network error")]
+            with self.assertRaisesRegex(RuntimeError, "network error"):
+                est007_api.sync_incremental("est026_auxiliar", 1, 50)
+            self.assertFalse(state.exists())
+
+            cursor.fetchmany.side_effect = [[(1, 14, datetime(2026, 9, 26, 11, 50))], []]
+            response.raise_for_status.side_effect = None
+            est007_api.sync_incremental("est026_auxiliar", 1, 50)
+            self.assertEqual(state.read_text(encoding="utf-8"), '{"cutoff": "2026-09-26T11:58:00"}')
+            self.assertIn("REGSTAMP >= ? AND REGSTAMP < ?", cursor.execute.call_args.args[0])
 
 
 if __name__ == "__main__":

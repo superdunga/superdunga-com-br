@@ -123,10 +123,13 @@ try {
     $pdo_master->beginTransaction();
     $lock = $pdo_master->prepare('SELECT sync_id FROM auxiliar_sync WHERE tabela = ? AND empresa = ? FOR UPDATE');
     $lock->execute([$table, $company]);
-    if ($lock->fetchColumn() !== $syncId) {
+    $activeSync = $lock->fetchColumn();
+    if ($action === 'delta_batch') {
+        if ($activeSync !== false) throw new RuntimeException('Snapshot completo em andamento');
+    } elseif ($activeSync !== $syncId) {
         throw new RuntimeException('Snapshot nao iniciado ou substituido por outro');
     }
-    if ($action === 'batch') {
+    if ($action === 'batch' || $action === 'delta_batch') {
         $rows = $input['rows'] ?? null;
         if (!is_array($rows) || !$rows || count($rows) > 1000 || !listaAuxiliar($rows)) {
             throw new InvalidArgumentException('Lote deve conter de 1 a 1000 registros');
@@ -151,10 +154,12 @@ try {
             foreach ($dataColumns as $column) {
                 $values[] = $column === 'EMPRESA' ? $company : ($row[$column] ?? null);
             }
-            array_push($values, $fbCompany, $syncId, 'N', null, null, date('Y-m-d H:i:s'));
+            array_push($values, $fbCompany, $action === 'batch' ? $syncId : null, 'N', null, null, date('Y-m-d H:i:s'));
             $stmt->execute($values);
         }
-        $pdo_master->prepare('UPDATE auxiliar_sync SET updated_at=NOW() WHERE tabela=? AND empresa=?')->execute([$table, $company]);
+        if ($action === 'batch') {
+            $pdo_master->prepare('UPDATE auxiliar_sync SET updated_at=NOW() WHERE tabela=? AND empresa=?')->execute([$table, $company]);
+        }
         $pdo_master->commit();
         responderAuxiliar(200, ['status' => 'ok', 'received' => count($rows)]);
     }
