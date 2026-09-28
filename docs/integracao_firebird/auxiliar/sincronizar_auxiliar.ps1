@@ -4,7 +4,10 @@ param(
     [ValidateSet('Completa', 'Incremental')]
     [string]$Mode = 'Completa',
     [string]$Database = 'C:\Administrativo\Data\ESTOQUE.FDB',
-    [string]$Client = 'C:\Program Files\Firebird\Firebird_4_0\fbclient.dll'
+    [string]$Client = 'C:\Program Files\Firebird\Firebird_4_0\fbclient.dll',
+    [string]$Python = '',
+    [ValidateSet('', '1', '6')]
+    [string]$FirebirdCompany = ''
 )
 
 $ErrorActionPreference = 'Stop'
@@ -29,9 +32,12 @@ try {
     }
 
     New-Item -ItemType Directory -Path $logDir -Force | Out-Null
-    $python = (Get-ItemProperty 'HKCU:\SOFTWARE\Python\PythonCore\3.13\InstallPath').ExecutablePath
+    $python = $Python
+    if (-not $python) {
+        $python = (Get-ItemProperty 'HKCU:\SOFTWARE\Python\PythonCore\3.13\InstallPath' -ErrorAction SilentlyContinue).ExecutablePath
+    }
     $script = Join-Path $PSScriptRoot 'est007_api.py'
-    if (-not (Test-Path -LiteralPath $python) -or -not (Test-Path -LiteralPath $script)) {
+    if (-not $python -or -not (Test-Path -LiteralPath $python) -or -not (Test-Path -LiteralPath $script)) {
         throw 'Python ou est007_api.py nao encontrado.'
     }
 
@@ -53,7 +59,9 @@ try {
     "$(Get-Date -Format s) Inicio: $Source $Mode" | Tee-Object -FilePath $log -Append
     foreach ($table in @('est026_auxiliar', 'est007_auxiliar')) {
         $operation = if ($Mode -eq 'Incremental') { '--incremental-table' } else { '--sync-table' }
-        & $python -u $script $operation $table --page-size 50 2>&1 |
+        $arguments = @('-u', $script, $operation, $table, '--page-size', '50')
+        if ($FirebirdCompany) { $arguments += @('--company', $FirebirdCompany) }
+        & $python @arguments 2>&1 |
             Tee-Object -FilePath $log -Append
         if ($LASTEXITCODE -ne 0) {
             throw "Falha na sincronizacao de $table (codigo $LASTEXITCODE)."
