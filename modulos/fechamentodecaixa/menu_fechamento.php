@@ -47,6 +47,14 @@ $opcoes = [
         'icone' => 'MV',
         'botao' => 'btn-dark',
     ],
+    [
+        'titulo' => 'Cupons fiscais',
+        'descricao' => 'Compare cupons, notas fiscais e recebiveis por dia.',
+        'href' => 'cupons_fiscais.php',
+        'modulo' => 'fechamento_cupons_fiscais',
+        'icone' => 'CF',
+        'botao' => 'btn-primary',
+    ],
 ];
 
 $opcoes = filtrarOpcoesPorModulo($pdo_master, $empresaId, $opcoes);

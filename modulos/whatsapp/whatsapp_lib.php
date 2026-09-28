@@ -355,6 +355,17 @@ function whatsappEnsureTables(PDO $pdo): void
         }
     } catch (Throwable $e) {
     }
+
+    $empresaIds = $pdo->query("SELECT id FROM empresas ORDER BY id")->fetchAll(PDO::FETCH_COLUMN);
+    $stmt = $pdo->prepare("
+        INSERT IGNORE INTO whatsapp_rotinas
+            (empresa_id, codigo, nome, descricao, mensagem_id, origem_mensagem, gerador_sistema, ativo, evitar_duplicidade_diaria, periodicidade)
+        VALUES
+            (?, 'alerta_cupons_fiscais', 'Alerta de cupons fiscais', 'Alerta quando os recebiveis do dia superam cupons e notas fiscais.', NULL, 'SISTEMA', 'alerta_cupons_fiscais', 'N', 'S', 'MANUAL')
+    ");
+    foreach ($empresaIds as $empresaRotinaId) {
+        $stmt->execute([(int)$empresaRotinaId]);
+    }
 }
 
 function whatsappEnsureColumn(PDO $pdo, string $table, string $column, string $alterSql): void
@@ -468,6 +479,12 @@ function whatsappGeradoresSistema(): array
             'arquivo' => 'modulos/whatsapp/whatsapp_lib.php',
             'funcao' => 'whatsappMensagemReposicaoTesouraria',
         ],
+        'alerta_cupons_fiscais' => [
+            'nome' => 'Alerta de cupons fiscais',
+            'descricao' => 'Envia alerta quando os recebiveis do dia superam cupons e notas fiscais.',
+            'arquivo' => 'modulos/whatsapp/whatsapp_lib.php',
+            'funcao' => 'whatsappMensagemAlertaCuponsFiscais',
+        ],
         'apresentacao_caixa_1' => [
             'nome' => 'Apresentacao do Caixa',
             'descricao' => 'Mostra a diferenca do dinheiro de todos os operadores do dia, das 07:00 ate 03:00.',
@@ -475,6 +492,16 @@ function whatsappGeradoresSistema(): array
             'funcao' => 'whatsappMensagemApresentacaoCaixa',
         ],
     ];
+}
+
+function whatsappRotinaGerenciada(string $codigo): bool
+{
+    return in_array($codigo, [
+        'resumo_diario',
+        'fechamento_compras_clientes_pdf',
+        'reposicao_tesouraria',
+        'alerta_cupons_fiscais',
+    ], true);
 }
 
 function whatsappItensReposicaoTesouraria(PDO $pdo, int $empresaId): array
@@ -545,6 +572,86 @@ function whatsappMensagemReposicaoTesouraria(PDO $pdo, int $empresaId): string
     $mensagem .= "Valor estimado: R$ " . number_format($valorTotal, 2, ',', '.') . "\n\n";
     $mensagem .= "Favor providenciar a reposicao da tesouraria.";
     return $mensagem;
+}
+
+function whatsappTotaisCuponsFiscais(PDO $pdo, int $empresaId, string $inicio, string $fimInclusivo): array
+{
+    $fiscaisDisponiveis = false;
+    foreach (['armazem_est007_auxiliar', 'armazem_est026_auxiliar'] as $tabela) {
+        $stmt = $pdo->prepare("SELECT 1 FROM $tabela WHERE EMPRESA = ? LIMIT 1");
+        $stmt->execute([$empresaId]);
+        if ($stmt->fetchColumn()) {
+            $fiscaisDisponiveis = true;
+            break;
+        }
+    }
+    if (!$fiscaisDisponiveis) {
+        return ['disponivel' => false, 'cupons' => 0.0, 'notas' => 0.0, 'recebiveis' => 0.0];
+    }
+
+    $fim = (new DateTimeImmutable($fimInclusivo))->modify('+1 day')->format('Y-m-d');
+    $consultas = [
+        'cupons' => "SELECT SUM(COALESCE(TOTGERAL, 0)) FROM armazem_est007_auxiliar
+                     WHERE EMPRESA = :empresa AND DTEMISSAO >= :inicio AND DTEMISSAO < :fim
+                       AND excluido_firebird = 'N' AND COALESCE(CANCELADO, 'N') <> 'S'
+                       AND DTCANCELADO IS NULL",
+        'notas' => "SELECT SUM(COALESCE(TOTGERAL, 0)) FROM armazem_est026_auxiliar
+                    WHERE EMPRESA = :empresa AND DTEMISSAO >= :inicio AND DTEMISSAO < :fim
+                      AND excluido_firebird = 'N' AND DTCANCELADO IS NULL
+                      AND DTHRCANCNFE IS NULL
+                      AND (SITUACAONF IS NULL OR UPPER(TRIM(SITUACAONF)) NOT IN ('C', 'CANCELADA', 'CANCELADO'))",
+        'recebiveis' => "SELECT SUM(COALESCE(valor_bruto, 0)) FROM armazem_conciliacao_recebimentos
+                         WHERE empresa_id = :empresa AND data_venda >= :inicio AND data_venda < :fim
+                           AND CMCONTADOR IN (1, 2, 3, 12)",
+    ];
+    $totais = ['disponivel' => true];
+    foreach ($consultas as $tipo => $sql) {
+        $stmt = $pdo->prepare($sql);
+        $stmt->execute(['empresa' => $empresaId, 'inicio' => $inicio, 'fim' => $fim]);
+        $totais[$tipo] = (float)$stmt->fetchColumn();
+    }
+    return $totais;
+}
+
+function whatsappDiaCuponsFiscais(): string
+{
+    return (new DateTimeImmutable('now', new DateTimeZone('America/Sao_Paulo')))->format('Y-m-d');
+}
+
+function whatsappDiferencaCuponsFiscaisCentavos(array $totais): int
+{
+    return (int)round(($totais['cupons'] + $totais['notas']) * 100)
+        - (int)round($totais['recebiveis'] * 100);
+}
+
+function whatsappFormatarAlertaCuponsFiscais(array $totais, string $empresa, string $inicio, string $fim): string
+{
+    $vendas = (int)round(($totais['cupons'] + $totais['notas']) * 100);
+    $recebiveis = (int)round($totais['recebiveis'] * 100);
+    $diferenca = whatsappDiferencaCuponsFiscaisCentavos($totais);
+    $moeda = static function (int $centavos): string {
+        return ($centavos < 0 ? '-R$ ' : 'R$ ') . number_format(abs($centavos) / 100, 2, ',', '.');
+    };
+
+    $mensagem = "*ALERTA | CUPONS FISCAIS*\n";
+    $mensagem .= 'Empresa: ' . $empresa . "\n";
+    $mensagem .= 'Periodo: ' . date('d/m/Y', strtotime($inicio)) . ' a ' . date('d/m/Y', strtotime($fim)) . "\n\n";
+    $mensagem .= 'Vendas em cupons e notas: ' . $moeda($vendas) . "\n";
+    $mensagem .= 'Recebiveis: ' . $moeda($recebiveis) . "\n";
+    $mensagem .= '*Diferenca: ' . $moeda($diferenca) . "*\n\n";
+    $mensagem .= $diferenca < 0 ? '*PROVIDENCIAR REGULARIZACAO*' : 'Diferenca nao negativa. Nenhuma mensagem sera enviada.';
+    return $mensagem;
+}
+
+function whatsappMensagemAlertaCuponsFiscais(PDO $pdo, int $empresaId): string
+{
+    $dia = whatsappDiaCuponsFiscais();
+    $inicio = substr($dia, 0, 7) . '-01';
+    $totais = whatsappTotaisCuponsFiscais($pdo, $empresaId, $inicio, $dia);
+    if (!$totais['disponivel']) {
+        return '*ALERTA | CUPONS FISCAIS*' . "\n\nDados fiscais auxiliares ainda nao sincronizados para esta empresa. Nenhuma mensagem sera enviada.";
+    }
+    return whatsappFormatarAlertaCuponsFiscais($totais, whatsappNomeEmpresa($pdo, $empresaId), $inicio, $dia);
 }
 
 function whatsappSend(PDO $pdo, array $config, array $destinatario, string $mensagem, ?int $mensagemId, ?int $usuarioId, ?int $rotinaId = null): array
@@ -757,6 +864,27 @@ function whatsappEnviarRotina(PDO $pdo, array $rotina, string $mensagem, ?int $m
         throw new Exception('Rotina inativa.');
     }
 
+    if (($rotina['origem_mensagem'] ?? 'TEXTO') === 'SISTEMA' && ($rotina['gerador_sistema'] ?? '') === 'alerta_cupons_fiscais') {
+        $dia = whatsappDiaCuponsFiscais();
+        $totais = whatsappTotaisCuponsFiscais($pdo, $empresaId, substr($dia, 0, 7) . '-01', $dia);
+        if (!$totais['disponivel']) {
+            return ['ok' => 0, 'falha' => 0, 'ignorado' => 1, 'motivo' => 'Dados fiscais auxiliares indisponiveis'];
+        }
+        if (whatsappDiferencaCuponsFiscaisCentavos($totais) >= 0) {
+            return ['ok' => 0, 'falha' => 0, 'ignorado' => 1, 'motivo' => 'Diferenca de cupons fiscais nao negativa'];
+        }
+        $stmt = $pdo->prepare("
+            SELECT COUNT(*) FROM whatsapp_envios
+            WHERE empresa_id = ? AND rotina_id = ? AND status = 'OK'
+              AND enviado_em >= ? AND enviado_em < ?
+        ");
+        $dia = whatsappDiaCuponsFiscais();
+        $stmt->execute([$empresaId, (int)$rotina['id'], $dia, (new DateTimeImmutable($dia))->modify('+1 day')->format('Y-m-d')]);
+        if ((int)$stmt->fetchColumn() > 0) {
+            return ['ok' => 0, 'falha' => 0, 'ignorado' => 1, 'motivo' => 'Alerta de cupons fiscais ja enviado hoje'];
+        }
+    }
+
     if (($rotina['origem_mensagem'] ?? 'TEXTO') === 'SISTEMA' && ($rotina['gerador_sistema'] ?? '') === 'reposicao_tesouraria') {
         if (empty(whatsappItensReposicaoTesouraria($pdo, $empresaId))) {
             return ['ok' => 0, 'falha' => 0, 'ignorado' => 1, 'motivo' => 'Estoque dentro dos limites configurados'];
@@ -817,7 +945,9 @@ function whatsappCalcularProximaExecucao(array $rotina, ?DateTime $base = null):
         return null;
     }
 
-    $base = $base ?: new DateTime('now');
+    $fuso = new DateTimeZone('America/Sao_Paulo');
+    $base = $base ? clone $base : new DateTime('now', $fuso);
+    $base->setTimezone($fuso);
     $horario = trim((string)($rotina['horario'] ?? ''));
     if ($horario === '') {
         $horario = '08:00:00';
@@ -829,7 +959,7 @@ function whatsappCalcularProximaExecucao(array $rotina, ?DateTime $base = null):
     }
 
     if ($periodicidade === 'DIARIO') {
-        $proxima = new DateTime($base->format('Y-m-d') . ' ' . $horario);
+        $proxima = new DateTime($base->format('Y-m-d') . ' ' . $horario, $fuso);
         if ($proxima <= $base) {
             $proxima->modify('+1 day');
         }
@@ -849,7 +979,7 @@ function whatsappCalcularProximaExecucao(array $rotina, ?DateTime $base = null):
             }
 
             if (in_array((int)$candidata->format('N'), $dias, true)) {
-                $proxima = new DateTime($candidata->format('Y-m-d') . ' ' . $horario);
+                $proxima = new DateTime($candidata->format('Y-m-d') . ' ' . $horario, $fuso);
                 if ($proxima > $base) {
                     return $proxima->format('Y-m-d H:i:s');
                 }
@@ -866,7 +996,7 @@ function whatsappCalcularProximaExecucao(array $rotina, ?DateTime $base = null):
             $mes->modify('first day of +' . $i . ' month');
             $ultimoDia = (int)$mes->format('t');
             $dia = min($diaMes, $ultimoDia);
-            $proxima = new DateTime($mes->format('Y-m-') . str_pad((string)$dia, 2, '0', STR_PAD_LEFT) . ' ' . $horario);
+            $proxima = new DateTime($mes->format('Y-m-') . str_pad((string)$dia, 2, '0', STR_PAD_LEFT) . ' ' . $horario, $fuso);
             if ($proxima > $base) {
                 return $proxima->format('Y-m-d H:i:s');
             }
@@ -941,6 +1071,10 @@ function whatsappMensagemRotina(PDO $pdo, array $rotina): array
 
         if ($gerador === 'reposicao_tesouraria') {
             return [whatsappMensagemReposicaoTesouraria($pdo, $empresaId), null];
+        }
+
+        if ($gerador === 'alerta_cupons_fiscais') {
+            return [whatsappMensagemAlertaCuponsFiscais($pdo, $empresaId), null];
         }
 
         throw new Exception('Gerador de mensagem do sistema nao encontrado.');
