@@ -2,15 +2,41 @@
 require '../../config/auth.php';
 require '../../config/conexao.php';
 
+date_default_timezone_set('America/Sao_Paulo');
 $empresaId = (int)($_SESSION['empresa_id'] ?? 0);
-$mesAtual = date('Y-m');
+$mesSistema = date('Y-m');
+$inicioMesSistema = $mesSistema . '-01';
+$ontem = date('Y-m-d', strtotime('-1 day'));
+$filtroDataIni = (string)($_GET['data_ini'] ?? $inicioMesSistema);
+$filtroDataFim = (string)($_GET['data_fim'] ?? max($inicioMesSistema, $ontem));
+$dataInicialValida = DateTimeImmutable::createFromFormat('!Y-m-d', $filtroDataIni);
+$dataFinalValida = DateTimeImmutable::createFromFormat('!Y-m-d', $filtroDataFim);
+$erroFiltro = null;
+if (!$dataInicialValida || !$dataFinalValida || $dataInicialValida->format('Y-m-d') !== $filtroDataIni ||
+    $dataFinalValida->format('Y-m-d') !== $filtroDataFim ||
+    substr($filtroDataIni, 0, 7) !== substr($filtroDataFim, 0, 7) ||
+    $filtroDataIni > $filtroDataFim || substr($filtroDataIni, 0, 7) > $mesSistema) {
+    $erroFiltro = 'Selecione datas validas dentro de um unico mes, ate o mes atual.';
+    $filtroDataIni = $inicioMesSistema;
+    $filtroDataFim = max($inicioMesSistema, $ontem);
+}
+$mesAtual = substr($filtroDataIni, 0, 7);
 $inicioMesAtual = $mesAtual . '-01';
 $fimMesAtual = date('Y-m-t', strtotime($inicioMesAtual));
+$limiteMesAtual = max($inicioMesAtual, min($ontem, $fimMesAtual));
+if ($filtroDataFim > $limiteMesAtual) {
+    $erroFiltro = 'A data final foi limitada ao ultimo dia fechado do mes selecionado.';
+    $filtroDataFim = $limiteMesAtual;
+}
+if ($filtroDataIni > $filtroDataFim) {
+    $erroFiltro = 'A data inicial deve ser anterior ao ultimo dia fechado do mes.';
+    $filtroDataIni = $inicioMesAtual;
+}
 $mesAnterior = date('Y-m', strtotime($inicioMesAtual . ' -1 month'));
 $inicioMesAnterior = $mesAnterior . '-01';
 $fimMesAnterior = date('Y-m-t', strtotime($inicioMesAnterior));
-$dataReferencia = min(date('Y-m-d', strtotime('-1 day')), $fimMesAtual);
-$temDiasFechados = $dataReferencia >= $inicioMesAtual;
+$dataReferencia = $filtroDataFim;
+$temDiasFechados = $ontem >= $inicioMesAtual && $dataReferencia >= $inicioMesAtual;
 $diasMesAtual = (int)date('t', strtotime($inicioMesAtual));
 $diasDecorridos = $temDiasFechados ? (int)date('j', strtotime($dataReferencia)) : 0;
 $diasSemanaMetaVendas = [
@@ -22,14 +48,6 @@ $diasSemanaMetaVendas = [
     5 => 'Sex',
     6 => 'Sab',
 ];
-$filtroDataIni = (string)($_GET['data_ini'] ?? $inicioMesAtual);
-$filtroDataFim = (string)($_GET['data_fim'] ?? $dataReferencia);
-$filtroDataIni = preg_match('/^\d{4}-\d{2}-\d{2}$/', $filtroDataIni) ? $filtroDataIni : $inicioMesAtual;
-$filtroDataFim = preg_match('/^\d{4}-\d{2}-\d{2}$/', $filtroDataFim) ? $filtroDataFim : $dataReferencia;
-$filtroDataFim = min($filtroDataFim, $dataReferencia);
-if ($filtroDataIni > $filtroDataFim) {
-    $filtroDataIni = $filtroDataFim;
-}
 $diasSelecionados = $_GET['dias'] ?? array_keys($diasSemanaMetaVendas);
 if (!is_array($diasSelecionados)) {
     $diasSelecionados = [$diasSelecionados];
@@ -40,6 +58,7 @@ $diasSelecionados = array_values(array_unique(array_filter(array_map('intval', $
 if (!$diasSelecionados) {
     $diasSelecionados = array_keys($diasSemanaMetaVendas);
 }
+$queryFiltro = http_build_query(['data_ini' => $filtroDataIni, 'data_fim' => $filtroDataFim, 'dias' => $diasSelecionados]);
 
 $pdo_master->exec("
     CREATE TABLE IF NOT EXISTS fechamento_metas_vendas (
@@ -248,7 +267,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['acao'] ?? '') === 'salvar_
         ON DUPLICATE KEY UPDATE valor_meta = VALUES(valor_meta), atualizado_em = NOW()
     ");
     $stmtMetaSalvar->execute([$empresaId, $mesAtual, $valorMeta]);
-    header('Location: metas_vendas.php?meta=ok');
+    header('Location: metas_vendas.php?' . $queryFiltro . '&meta=ok');
     exit;
 }
 
@@ -274,7 +293,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['acao'] ?? '') === 'salvar_
             : 0.0;
         $stmtDistribuicao->execute([$empresaId, $mesAtual, $dia, $trabalha, $valorDia]);
     }
-    header('Location: metas_vendas.php?distribuicao=ok');
+    header('Location: metas_vendas.php?' . $queryFiltro . '&distribuicao=ok');
     exit;
 }
 
@@ -348,7 +367,7 @@ $previsaoRestantePorDesempenho = 0.0;
 $diasRestantesTrabalhados = 0;
 $diasRestantesPelaMedia = 0;
 $diasRestantesPelaMeta = 0;
-$cursorFechamentoDesempenho = strtotime($dataReferencia . ' +1 day');
+$cursorFechamentoDesempenho = strtotime($temDiasFechados ? $dataReferencia . ' +1 day' : $inicioMesAtual);
 while ($cursorFechamentoDesempenho <= $fimDiasMes) {
     $diaSemanaPrevisaoAtual = (int)date('w', $cursorFechamentoDesempenho);
     if (($distribuicaoMeta[$diaSemanaPrevisaoAtual]['trabalha'] ?? 'N') === 'S') {
@@ -367,9 +386,14 @@ while ($cursorFechamentoDesempenho <= $fimDiasMes) {
 $previsaoFechamentoDesempenho = $faturamentoRealMes + $previsaoRestantePorDesempenho;
 $percentualPrevisaoMeta = $metaVendas > 0 ? ($previsaoFechamentoDesempenho / $metaVendas) * 100 : null;
 
-$vendasMesAtual = vendasPorDiaMetaVendas($pdo_master, $empresaId, $filtroDataIni, $filtroDataFim, $diasSelecionados);
+$vendasMesAtual = $temDiasFechados
+    ? vendasPorDiaMetaVendas($pdo_master, $empresaId, $filtroDataIni, $filtroDataFim, $diasSelecionados)
+    : [];
 $vendasMesAnterior = vendasPorDiaMetaVendas($pdo_master, $empresaId, $inicioMesAnterior, $fimMesAnterior, $diasSelecionados);
-$vendasPorHora = vendasPorHoraMetaVendas($pdo_master, $empresaId, $filtroDataIni, $filtroDataFim, $diasSelecionados);
+$vendasMesAnteriorCompleto = vendasPorDiaMetaVendas($pdo_master, $empresaId, $inicioMesAnterior, $fimMesAnterior);
+$vendasPorHora = $temDiasFechados
+    ? vendasPorHoraMetaVendas($pdo_master, $empresaId, $filtroDataIni, $filtroDataFim, $diasSelecionados)
+    : [];
 
 $comparativoDias = [];
 $totalAtualAteReferencia = 0.0;
@@ -380,7 +404,7 @@ $qtdVendasAnteriorComparavel = 0;
 $maiorAlta = null;
 $maiorQueda = null;
 
-$cursor = strtotime($filtroDataIni);
+$cursor = strtotime($temDiasFechados ? $filtroDataIni : $filtroDataFim . ' +1 day');
 $fimComparativo = strtotime($filtroDataFim);
 while ($cursor <= $fimComparativo) {
     $dataAtualLoop = date('Y-m-d', $cursor);
@@ -439,7 +463,7 @@ while ($cursor <= $fimComparativo) {
     $cursor = strtotime('+1 day', $cursor);
 }
 
-$totalMesAnterior = array_sum(array_column($vendasMesAnterior, 'total'));
+$totalMesAnterior = array_sum(array_column($vendasMesAnteriorCompleto, 'total'));
 $diasComparativo = count($comparativoDias);
 $mediaDiaAtual = $diasComparativo > 0 ? $totalAtualAteReferencia / $diasComparativo : 0.0;
 $ticketMedioAtualAteReferencia = $qtdVendasAtualAteReferencia > 0 ? $totalAtualAteReferencia / $qtdVendasAtualAteReferencia : 0.0;
@@ -451,31 +475,30 @@ $fimHistoricoPrevisao = strtotime($fimMesAnterior);
 while ($cursorHistoricoPrevisao <= $fimHistoricoPrevisao) {
     $dataHistorica = date('Y-m-d', $cursorHistoricoPrevisao);
     $diaSemanaHistorico = (int)date('w', $cursorHistoricoPrevisao);
-    $totaisMesAnteriorPorDiaSemana[$diaSemanaHistorico] += (float)($vendasMesAnterior[$dataHistorica]['total'] ?? 0.0);
+    $totaisMesAnteriorPorDiaSemana[$diaSemanaHistorico] += (float)($vendasMesAnteriorCompleto[$dataHistorica]['total'] ?? 0.0);
     $quantidadesMesAnteriorPorDiaSemana[$diaSemanaHistorico]++;
     $cursorHistoricoPrevisao = strtotime('+1 day', $cursorHistoricoPrevisao);
 }
 $previsaoDiasRestantes = 0.0;
-$cursorPrevisao = strtotime($filtroDataFim . ' +1 day');
+$cursorPrevisao = strtotime($temDiasFechados ? $filtroDataFim . ' +1 day' : $inicioMesAtual);
 $fimPrevisao = strtotime($fimMesAtual);
 while ($cursorPrevisao <= $fimPrevisao) {
     $diaSemanaPrevisao = (int)date('w', $cursorPrevisao);
-    if (in_array($diaSemanaPrevisao, $diasSelecionados, true)) {
-        $quantidadeOcorrencias = $quantidadesMesAnteriorPorDiaSemana[$diaSemanaPrevisao];
-        if ($quantidadeOcorrencias > 0) {
-            $previsaoDiasRestantes += $totaisMesAnteriorPorDiaSemana[$diaSemanaPrevisao] / $quantidadeOcorrencias;
-        }
+    $quantidadeOcorrencias = $quantidadesMesAnteriorPorDiaSemana[$diaSemanaPrevisao];
+    if ($quantidadeOcorrencias > 0) {
+        $previsaoDiasRestantes += $totaisMesAnteriorPorDiaSemana[$diaSemanaPrevisao] / $quantidadeOcorrencias;
     }
     $cursorPrevisao = strtotime('+1 day', $cursorPrevisao);
 }
-$previsaoFechamento = $totalAtualAteReferencia + $previsaoDiasRestantes;
+$previsaoFechamento = $faturamentoRealMes + $previsaoDiasRestantes;
 $variacaoComparavel = $totalAnteriorComparavel > 0 ? (($totalAtualAteReferencia / $totalAnteriorComparavel) - 1) * 100 : null;
 $variacaoMesAnterior = $totalMesAnterior > 0 ? (($previsaoFechamento / $totalMesAnterior) - 1) * 100 : null;
-$percentualMeta = $metaVendas > 0 ? min(100, ($totalAtualAteReferencia / $metaVendas) * 100) : 0;
-$faltanteMeta = max(0, $metaVendas - $totalAtualAteReferencia);
-$mediaNecessaria = $metaVendas > 0
-    ? ($faltanteMeta / max(1, $diasMesAtual - $diasDecorridos))
-    : 0.0;
+$percentualMeta = $metaVendas > 0 ? min(100, ($faturamentoRealMes / $metaVendas) * 100) : 0;
+$faltanteMeta = max(0, $metaVendas - $faturamentoRealMes);
+$diasRestantesCalendario = max(0, $diasMesAtual - $diasDecorridos);
+$mediaNecessaria = $metaVendas > 0 && $diasRestantesCalendario > 0
+    ? $faltanteMeta / $diasRestantesCalendario
+    : null;
 $ordemHorasMetaVendas = array_merge(range(7, 23), range(0, 2));
 $maiorValorHora = 0.0;
 $graficoHoras = [];
@@ -515,9 +538,9 @@ require '../../layout/header.php';
             <div class="d-flex flex-column flex-lg-row justify-content-between gap-2">
                 <div>
                     <h2 class="h5 mb-1">Meta e evolucao das vendas</h2>
-                    <div class="small opacity-75">Mes atual: <?= date('m/Y', strtotime($inicioMesAtual)) ?> | Comparativo: <?= date('m/Y', strtotime($inicioMesAnterior)) ?></div>
+                    <div class="small opacity-75">Mes selecionado: <?= date('m/Y', strtotime($inicioMesAtual)) ?> | Comparativo: <?= date('m/Y', strtotime($inicioMesAnterior)) ?></div>
                 </div>
-                <form method="post" class="d-flex flex-column flex-sm-row gap-2 align-items-stretch align-items-sm-end">
+                <form method="post" action="metas_vendas.php?<?= htmlspecialchars($queryFiltro) ?>" class="d-flex flex-column flex-sm-row gap-2 align-items-stretch align-items-sm-end">
                     <input type="hidden" name="acao" value="salvar_meta_vendas">
                     <div>
                         <label for="valor_meta" class="form-label small mb-1 text-white">Meta do mes</label>
@@ -535,6 +558,9 @@ require '../../layout/header.php';
             </div>
         </div>
         <div class="card-body">
+            <?php if ($erroFiltro): ?>
+                <div class="alert alert-warning py-2" role="alert"><?= htmlspecialchars($erroFiltro) ?></div>
+            <?php endif; ?>
             <?php if (($_GET['meta'] ?? '') === 'ok'): ?>
                 <div class="alert alert-success py-2">Meta de vendas salva.</div>
             <?php endif; ?>
@@ -542,7 +568,7 @@ require '../../layout/header.php';
                 <div class="alert alert-success py-2">Distribuicao diaria da meta salva.</div>
             <?php endif; ?>
 
-            <form method="post" class="border rounded-2 mb-3" id="form-distribuicao-meta">
+            <form method="post" action="metas_vendas.php?<?= htmlspecialchars($queryFiltro) ?>" class="border rounded-2 mb-3" id="form-distribuicao-meta">
                 <input type="hidden" name="acao" value="salvar_distribuicao_meta">
                 <div class="p-3 border-bottom d-flex flex-column flex-lg-row justify-content-between gap-3 align-items-lg-center">
                     <div>
@@ -600,7 +626,7 @@ require '../../layout/header.php';
                     </div>
                     <div class="col-md-3">
                         <label for="data_fim" class="form-label small fw-semibold">Data final</label>
-                        <input type="date" name="data_fim" id="data_fim" class="form-control form-control-sm" value="<?= htmlspecialchars($filtroDataFim) ?>" max="<?= htmlspecialchars($dataReferencia) ?>">
+                        <input type="date" name="data_fim" id="data_fim" class="form-control form-control-sm" value="<?= htmlspecialchars($filtroDataFim) ?>" max="<?= htmlspecialchars($ontem) ?>">
                     </div>
                     <div class="col-md-4">
                         <div class="form-label small fw-semibold">Dias da semana</div>
@@ -637,7 +663,7 @@ require '../../layout/header.php';
                 </div>
                 <div class="col">
                     <div class="border rounded-2 p-3 h-100">
-                        <div class="text-muted small">Previsao versus mes anterior</div>
+                        <div class="text-muted small"><?= $diasRestantesCalendario > 0 ? 'Previsao versus mes anterior' : 'Resultado versus mes anterior' ?></div>
                         <div class="h4 mb-1 <?= $variacaoMesAnterior !== null && $variacaoMesAnterior < 0 ? 'text-danger' : 'text-success' ?>">
                             <?= percentualMetaVendas($variacaoMesAnterior) ?>
                         </div>
@@ -648,16 +674,16 @@ require '../../layout/header.php';
                 </div>
                 <div class="col">
                     <div class="border rounded-2 p-3 h-100">
-                        <div class="text-muted small">Previsao de fechamento</div>
+                        <div class="text-muted small"><?= $diasRestantesCalendario > 0 ? 'Previsao de fechamento' : 'Fechamento realizado' ?></div>
                         <div class="h4 mb-1"><?= moedaMetaVendas($previsaoFechamento) ?></div>
-                        <div class="small">Acumulado mais a media, no mes anterior, dos mesmos dias da semana ainda restantes</div>
+                        <div class="small"><?= $diasRestantesCalendario > 0 ? 'Acumulado mais a media, no mes anterior, dos mesmos dias da semana ainda restantes' : 'Faturamento apurado no mes selecionado' ?></div>
                     </div>
                 </div>
                 <div class="col">
                     <div class="border rounded-2 p-3 h-100">
                         <div class="text-muted small">Necessario por dia</div>
-                        <div class="h4 mb-1"><?= $metaVendas > 0 ? moedaMetaVendas($mediaNecessaria) : '-' ?></div>
-                        <div class="small">Para atingir a meta no fim do mes</div>
+                        <div class="h4 mb-1"><?= $mediaNecessaria !== null ? moedaMetaVendas($mediaNecessaria) : '-' ?></div>
+                        <div class="small"><?= $diasRestantesCalendario > 0 ? 'Para atingir a meta no fim do mes' : 'Mes encerrado' ?></div>
                     </div>
                 </div>
                 <div class="col">
@@ -675,7 +701,7 @@ require '../../layout/header.php';
             <div class="border border-primary rounded-2 p-3 mb-3 bg-primary-subtle">
                 <div class="row g-3 align-items-center">
                     <div class="col-lg-4">
-                        <div class="text-muted small">Previsao pelo desempenho do mes</div>
+                        <div class="text-muted small"><?= $diasRestantesCalendario > 0 ? 'Previsao pelo desempenho do mes' : 'Fechamento realizado' ?></div>
                         <div class="h3 mb-1"><?= moedaMetaVendas($previsaoFechamentoDesempenho) ?></div>
                         <div class="small">
                             <?= $percentualPrevisaoMeta !== null ? percentualMetaVendas($percentualPrevisaoMeta) . ' da meta mensal' : 'Meta mensal nao informada' ?>
