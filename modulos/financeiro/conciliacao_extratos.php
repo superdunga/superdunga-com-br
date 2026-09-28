@@ -874,6 +874,9 @@ function lerOfxExtrato(string $arquivo): array
         $contaOfx = trim($contaOfxMatch[1]);
     }
     $escopoIdentificador = $sicoob ? implode('|', ['sicoob', $codigoBanco, $contaOfx]) : '';
+    if ($codigoBanco === '077' && $contaOfx !== '') {
+        $escopoIdentificador = implode('|', ['inter', $codigoBanco, $contaOfx]);
+    }
 
     preg_match_all('/<STMTTRN>(.*?)<\/STMTTRN>/is', $conteudo, $matches);
     $linhas = [];
@@ -1096,16 +1099,23 @@ function importarLinhasExtratoBanco(PDO $pdo, int $empresaId, int $usuarioId, in
         $ocorrenciaNatural = $ocorrenciasNaturaisImportacao[$chaveNatural];
         $datasImportacao[date('Y-m-d', strtotime((string)$linha['data_movimento']))] = true;
         $identificadorOriginal = (string)$linha['identificador'];
+        $escopoIdentificador = (string)($linha['identificador_escopo'] ?? '');
+        $identificadorEscopado = $identificadorOriginal !== '' && $escopoIdentificador !== ''
+            ? $escopoIdentificador . '|' . $identificadorOriginal
+            : $identificadorOriginal;
         $identificadorExternoHash = gerarHashIdentificadorExternoExtrato(
             $identificadorOriginal,
-            (string)($linha['identificador_escopo'] ?? '')
+            $escopoIdentificador
         );
         $identificadorNatural = gerarIdentificadorNaturalExtrato($chaveNatural, $ocorrenciaNatural);
         $identificador = $identificadorOriginal !== ''
-            ? gerarIdentificadorExtrato($empresaId, $cbcontador, (string)$linha['data_movimento'], $valor, $tipo, $historicoLinha, $documentoLinha, $identificadorOriginal)
+            ? gerarIdentificadorExtrato($empresaId, $cbcontador, (string)$linha['data_movimento'], $valor, $tipo, $historicoLinha, $documentoLinha, $identificadorEscopado)
             : $identificadorNatural;
         $identificadoresLinha = [$identificador, $identificadorNatural];
         if ($identificadorOriginal !== '') {
+            if ($identificadorEscopado !== $identificadorOriginal) {
+                $identificadoresLinha[] = gerarIdentificadorExtrato($empresaId, $cbcontador, (string)$linha['data_movimento'], $valor, $tipo, $historicoLinha, $documentoLinha, $identificadorOriginal);
+            }
             $identificadoresLinha[] = gerarIdentificadorLinhaExtrato(
                 $empresaId,
                 $cbcontador,
@@ -2674,16 +2684,23 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['acao'] ?? '') === 'importa
                     $ocorrenciaNatural = $ocorrenciasNaturaisImportacao[$chaveNatural];
                     $datasImportacao[date('Y-m-d', strtotime((string)$linha['data_movimento']))] = true;
                     $identificadorOriginal = (string)$linha['identificador'];
+                    $escopoIdentificador = (string)($linha['identificador_escopo'] ?? '');
+                    $identificadorEscopado = $identificadorOriginal !== '' && $escopoIdentificador !== ''
+                        ? $escopoIdentificador . '|' . $identificadorOriginal
+                        : $identificadorOriginal;
                     $identificadorExternoHash = gerarHashIdentificadorExternoExtrato(
                         $identificadorOriginal,
-                        (string)($linha['identificador_escopo'] ?? '')
+                        $escopoIdentificador
                     );
                     $identificadorNatural = gerarIdentificadorNaturalExtrato($chaveNatural, $ocorrenciaNatural);
                     $identificador = $identificadorOriginal !== ''
-                        ? gerarIdentificadorExtrato($empresaId, $cbcontadorPost, (string)$linha['data_movimento'], $valor, $tipo, $historicoLinha, $documentoLinha, $identificadorOriginal)
+                        ? gerarIdentificadorExtrato($empresaId, $cbcontadorPost, (string)$linha['data_movimento'], $valor, $tipo, $historicoLinha, $documentoLinha, $identificadorEscopado)
                         : $identificadorNatural;
                     $identificadoresLinha = [$identificador, $identificadorNatural];
                     if ($identificadorOriginal !== '') {
+                        if ($identificadorEscopado !== $identificadorOriginal) {
+                            $identificadoresLinha[] = gerarIdentificadorExtrato($empresaId, $cbcontadorPost, (string)$linha['data_movimento'], $valor, $tipo, $historicoLinha, $documentoLinha, $identificadorOriginal);
+                        }
                         $identificadoresLinha[] = gerarIdentificadorLinhaExtrato(
                             $empresaId,
                             $cbcontadorPost,
