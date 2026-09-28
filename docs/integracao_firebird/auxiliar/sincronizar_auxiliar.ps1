@@ -61,8 +61,13 @@ try {
         $operation = if ($Mode -eq 'Incremental') { '--incremental-table' } else { '--sync-table' }
         $arguments = @('-u', $script, $operation, $table, '--page-size', '50')
         if ($FirebirdCompany) { $arguments += @('--company', $FirebirdCompany) }
-        & $python @arguments 2>&1 |
-            Tee-Object -FilePath $log -Append
+        $ErrorActionPreference = 'Continue'
+        try {
+            & $python @arguments 2>&1 |
+                Tee-Object -FilePath $log -Append
+        } finally {
+            $ErrorActionPreference = 'Stop'
+        }
         if ($LASTEXITCODE -ne 0) {
             throw "Falha na sincronizacao de $table (codigo $LASTEXITCODE)."
         }
