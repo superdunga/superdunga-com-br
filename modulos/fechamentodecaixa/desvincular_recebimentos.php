@@ -131,8 +131,9 @@ function queryDesvinculo(array $extra = []): string
     return http_build_query($params);
 }
 
-$dataIni = trim($_GET['data_ini'] ?? date('Y-m-d'));
-$dataFim = trim($_GET['data_fim'] ?? date('Y-m-d'));
+$vendaFiltro = trim((string)($_GET['venda'] ?? ''));
+$dataIni = trim($_GET['data_ini'] ?? ($vendaFiltro !== '' ? '' : date('Y-m-d')));
+$dataFim = trim($_GET['data_fim'] ?? ($vendaFiltro !== '' ? '' : date('Y-m-d')));
 $recebimentoFiltro = trim($_GET['recebimento_id'] ?? '');
 $crFiltro = trim($_GET['crcontador'] ?? '');
 $tipoMatchFiltro = trim($_GET['tipo_match'] ?? '');
@@ -272,6 +273,10 @@ if ($crFiltro !== '' && ctype_digit($crFiltro)) {
     $params[] = (int)$crFiltro;
     $params[] = (int)$crFiltro;
 }
+if ($vendaFiltro !== '') {
+    $where[] = 'c.NUMDOCORIGEM = ?';
+    $params[] = ctype_digit($vendaFiltro) ? $vendaFiltro : '0';
+}
 
 if ($valorMinDecimal !== null) {
     $where[] = 'ABS(COALESCE(r.valor_bruto, c.VLRPARCELA, 0)) >= ?';
@@ -294,6 +299,7 @@ $stmt = $pdo_master->prepare("
         r.pagador,
         r.CRCONTADOR AS cr_recebivel,
         c.CRCONTADOR,
+        c.NUMDOCORIGEM,
         c.DTLANC,
         c.DTEMISSAO,
         c.VLRPARCELA,
@@ -347,6 +353,25 @@ $filaStatus = $stmtFilaStatus->fetchAll(PDO::FETCH_ASSOC);
 
 require '../../layout/header.php';
 ?>
+
+<style>
+.tabela-desvinculos { min-width: 1260px; }
+.tabela-desvinculos th:last-child,
+.tabela-desvinculos td:last-child {
+    position: sticky;
+    right: 0;
+    min-width: 290px;
+    background: #fff;
+    box-shadow: -1px 0 0 #dee2e6;
+}
+.tabela-desvinculos thead th:last-child { background: #162f66; color: #fff; }
+@media (max-width: 767px) {
+    .tabela-desvinculos th:last-child,
+    .tabela-desvinculos td:last-child { min-width: 190px; width: 190px; }
+    .tabela-desvinculos .js-form-desvincular { flex-wrap: wrap; }
+    .tabela-desvinculos .js-form-desvincular input[name="motivo"] { min-width: 0 !important; width: 100%; }
+}
+</style>
 
 <section class="mb-4">
     <div class="p-4 p-lg-5 bg-white border rounded-2 shadow-sm">
@@ -414,31 +439,27 @@ require '../../layout/header.php';
 <section class="mb-3">
     <form method="GET" class="bg-white border rounded-2 shadow-sm p-3">
         <div class="row g-3 align-items-end">
-            <div class="col-md-2">
+            <div class="col-md-4 col-lg-2">
                 <label class="form-label">Data inicial</label>
-                <input type="date" name="data_ini" class="form-control" value="<?= htmlspecialchars($dataIni) ?>">
+                <input type="date" id="dataIniFiltro" name="data_ini" class="form-control" value="<?= htmlspecialchars($dataIni) ?>">
             </div>
-            <div class="col-md-2">
+            <div class="col-md-4 col-lg-2">
                 <label class="form-label">Data final</label>
-                <input type="date" name="data_fim" class="form-control" value="<?= htmlspecialchars($dataFim) ?>">
+                <input type="date" id="dataFimFiltro" name="data_fim" class="form-control" value="<?= htmlspecialchars($dataFim) ?>">
             </div>
-            <div class="col-md-2">
+            <div class="col-md-4 col-lg-2">
                 <label class="form-label">Recebivel ID</label>
                 <input type="number" name="recebimento_id" class="form-control" value="<?= htmlspecialchars($recebimentoFiltro) ?>">
             </div>
-            <div class="col-md-2">
+            <div class="col-md-4 col-lg-2">
                 <label class="form-label">CRCONTADOR</label>
                 <input type="number" name="crcontador" class="form-control" value="<?= htmlspecialchars($crFiltro) ?>">
             </div>
-            <div class="col-md-2">
-                <label class="form-label">Valor inicial</label>
-                <input type="text" name="valor_min" inputmode="decimal" class="form-control" value="<?= htmlspecialchars($valorMinFiltro) ?>" placeholder="0,00">
+            <div class="col-md-4 col-lg-2">
+                <label class="form-label" for="vendaFiltro">Numero da venda</label>
+                <input type="number" min="1" id="vendaFiltro" name="venda" class="form-control" value="<?= htmlspecialchars($vendaFiltro) ?>">
             </div>
-            <div class="col-md-2">
-                <label class="form-label">Valor final</label>
-                <input type="text" name="valor_max" inputmode="decimal" class="form-control" value="<?= htmlspecialchars($valorMaxFiltro) ?>" placeholder="0,00">
-            </div>
-            <div class="col-md-2">
+            <div class="col-md-4 col-lg-2">
                 <label class="form-label">Tipo de match</label>
                 <select name="tipo_match" class="form-select">
                     <option value="">Todos</option>
@@ -448,9 +469,16 @@ require '../../layout/header.php';
                         </option>
                     <?php endforeach; ?>
                 </select>
-                <div class="form-text">Seguro (exato) e Data movimento sao filtros diferentes.</div>
             </div>
-            <div class="col-md-2 d-flex gap-2 justify-content-end">
+            <div class="col-md-4 col-lg-2">
+                <label class="form-label">Valor inicial</label>
+                <input type="text" name="valor_min" inputmode="decimal" class="form-control" value="<?= htmlspecialchars($valorMinFiltro) ?>" placeholder="0,00">
+            </div>
+            <div class="col-md-4 col-lg-2">
+                <label class="form-label">Valor final</label>
+                <input type="text" name="valor_max" inputmode="decimal" class="form-control" value="<?= htmlspecialchars($valorMaxFiltro) ?>" placeholder="0,00">
+            </div>
+            <div class="col-md-4 col-lg-8 d-flex gap-2 justify-content-md-end">
                 <a href="desvincular_recebimentos.php" class="btn btn-outline-secondary">Limpar</a>
                 <button type="submit" class="btn btn-primary">Filtrar</button>
             </div>
@@ -472,7 +500,7 @@ require '../../layout/header.php';
 <section>
     <div class="bg-white border rounded-2 shadow-sm overflow-hidden">
         <div class="table-responsive">
-            <table class="table table-sm table-hover align-middle mb-0">
+            <table class="table table-sm table-hover align-middle mb-0 tabela-desvinculos">
                 <thead class="table-primary">
                     <tr>
                         <th>Recebivel</th>
@@ -481,6 +509,7 @@ require '../../layout/header.php';
                         <th class="text-end">Valor</th>
                         <th>CM Rec.</th>
                         <th>CR001</th>
+                        <th>Venda</th>
                         <th>Data CR</th>
                         <th class="text-end">Valor CR</th>
                         <th>CM CR</th>
@@ -502,6 +531,7 @@ require '../../layout/header.php';
                             <td class="text-end"><?= moedaDesvinculo($vinculo['valor_bruto']) ?></td>
                             <td><?= htmlspecialchars((string)$vinculo['cm_recebivel']) ?></td>
                             <td class="fw-semibold"><?= $crcontador ?: '-' ?></td>
+                            <td><?= (int)$vinculo['NUMDOCORIGEM'] > 0 ? htmlspecialchars((string)$vinculo['NUMDOCORIGEM']) : '-' ?></td>
                             <td><?= dataHoraDesvinculo($vinculo['DTLANC']) ?></td>
                             <td class="text-end"><?= $vinculo['VLRPARCELA'] !== null ? moedaDesvinculo($vinculo['VLRPARCELA']) : '-' ?></td>
                             <td><?= htmlspecialchars((string)($vinculo['cm_cr001'] ?? '-')) ?></td>
@@ -531,7 +561,7 @@ require '../../layout/header.php';
                     <?php endforeach; ?>
                     <?php if (empty($vinculos)): ?>
                         <tr>
-                            <td colspan="12" class="text-center text-muted py-4">Nenhum vinculo encontrado.</td>
+                            <td colspan="13" class="text-center text-muted py-4">Nenhum vinculo encontrado.</td>
                         </tr>
                     <?php endif; ?>
                 </tbody>
@@ -542,6 +572,16 @@ require '../../layout/header.php';
 
 <script>
 document.addEventListener('DOMContentLoaded', function () {
+    var vendaFiltro = document.getElementById('vendaFiltro');
+    var dataIniFiltro = document.getElementById('dataIniFiltro');
+    var dataFimFiltro = document.getElementById('dataFimFiltro');
+    var dataPadrao = <?= json_encode(date('Y-m-d')) ?>;
+    vendaFiltro.addEventListener('input', function () {
+        if (vendaFiltro.value && dataIniFiltro.value === dataPadrao && dataFimFiltro.value === dataPadrao) {
+            dataIniFiltro.value = '';
+            dataFimFiltro.value = '';
+        }
+    });
     document.querySelectorAll('.js-form-desvincular').forEach(function (form) {
         form.addEventListener('submit', function (event) {
             if (!confirm('Confirmar desvinculo deste match? Esta acao sera registrada em log.')) {

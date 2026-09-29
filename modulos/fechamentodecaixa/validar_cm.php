@@ -1,7 +1,6 @@
 <?php
 require '../../config/auth.php';
 require '../../config/conexao.php';
-require '../../layout/header.php';
 
 /* =========================
    DATA
@@ -79,6 +78,7 @@ $stmt = $pdo_master->prepare("
 
 $stmt->execute($todos ? [$empresa_id] : [$empresa_id, $inicio, $fim]);
 $registros = $stmt->fetchAll(PDO::FETCH_ASSOC);
+require '../../layout/header.php';
 ?>
 
 <style>

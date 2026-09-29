@@ -11,6 +11,7 @@ $usuarioId = (int)($_SESSION['usuario_id'] ?? 0);
 $mensagemErro = '';
 $crFiltro = trim((string)($_GET['crcontador'] ?? ''));
 $clienteFiltro = trim((string)($_GET['cliente'] ?? ''));
+$vendaFiltro = trim((string)($_GET['venda'] ?? ''));
 
 $pdo_master->exec("
     CREATE TABLE IF NOT EXISTS conciliacao_cm9_desvalidacoes_log (
@@ -103,8 +104,12 @@ if ($clienteFiltro !== '') {
     $params[] = '%' . $clienteFiltro . '%';
     $params[] = ctype_digit($clienteFiltro) ? (int)$clienteFiltro : 0;
 }
+if ($vendaFiltro !== '') {
+    $where[] = 'c.NUMDOCORIGEM = ?';
+    $params[] = ctype_digit($vendaFiltro) ? $vendaFiltro : '0';
+}
 $stmt = $pdo_master->prepare("
-    SELECT c.CRCONTADOR, c.CLICONTADOR, c.DTLANC, c.VLRPARCELA,
+    SELECT c.CRCONTADOR, c.CLICONTADOR, c.NUMDOCORIGEM, c.DTLANC, c.VLRPARCELA,
            c.data_validacao, c.usuario_validacao,
            COALESCE(NULLIF(cli.NOME, ''), NULLIF(cli.APELIDO, ''), '-') AS cliente_nome,
            u.nome AS usuario_nome
@@ -122,42 +127,59 @@ $titulos = $stmt->fetchAll(PDO::FETCH_ASSOC);
 require '../../layout/header.php';
 ?>
 
-<section class="mb-3 d-flex justify-content-between align-items-center gap-3">
-    <div>
-        <h1 class="h4 mb-1">Desfazer validacao de clientes</h1>
-        <p class="text-muted mb-0">Titulos CM 9 conferidos. Esta acao nao altera vinculos de cartoes ou dados no Firebird.</p>
+<section class="mb-4">
+    <div class="p-4 p-lg-5 bg-white border rounded-2 shadow-sm">
+        <div class="row align-items-center g-3">
+            <div class="col-lg-8">
+                <span class="badge text-bg-danger mb-3">MASTER</span>
+                <h1 class="h3 fw-bold mb-2">Desfazer Validacao de Clientes</h1>
+                <p class="text-muted mb-0">Use esta rotina apenas para desfazer validacoes CM 9 feitas por engano.</p>
+            </div>
+            <div class="col-lg-4 text-lg-end">
+                <a href="menu_recebimentos.php" class="btn btn-outline-secondary">Voltar</a>
+            </div>
+        </div>
     </div>
-    <a href="menu_recebimentos.php" class="btn btn-outline-secondary">Voltar</a>
 </section>
 
-<?php if ($mensagemErro): ?>
-    <div class="alert alert-danger"><?= htmlspecialchars($mensagemErro) ?></div>
-<?php elseif (($_GET['ok'] ?? '') === '1'): ?>
+<?php if (($_GET['ok'] ?? '') === '1' && !$mensagemErro): ?>
     <div class="alert alert-success">Validacao desfeita. O titulo voltou para a lista de pendentes.</div>
 <?php endif; ?>
 
-<section class="bg-white border rounded-2 shadow-sm overflow-hidden">
-    <form method="GET" class="p-3 border-bottom">
-        <div class="row g-2 align-items-end">
-            <div class="col-md-3">
+<?php if ($mensagemErro): ?>
+    <div class="alert alert-danger"><?= htmlspecialchars($mensagemErro) ?></div>
+<?php endif; ?>
+
+<section class="mb-3">
+    <form method="GET" class="bg-white border rounded-2 shadow-sm p-3">
+        <div class="row g-3 align-items-end">
+            <div class="col-md-2">
                 <label class="form-label" for="crFiltro">CRCONTADOR</label>
                 <input type="number" min="1" id="crFiltro" name="crcontador" class="form-control" value="<?= htmlspecialchars($crFiltro) ?>">
             </div>
-            <div class="col-md-5">
+            <div class="col-md-2">
+                <label class="form-label" for="vendaFiltro">Numero da venda</label>
+                <input type="number" min="1" id="vendaFiltro" name="venda" class="form-control" value="<?= htmlspecialchars($vendaFiltro) ?>">
+            </div>
+            <div class="col-md-4">
                 <label class="form-label" for="clienteFiltro">Cliente ou codigo</label>
                 <input type="text" id="clienteFiltro" name="cliente" class="form-control" value="<?= htmlspecialchars($clienteFiltro) ?>">
             </div>
-            <div class="col-md-4 d-flex gap-2">
-                <button type="submit" class="btn btn-primary">Buscar</button>
+            <div class="col-md-2 d-flex gap-2 justify-content-end">
                 <a href="desvincular_clientes.php" class="btn btn-outline-secondary">Limpar</a>
+                <button type="submit" class="btn btn-primary">Filtrar</button>
             </div>
         </div>
     </form>
-    <div class="table-responsive">
+</section>
+
+<section>
+    <div class="bg-white border rounded-2 shadow-sm overflow-hidden">
+        <div class="table-responsive">
         <table class="table table-sm table-hover align-middle mb-0">
-            <thead class="table-light">
+            <thead class="table-primary">
                 <tr>
-                    <th>CRCONTADOR</th><th>Cliente</th><th>Data do titulo</th>
+                    <th>CRCONTADOR</th><th>Venda</th><th>Cliente</th><th>Data do titulo</th>
                     <th class="text-end">Valor</th><th>Validado em</th><th>Por</th><th>Acao</th>
                 </tr>
             </thead>
@@ -165,6 +187,7 @@ require '../../layout/header.php';
                 <?php foreach ($titulos as $titulo): ?>
                     <tr>
                         <td class="fw-semibold"><?= (int)$titulo['CRCONTADOR'] ?></td>
+                        <td><?= (int)$titulo['NUMDOCORIGEM'] > 0 ? htmlspecialchars((string)$titulo['NUMDOCORIGEM']) : '-' ?></td>
                         <td><?= htmlspecialchars($titulo['cliente_nome']) ?> (<?= (int)$titulo['CLICONTADOR'] ?>)</td>
                         <td><?= $titulo['DTLANC'] ? date('d/m/Y H:i', strtotime($titulo['DTLANC'])) : '-' ?></td>
                         <td class="text-end">R$ <?= number_format((float)$titulo['VLRPARCELA'], 2, ',', '.') ?></td>
@@ -176,20 +199,21 @@ require '../../layout/header.php';
                                 <input type="hidden" name="crcontador" value="<?= (int)$titulo['CRCONTADOR'] ?>">
                                 <input type="hidden" name="csrf_token" value="<?= htmlspecialchars($_SESSION['cm9_desvalidar_token']) ?>">
                                 <input type="text" name="motivo" class="form-control form-control-sm" maxlength="255" required placeholder="Motivo" aria-label="Motivo para desfazer validacao" style="min-width: 150px;">
-                                <button type="submit" class="btn btn-sm btn-outline-danger text-nowrap">Desfazer validacao</button>
+                                <button type="submit" class="btn btn-sm btn-danger text-nowrap">Desfazer validacao</button>
                             </form>
                         </td>
                     </tr>
                 <?php endforeach; ?>
                 <?php if (!$titulos): ?>
-                    <tr><td colspan="7" class="text-center text-muted py-3">Nenhum titulo CM 9 validado encontrado.</td></tr>
+                    <tr><td colspan="8" class="text-center text-muted py-3">Nenhum titulo CM 9 validado encontrado.</td></tr>
                 <?php endif; ?>
             </tbody>
         </table>
+        </div>
+        <?php if (count($titulos) === 100): ?>
+            <div class="small text-muted px-3 py-2 border-top">Exibindo os 100 mais recentes. Use a busca para localizar outros titulos.</div>
+        <?php endif; ?>
     </div>
-    <?php if (count($titulos) === 100): ?>
-        <div class="small text-muted px-3 py-2 border-top">Exibindo os 100 mais recentes. Use a busca para localizar outros titulos.</div>
-    <?php endif; ?>
 </section>
 
 <script>
