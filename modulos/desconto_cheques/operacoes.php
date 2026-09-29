@@ -198,6 +198,28 @@ $stmtClientes = $pdo_master->prepare("
 ");
 $stmtClientes->execute([$empresaId]);
 $clientes = $stmtClientes->fetchAll(PDO::FETCH_ASSOC);
+$saldosClientes = [];
+$clientesFinanceiros = array_values(array_unique(array_filter(array_map(
+    static fn(array $cliente): int => (int)($cliente['clicontador'] ?? 0),
+    $clientes
+))));
+if ($clientesFinanceiros) {
+    $placeholders = implode(',', array_fill(0, count($clientesFinanceiros), '?'));
+    $stmtSaldos = $pdo_master->prepare("
+        SELECT CLICONTADOR, SUM(COALESCE(VLRRESTANTE, VLRPARCELA, 0)) AS total_aberto
+        FROM armazem_cr001
+        WHERE EMPRESA = ?
+          AND CLICONTADOR IN ($placeholders)
+          AND COALESCE(excluido_firebird, 'N') <> 'S'
+          AND COALESCE(STATUS, 'AB') <> 'QT'
+          AND COALESCE(VLRRESTANTE, VLRPARCELA, 0) > 0
+        GROUP BY CLICONTADOR
+    ");
+    $stmtSaldos->execute(array_merge([$empresaId], $clientesFinanceiros));
+    foreach ($stmtSaldos->fetchAll(PDO::FETCH_ASSOC) as $saldoCliente) {
+        $saldosClientes[(int)$saldoCliente['CLICONTADOR']] = (float)$saldoCliente['total_aberto'];
+    }
+}
 $clientesPorId = [];
 foreach ($clientes as $clienteLinha) {
     $clientesPorId[(int)$clienteLinha['id']] = $clienteLinha;
@@ -1042,7 +1064,7 @@ require '../../layout/header.php';
                         <select name="cliente_id" class="form-select" required>
                             <option value="">Selecione</option>
                             <?php foreach ($clientes as $cliente): ?>
-                                <option value="<?= (int)$cliente['id'] ?>" <?= (int)$formOperacao['cliente_id'] === (int)$cliente['id'] ? 'selected' : '' ?>>
+                                <option value="<?= (int)$cliente['id'] ?>" data-total-aberto="<?= (int)($cliente['clicontador'] ?? 0) > 0 ? number_format($saldosClientes[(int)$cliente['clicontador']] ?? 0, 2, '.', '') : '' ?>" <?= (int)$formOperacao['cliente_id'] === (int)$cliente['id'] ? 'selected' : '' ?>>
                                     <?= htmlspecialchars($cliente['nome']) ?> | taxa <?= percentualDC($cliente['taxa_desconto']) ?> | limite <?= moedaDC($cliente['limite_credito']) ?>
                                 </option>
                             <?php endforeach; ?>
@@ -1051,6 +1073,10 @@ require '../../layout/header.php';
                     <div class="col-12 col-lg-4">
                         <label class="form-label">Observacao</label>
                         <input type="text" name="observacao" class="form-control" maxlength="255" value="<?= htmlspecialchars((string)($formOperacao['observacao'] ?? '')) ?>">
+                    </div>
+                    <div class="col-12">
+                        <div class="small text-muted">Total de titulos em aberto do cliente (CR001)</div>
+                        <strong id="totalTitulosCliente" aria-live="polite">Selecione um cliente</strong>
                     </div>
 
                     <div class="col-12">
@@ -1414,6 +1440,20 @@ require '../../layout/header.php';
 document.addEventListener('DOMContentLoaded', function () {
     const container = document.getElementById('documentosContainer');
     const btnAdd = document.getElementById('btnAddDocumento');
+    const clienteSelect = document.querySelector('#formOperacao select[name="cliente_id"]');
+    const totalTitulosCliente = document.getElementById('totalTitulosCliente');
+    if (clienteSelect && totalTitulosCliente) {
+        const atualizarTotalTitulos = function () {
+            const total = clienteSelect.selectedOptions[0]?.dataset.totalAberto;
+            totalTitulosCliente.textContent = !clienteSelect.value
+                ? 'Selecione um cliente'
+                : total === '' || total === undefined
+                    ? 'Cliente sem vinculo ao cadastro financeiro'
+                    : 'R$ ' + Number(total).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+        };
+        clienteSelect.addEventListener('change', atualizarTotalTitulos);
+        atualizarTotalTitulos();
+    }
     if (!container) {
         return;
     }
@@ -1782,7 +1822,7 @@ document.addEventListener('DOMContentLoaded', function () {
         }
 
         status.className = 'small mt-1 dc-emissor-status text-muted';
-        status.textContent = 'Consultando titulos a vencer deste emissor...';
+        status.textContent = 'Consultando valores em aberto deste emissor...';
         const resumoGrid = documentosGridMesmoEmissor(linha, digitos);
         const documentosGrid = resumoGrid.documentos || [];
 
@@ -1804,7 +1844,6 @@ document.addEventListener('DOMContentLoaded', function () {
                 });
             })
             .then(function (dados) {
-                const documentosBanco = Array.isArray(dados.documentos) ? dados.documentos : [];
                 const campoNome = linha.querySelector('input[name="nome_emissor[]"]');
                 const nomeSugerido = dados.nome_emissor || resumoGrid.nome_emissor || '';
                 if (campoNome && !campoNome.value.trim() && nomeSugerido) {
@@ -1812,31 +1851,20 @@ document.addEventListener('DOMContentLoaded', function () {
                     atualizarResumoLinha(linha, Array.from(container.querySelectorAll('.documento-row')).indexOf(linha) + 1);
                 }
 
-                const quantidadeBanco = Number(dados.quantidade || 0);
                 const totalBanco = Number(dados.valor_total || 0);
-                const quantidadeGrid = documentosGrid.length;
                 const totalGrid = documentosGrid.reduce(function (total, doc) {
                     return total + Number(doc.valor || 0);
                 }, 0);
-                const quantidadeTotal = quantidadeBanco + quantidadeGrid;
                 const valorTotal = totalBanco + totalGrid;
 
-                if (!quantidadeTotal) {
+                if (valorTotal <= 0) {
                     status.className = 'small mt-1 dc-emissor-status text-success';
-                    status.textContent = nomeSugerido
-                        ? 'Emissor localizado: ' + nomeSugerido + '. Nenhum cheque/boleto a vencer ja cadastrado.'
-                        : 'Nenhum cheque/boleto a vencer ja cadastrado para este emissor.';
+                    status.textContent = 'Total em aberto deste CPF/CNPJ: ' + numeroParaMoedaBR(0) + '.';
                     return;
                 }
 
-                const detalhes = documentosBanco.concat(documentosGrid).slice(0, 6)
-                    .map(function (doc) {
-                        const numero = doc.numero_documento ? ' ' + doc.numero_documento : '';
-                        return '#' + doc.operacao_id + numero + ' - ' + doc.data_vencimento_br + ' - ' + doc.valor_formatado;
-                    }).join('; ');
-
                 status.className = 'small mt-1 dc-emissor-status text-warning';
-                status.textContent = 'Ja existem ' + quantidadeTotal + ' documento(s) a vencer deste emissor, total ' + numeroParaMoedaBR(valorTotal) + (detalhes ? '. ' + detalhes : '') + '.';
+                status.textContent = 'Total em aberto deste CPF/CNPJ: ' + numeroParaMoedaBR(valorTotal) + '.';
             })
             .catch(function (erro) {
                 status.className = 'small mt-1 dc-emissor-status text-warning';

@@ -770,7 +770,7 @@ function buscarResumoEmissorAVencerDC(PDO $pdo, int $empresaId, string $cnpjCpf,
     $digitosConsulta = array_values(array_unique($digitosConsulta));
     $placeholdersDigitos = implode(',', array_fill(0, count($digitosConsulta), '?'));
 
-    $params = array_merge([$empresaId], $digitosConsulta, [date('Y-m-d')]);
+    $params = array_merge([$empresaId], $digitosConsulta);
     $filtroIgnorar = '';
     if ($ignorarDocumentoId > 0) {
         $filtroIgnorar = ' AND d.id <> ?';
@@ -789,6 +789,7 @@ function buscarResumoEmissorAVencerDC(PDO $pdo, int $empresaId, string $cnpjCpf,
             o.status,
             cr.CRCONTADOR,
             cr.VLRRESTANTE,
+            cr.VLRPARCELA,
             cr.STATUS AS status_cr
         FROM desconto_cheques_documentos d
         INNER JOIN desconto_cheques_operacoes o ON o.id = d.operacao_id
@@ -798,7 +799,6 @@ function buscarResumoEmissorAVencerDC(PDO $pdo, int $empresaId, string $cnpjCpf,
               AND COALESCE(cr.excluido_firebird, 'N') = 'N'
         WHERE o.empresa_id = ?
           AND d.cnpj_cpf_emissor IN ({$placeholdersDigitos})
-          AND d.data_vencimento >= ?
           AND (
               o.status IN ('ABERTA', 'CONFIRMADA')
               OR (
@@ -816,7 +816,9 @@ function buscarResumoEmissorAVencerDC(PDO $pdo, int $empresaId, string $cnpjCpf,
 
     $total = 0.0;
     foreach ($documentos as &$documento) {
-        $documento['valor'] = (float)$documento['valor'];
+        $documento['valor'] = $documento['status'] === 'LANCADA'
+            ? (float)($documento['VLRRESTANTE'] ?? $documento['VLRPARCELA'] ?? 0)
+            : (float)$documento['valor'];
         $documento['valor_formatado'] = moedaDC($documento['valor']);
         $documento['data_vencimento_br'] = dataBRDC($documento['data_vencimento']);
         $total += $documento['valor'];
