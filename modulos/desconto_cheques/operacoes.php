@@ -200,7 +200,9 @@ $stmtClientes->execute([$empresaId]);
 $clientes = $stmtClientes->fetchAll(PDO::FETCH_ASSOC);
 $saldosClientes = [];
 $clientesFinanceiros = array_values(array_unique(array_filter(array_map(
-    static fn(array $cliente): int => (int)($cliente['clicontador'] ?? 0),
+    static function (array $cliente): int {
+        return (int)($cliente['clicontador'] ?? 0);
+    },
     $clientes
 ))));
 if ($clientesFinanceiros) {
