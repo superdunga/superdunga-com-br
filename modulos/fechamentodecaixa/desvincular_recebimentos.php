@@ -49,30 +49,6 @@ function garantirLogDesvinculoRecebimentos(PDO $pdo): void
 
 garantirLogDesvinculoRecebimentos($pdo_master);
 
-function garantirLogDesvalidacaoCm9(PDO $pdo): void
-{
-    $pdo->exec("
-        CREATE TABLE IF NOT EXISTS conciliacao_cm9_desvalidacoes_log (
-            id INT AUTO_INCREMENT PRIMARY KEY,
-            empresa_id INT NOT NULL,
-            crcontador INT NOT NULL,
-            clicontador INT NOT NULL,
-            usuario_validacao_anterior INT NULL,
-            data_validacao_anterior DATETIME NULL,
-            usuario_desvalidacao INT NOT NULL,
-            motivo VARCHAR(255) NOT NULL,
-            criado_em DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-            INDEX idx_cm9_desvalidacoes_titulo (empresa_id, crcontador),
-            INDEX idx_cm9_desvalidacoes_data (empresa_id, criado_em)
-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
-    ");
-}
-
-garantirLogDesvalidacaoCm9($pdo_master);
-if (empty($_SESSION['cm9_desvalidar_token'])) {
-    $_SESSION['cm9_desvalidar_token'] = bin2hex(random_bytes(32));
-}
-
 function dataHoraDesvinculo($valor): string
 {
     return $valor ? date('d/m/Y H:i', strtotime($valor)) : '-';
@@ -165,74 +141,6 @@ $valorMaxFiltro = trim($_GET['valor_max'] ?? '');
 $valorMinDecimal = valorDecimalDesvinculo($valorMinFiltro);
 $valorMaxDecimal = valorDecimalDesvinculo($valorMaxFiltro);
 $tiposMatchValidos = ['exato', 'movimento', 'aproximado', 'manual'];
-$crCm9Filtro = trim((string)($_GET['cm9_cr'] ?? ''));
-$clienteCm9Filtro = trim((string)($_GET['cm9_cliente'] ?? ''));
-
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['acao'] ?? '') === 'desvalidar_cm9') {
-    try {
-        $crCm9 = (int)($_POST['crcontador'] ?? 0);
-        $motivoCm9 = trim((string)($_POST['motivo'] ?? ''));
-        if (!hash_equals($_SESSION['cm9_desvalidar_token'], (string)($_POST['csrf_token'] ?? ''))) {
-            throw new RuntimeException('Sessao expirada. Recarregue a pagina e tente novamente.');
-        }
-        if ($crCm9 <= 0 || $motivoCm9 === '' || mb_strlen($motivoCm9) > 255) {
-            throw new RuntimeException('Informe um titulo CM 9 e um motivo com ate 255 caracteres.');
-        }
-
-        $pdo_master->beginTransaction();
-        $stmtCm9 = $pdo_master->prepare("
-            SELECT CRCONTADOR, CLICONTADOR, usuario_validacao, data_validacao
-            FROM armazem_cr001
-            WHERE EMPRESA = ?
-              AND CRCONTADOR = ?
-              AND CMCONTADOR = 9
-              AND validado = 'S'
-              AND COALESCE(excluido_firebird, 'N') = 'N'
-            FOR UPDATE
-        ");
-        $stmtCm9->execute([$empresaId, $crCm9]);
-        $tituloCm9 = $stmtCm9->fetch(PDO::FETCH_ASSOC);
-        if (!$tituloCm9) {
-            throw new RuntimeException('Titulo CM 9 validado nao encontrado nesta empresa.');
-        }
-
-        $stmtDesvalidar = $pdo_master->prepare("
-            UPDATE armazem_cr001
-            SET validado = 'N', data_validacao = NULL, usuario_validacao = NULL
-            WHERE EMPRESA = ? AND CRCONTADOR = ? AND CMCONTADOR = 9 AND validado = 'S'
-        ");
-        $stmtDesvalidar->execute([$empresaId, $crCm9]);
-        if ($stmtDesvalidar->rowCount() !== 1) {
-            throw new RuntimeException('Nao foi possivel desfazer a validacao do titulo.');
-        }
-
-        $stmtLogCm9 = $pdo_master->prepare("
-            INSERT INTO conciliacao_cm9_desvalidacoes_log
-                (empresa_id, crcontador, clicontador, usuario_validacao_anterior,
-                 data_validacao_anterior, usuario_desvalidacao, motivo)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-        ");
-        $stmtLogCm9->execute([
-            $empresaId,
-            $crCm9,
-            (int)$tituloCm9['CLICONTADOR'],
-            $tituloCm9['usuario_validacao'],
-            $tituloCm9['data_validacao'],
-            $usuarioId,
-            $motivoCm9,
-        ]);
-        $pdo_master->commit();
-
-        $query = queryDesvinculo(['ok_cm9' => '1']);
-        header('Location: desvincular_recebimentos.php' . ($query ? '?' . $query : ''));
-        exit;
-    } catch (Throwable $e) {
-        if ($pdo_master->inTransaction()) {
-            $pdo_master->rollBack();
-        }
-        $mensagemErro = $e->getMessage();
-    }
-}
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['acao'] ?? '') === 'desvincular') {
     $recebimentoId = (int)($_POST['recebimento_id'] ?? 0);
@@ -336,37 +244,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['acao'] ?? '') === 'desvinc
 
 if (($_GET['ok'] ?? '') === '1') {
     $mensagemOk = 'Vinculo desfeito. A limpeza no Firebird foi colocada na fila de sincronizacao.';
-} elseif (($_GET['ok_cm9'] ?? '') === '1') {
-    $mensagemOk = 'Validacao CM 9 desfeita. O titulo voltou para a lista de pendentes.';
 }
-
-$whereCm9 = ["c.EMPRESA = ?", "c.CMCONTADOR = 9", "c.validado = 'S'", "COALESCE(c.excluido_firebird, 'N') = 'N'"];
-$paramsCm9 = [$empresaId];
-if ($crCm9Filtro !== '') {
-    $whereCm9[] = 'c.CRCONTADOR = ?';
-    $paramsCm9[] = ctype_digit($crCm9Filtro) ? (int)$crCm9Filtro : 0;
-}
-if ($clienteCm9Filtro !== '') {
-    $whereCm9[] = '(cli.NOME LIKE ? OR cli.APELIDO LIKE ? OR c.CLICONTADOR = ?)';
-    $paramsCm9[] = '%' . $clienteCm9Filtro . '%';
-    $paramsCm9[] = '%' . $clienteCm9Filtro . '%';
-    $paramsCm9[] = ctype_digit($clienteCm9Filtro) ? (int)$clienteCm9Filtro : 0;
-}
-$stmtValidadosCm9 = $pdo_master->prepare("
-    SELECT c.CRCONTADOR, c.CLICONTADOR, c.DTLANC, c.VLRPARCELA,
-           c.data_validacao, c.usuario_validacao,
-           COALESCE(NULLIF(cli.NOME, ''), NULLIF(cli.APELIDO, ''), '-') AS cliente_nome,
-           u.nome AS usuario_nome
-    FROM armazem_cr001 c
-    LEFT JOIN armazem_cr002 cli
-      ON cli.EMPRESA = c.EMPRESA AND cli.CLICONTADOR = c.CLICONTADOR
-    LEFT JOIN usuarios u ON u.id = c.usuario_validacao
-    WHERE " . implode(' AND ', $whereCm9) . "
-    ORDER BY c.data_validacao DESC, c.CRCONTADOR DESC
-    LIMIT 100
-");
-$stmtValidadosCm9->execute($paramsCm9);
-$validadosCm9 = $stmtValidadosCm9->fetchAll(PDO::FETCH_ASSOC);
 
 $where = [
     'r.empresa_id = ?',
@@ -534,73 +412,6 @@ require '../../layout/header.php';
 <?php endif; ?>
 
 <section class="mb-3">
-    <div class="bg-white border rounded-2 shadow-sm overflow-hidden">
-        <div class="px-3 py-3 border-bottom">
-            <h2 class="h6 mb-1">Validacoes CM 9</h2>
-            <div class="small text-muted">Desfazer a conferencia de um titulo sem alterar seus vinculos nem enviar dados ao Firebird.</div>
-        </div>
-        <form method="GET" class="p-3 border-bottom">
-            <div class="row g-2 align-items-end">
-                <div class="col-md-3">
-                    <label class="form-label" for="cm9CrFiltro">CRCONTADOR</label>
-                    <input type="number" min="1" id="cm9CrFiltro" name="cm9_cr" class="form-control" value="<?= htmlspecialchars($crCm9Filtro) ?>">
-                </div>
-                <div class="col-md-5">
-                    <label class="form-label" for="cm9ClienteFiltro">Cliente ou codigo</label>
-                    <input type="text" id="cm9ClienteFiltro" name="cm9_cliente" class="form-control" value="<?= htmlspecialchars($clienteCm9Filtro) ?>">
-                </div>
-                <div class="col-md-4 d-flex gap-2">
-                    <button type="submit" class="btn btn-primary">Buscar</button>
-                    <a href="desvincular_recebimentos.php" class="btn btn-outline-secondary">Limpar</a>
-                </div>
-            </div>
-        </form>
-        <div class="table-responsive">
-            <table class="table table-sm table-hover align-middle mb-0">
-                <thead class="table-light">
-                    <tr>
-                        <th>CRCONTADOR</th>
-                        <th>Cliente</th>
-                        <th>Data do titulo</th>
-                        <th class="text-end">Valor</th>
-                        <th>Validado em</th>
-                        <th>Por</th>
-                        <th>Acao</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    <?php foreach ($validadosCm9 as $tituloCm9): ?>
-                        <tr>
-                            <td class="fw-semibold"><?= (int)$tituloCm9['CRCONTADOR'] ?></td>
-                            <td><?= htmlspecialchars($tituloCm9['cliente_nome']) ?> (<?= (int)$tituloCm9['CLICONTADOR'] ?>)</td>
-                            <td><?= dataHoraDesvinculo($tituloCm9['DTLANC']) ?></td>
-                            <td class="text-end"><?= moedaDesvinculo($tituloCm9['VLRPARCELA']) ?></td>
-                            <td><?= dataHoraDesvinculo($tituloCm9['data_validacao']) ?></td>
-                            <td><?= htmlspecialchars($tituloCm9['usuario_nome'] ?: ('Usuario #' . (int)$tituloCm9['usuario_validacao'])) ?></td>
-                            <td>
-                                <form method="POST" class="d-flex gap-2 align-items-center js-form-desvalidar-cm9">
-                                    <input type="hidden" name="acao" value="desvalidar_cm9">
-                                    <input type="hidden" name="crcontador" value="<?= (int)$tituloCm9['CRCONTADOR'] ?>">
-                                    <input type="hidden" name="csrf_token" value="<?= htmlspecialchars($_SESSION['cm9_desvalidar_token']) ?>">
-                                    <input type="text" name="motivo" class="form-control form-control-sm" maxlength="255" required placeholder="Motivo" aria-label="Motivo para desfazer validacao" style="min-width: 150px;">
-                                    <button type="submit" class="btn btn-sm btn-outline-danger text-nowrap">Desfazer validacao</button>
-                                </form>
-                            </td>
-                        </tr>
-                    <?php endforeach; ?>
-                    <?php if (!$validadosCm9): ?>
-                        <tr><td colspan="7" class="text-center text-muted py-3">Nenhum titulo CM 9 validado encontrado.</td></tr>
-                    <?php endif; ?>
-                </tbody>
-            </table>
-        </div>
-        <?php if (count($validadosCm9) === 100): ?>
-            <div class="small text-muted px-3 py-2 border-top">Exibindo os 100 mais recentes. Use a busca para localizar outros titulos.</div>
-        <?php endif; ?>
-    </div>
-</section>
-
-<section class="mb-3">
     <form method="GET" class="bg-white border rounded-2 shadow-sm p-3">
         <div class="row g-3 align-items-end">
             <div class="col-md-2">
@@ -734,13 +545,6 @@ document.addEventListener('DOMContentLoaded', function () {
     document.querySelectorAll('.js-form-desvincular').forEach(function (form) {
         form.addEventListener('submit', function (event) {
             if (!confirm('Confirmar desvinculo deste match? Esta acao sera registrada em log.')) {
-                event.preventDefault();
-            }
-        });
-    });
-    document.querySelectorAll('.js-form-desvalidar-cm9').forEach(function (form) {
-        form.addEventListener('submit', function (event) {
-            if (!confirm('Desfazer a validacao CM 9 deste titulo? A acao sera registrada em log.')) {
                 event.preventDefault();
             }
         });

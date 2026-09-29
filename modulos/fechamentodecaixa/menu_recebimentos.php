@@ -35,6 +35,14 @@ $opcoes = [
 
 if (($_SESSION['nivel'] ?? '') === 'MASTER') {
     $opcoes[] = [
+        'titulo' => 'Desfazer Validacao de Clientes',
+        'descricao' => 'Reabra a conferencia de titulos CM 9 sem alterar os recebiveis de cartoes.',
+        'href' => 'desvincular_clientes.php',
+        'modulo' => 'fechamento_importar_recebimentos',
+        'icone' => 'VC',
+        'botao' => 'btn-outline-danger',
+    ];
+    $opcoes[] = [
         'titulo' => 'Desvincular Matches',
         'descricao' => 'Desfaca conciliacoes de recebiveis feitas por engano.',
         'href' => 'desvincular_recebimentos.php',
