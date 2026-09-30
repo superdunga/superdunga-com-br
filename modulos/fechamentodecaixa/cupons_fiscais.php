@@ -36,9 +36,16 @@ foreach (['armazem_est007_auxiliar', 'armazem_est026_auxiliar'] as $tabela) {
 
 $diasCupons = [];
 $totaisCupons = ['cupons' => 0.0, 'notas' => 0.0, 'recebiveis' => 0.0];
+$fimExclusivo = $dataFim->modify('+1 day')->format('Y-m-d');
+$consultas = [
+    'recebiveis' => "SELECT DATE(data_venda) AS dia, SUM(COALESCE(valor_bruto, 0)) AS total
+                     FROM armazem_conciliacao_recebimentos
+                     WHERE empresa_id = :empresa AND data_venda >= :inicio AND data_venda < :fim
+                       AND CMCONTADOR IN (1, 2, 3, 12)
+                     GROUP BY DATE(data_venda)",
+];
 if ($fiscaisDisponiveis) {
-    $fimExclusivo = $dataFim->modify('+1 day')->format('Y-m-d');
-    $consultas = [
+    $consultas = array_merge([
         'cupons' => "SELECT DATE(DTEMISSAO) AS dia, SUM(COALESCE(TOTGERAL, 0)) AS total
                      FROM armazem_est007_auxiliar
                      WHERE EMPRESA = :empresa AND DTEMISSAO >= :inicio AND DTEMISSAO < :fim
@@ -52,23 +59,18 @@ if ($fiscaisDisponiveis) {
                       AND DTHRCANCNFE IS NULL
                       AND (SITUACAONF IS NULL OR UPPER(TRIM(SITUACAONF)) NOT IN ('C', 'CANCELADA', 'CANCELADO'))
                     GROUP BY DATE(DTEMISSAO)",
-        'recebiveis' => "SELECT DATE(data_venda) AS dia, SUM(COALESCE(valor_bruto, 0)) AS total
-                         FROM armazem_conciliacao_recebimentos
-                         WHERE empresa_id = :empresa AND data_venda >= :inicio AND data_venda < :fim
-                           AND CMCONTADOR IN (1, 2, 3, 12)
-                         GROUP BY DATE(data_venda)",
-    ];
-    foreach ($consultas as $tipo => $sql) {
-        $consulta = $pdo_master->prepare($sql);
-        $consulta->execute(['empresa' => $empresaId, 'inicio' => $inicio, 'fim' => $fimExclusivo]);
-        foreach ($consulta->fetchAll(PDO::FETCH_ASSOC) as $linha) {
-            $dia = (string)$linha['dia'];
-            $diasCupons[$dia][$tipo] = (float)$linha['total'];
-            $totaisCupons[$tipo] += (float)$linha['total'];
-        }
-    }
-    krsort($diasCupons);
+    ], $consultas);
 }
+foreach ($consultas as $tipo => $sql) {
+    $consulta = $pdo_master->prepare($sql);
+    $consulta->execute(['empresa' => $empresaId, 'inicio' => $inicio, 'fim' => $fimExclusivo]);
+    foreach ($consulta->fetchAll(PDO::FETCH_ASSOC) as $linha) {
+        $dia = (string)$linha['dia'];
+        $diasCupons[$dia][$tipo] = (float)$linha['total'];
+        $totaisCupons[$tipo] += (float)$linha['total'];
+    }
+}
+krsort($diasCupons);
 
 $moedaCupons = static function (float $valor): string {
     return 'R$ ' . number_format($valor, 2, ',', '.');
@@ -109,8 +111,11 @@ require '../../layout/header.php';
                 <div class="alert alert-warning" role="alert"><?= htmlspecialchars($erroPeriodo) ?></div>
             <?php endif; ?>
             <?php if (!$fiscaisDisponiveis): ?>
-                <p class="text-muted mb-0">Dados fiscais auxiliares ainda nao sincronizados para esta empresa.</p>
-            <?php elseif (!$diasCupons): ?>
+                <div class="alert alert-warning" role="alert">
+                    Dados fiscais auxiliares ainda nao sincronizados para esta empresa. Os recebiveis disponiveis sao exibidos abaixo.
+                </div>
+            <?php endif; ?>
+            <?php if (!$diasCupons): ?>
                 <p class="text-muted mb-0">Nenhum movimento no periodo.</p>
             <?php else: ?>
                 <div class="table-responsive">
