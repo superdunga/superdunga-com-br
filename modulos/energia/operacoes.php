@@ -199,6 +199,43 @@ function comporPdfEnergiaUmaPagina(string $pdfDemonstrativo, string $arquivoOrig
         }
 
         if (!$composto) {
+            $autoloadFpdi = __DIR__ . '/../../lib/energia_pdf/autoload.php';
+            if (is_file($autoloadFpdi)) {
+                require_once $autoloadFpdi;
+
+                try {
+                    $pdf = new \setasign\Fpdi\Fpdi('P', 'pt', [595, 842]);
+                    $pdf->SetAutoPageBreak(false);
+                    $pdf->AddPage('P', [595, 842]);
+
+                    $pdf->setSourceFile($temporarioDemonstrativo);
+                    $paginaDemonstrativo = $pdf->importPage(1);
+                    $pdf->useTemplate($paginaDemonstrativo, 0, 0, 595, 842);
+
+                    $pdf->setSourceFile($arquivoOriginal);
+                    $paginaConta = $pdf->importPage(1);
+                    $tamanhoConta = $pdf->getTemplateSize($paginaConta);
+                    $larguraConta = (float)$tamanhoConta['width'];
+                    $alturaConta = (float)$tamanhoConta['height'];
+                    if ($larguraConta <= 0 || $alturaConta <= 0) {
+                        throw new RuntimeException('Dimensoes invalidas na conta original.');
+                    }
+
+                    $escala = min(523.0 / $larguraConta, 520.0 / $alturaConta);
+                    $larguraFinal = $larguraConta * $escala;
+                    $alturaFinal = $alturaConta * $escala;
+                    $x = (595.0 - $larguraFinal) / 2.0;
+                    $y = 842.0 - 10.0 - $alturaFinal;
+                    $pdf->useTemplate($paginaConta, $x, $y, $larguraFinal, $alturaFinal);
+                    $pdf->Output('F', $temporarioSaida);
+                    $composto = is_file($temporarioSaida) && filesize($temporarioSaida) > 0;
+                } catch (Throwable $e) {
+                    error_log('Falha ao compor PDF de energia com FPDI: ' . $e->getMessage());
+                }
+            }
+        }
+
+        if (!$composto) {
             throw new RuntimeException('Nao foi possivel compor o demonstrativo e a conta original em uma pagina.');
         }
 
@@ -331,7 +368,13 @@ function gerarPdfDemonstrativoEnergia(PDO $pdo, int $empresaId, int $operacaoId)
 }
 
 if (isset($_GET['pdf_cliente'])) {
-    gerarPdfDemonstrativoEnergia($pdo_master, $empresaId, (int)$_GET['pdf_cliente']);
+    try {
+        gerarPdfDemonstrativoEnergia($pdo_master, $empresaId, (int)$_GET['pdf_cliente']);
+    } catch (Throwable $e) {
+        error_log('Falha ao gerar demonstrativo de energia: ' . $e->getMessage());
+        http_response_code(500);
+        exit('Nao foi possivel gerar o demonstrativo. Tente novamente ou contate o suporte.');
+    }
 }
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
