@@ -1,5 +1,28 @@
 <?php
 
+function identificacaoNotaFiscalEnergia(string $texto): array
+{
+    $dados = ['nota_fiscal' => '', 'serie_nota' => ''];
+    if (preg_match('/NOTA\s+FISCAL\s+N[º°O]?\s*([0-9]+)\s*-?\s*S[ÉE]RIE\s*([0-9]+)/iu', $texto, $m)) {
+        $dados['nota_fiscal'] = ltrim($m[1], '0');
+        $dados['serie_nota'] = str_pad(ltrim($m[2], '0'), 3, '0', STR_PAD_LEFT);
+    }
+
+    return $dados;
+}
+
+function chaveDocumentoEnergia(string $unidadeConsumidora, string $notaFiscal, string $serieNota): ?string
+{
+    $unidade = preg_replace('/\D+/', '', $unidadeConsumidora) ?? '';
+    $nota = preg_replace('/\D+/', '', $notaFiscal) ?? '';
+    $serie = preg_replace('/\D+/', '', $serieNota) ?? '';
+    if ($unidade === '' || $nota === '' || $serie === '') {
+        return null;
+    }
+
+    return $unidade . '|' . ltrim($nota, '0') . '|' . str_pad(ltrim($serie, '0'), 3, '0', STR_PAD_LEFT);
+}
+
 function garantirTabelasEnergia(PDO $pdo): void
 {
     static $executado = false;
@@ -37,6 +60,37 @@ function garantirTabelasEnergia(PDO $pdo): void
 
     garantirColunaEnergia($pdo, 'energia_contas', 'valor_unitario_kw', 'DECIMAL(15,6) NOT NULL DEFAULT 0 AFTER consumo_kwh');
     garantirColunaEnergia($pdo, 'energia_contas', 'franquia_minima', 'DECIMAL(15,3) NOT NULL DEFAULT 0 AFTER valor_unitario_kw');
+    garantirColunaEnergia($pdo, 'energia_contas', 'nota_fiscal', 'VARCHAR(30) NULL AFTER unidade_consumidora');
+    garantirColunaEnergia($pdo, 'energia_contas', 'serie_nota', 'VARCHAR(10) NULL AFTER nota_fiscal');
+    garantirColunaEnergia($pdo, 'energia_contas', 'chave_documento', 'VARCHAR(100) NULL AFTER serie_nota');
+
+    $stmtSemChave = $pdo->query("
+        SELECT id, unidade_consumidora, texto_extraido
+        FROM energia_contas
+        WHERE chave_documento IS NULL OR chave_documento = ''
+    ");
+    $stmtAtualizarChave = $pdo->prepare("
+        UPDATE energia_contas
+        SET nota_fiscal = ?, serie_nota = ?, chave_documento = ?
+        WHERE id = ?
+    ");
+    foreach ($stmtSemChave->fetchAll(PDO::FETCH_ASSOC) as $contaSemChave) {
+        $identificacao = identificacaoNotaFiscalEnergia((string)$contaSemChave['texto_extraido']);
+        $chave = chaveDocumentoEnergia(
+            (string)$contaSemChave['unidade_consumidora'],
+            $identificacao['nota_fiscal'],
+            $identificacao['serie_nota']
+        );
+        if ($chave !== null) {
+            $stmtAtualizarChave->execute([
+                $identificacao['nota_fiscal'],
+                $identificacao['serie_nota'],
+                $chave,
+                (int)$contaSemChave['id'],
+            ]);
+        }
+    }
+    garantirIndiceUnicoEnergia($pdo, 'energia_contas', 'uq_energia_contas_documento', ['empresa_id', 'chave_documento']);
 
     $pdo->exec("
         CREATE TABLE IF NOT EXISTS energia_operacoes (
@@ -85,6 +139,24 @@ function garantirColunaEnergia(PDO $pdo, string $tabela, string $coluna, string 
     $stmt->execute([$tabela, $coluna]);
     if ((int)$stmt->fetchColumn() === 0) {
         $pdo->exec("ALTER TABLE `{$tabela}` ADD COLUMN `{$coluna}` {$definicao}");
+    }
+}
+
+function garantirIndiceUnicoEnergia(PDO $pdo, string $tabela, string $indice, array $colunas): void
+{
+    $stmt = $pdo->prepare("
+        SELECT COUNT(*)
+        FROM information_schema.STATISTICS
+        WHERE TABLE_SCHEMA = DATABASE()
+          AND TABLE_NAME = ?
+          AND INDEX_NAME = ?
+    ");
+    $stmt->execute([$tabela, $indice]);
+    if ((int)$stmt->fetchColumn() === 0) {
+        $nomes = array_map(static function ($coluna) {
+            return '`' . str_replace('`', '``', (string)$coluna) . '`';
+        }, $colunas);
+        $pdo->exec("ALTER TABLE `{$tabela}` ADD UNIQUE INDEX `{$indice}` (" . implode(', ', $nomes) . ")");
     }
 }
 
@@ -335,6 +407,9 @@ function parseContaEnergiaCemig(string $texto): array
     $dados = [
         'logradouro_complemento' => '',
         'unidade_consumidora' => '',
+        'nota_fiscal' => '',
+        'serie_nota' => '',
+        'chave_documento' => null,
         'referencia' => '',
         'vencimento' => '',
         'valor_total' => 0.0,
@@ -373,6 +448,15 @@ function parseContaEnergiaCemig(string $texto): array
     } elseif ($dados['unidade_consumidora'] === '' && preg_match('/N\.?[ºO]?\s*da\s+Unidade\s+Consumidora\s+Vencimento\s+Total a pagar\s+([\d\.\-]+)/i', $texto, $m)) {
         $dados['unidade_consumidora'] = trim($m[1]);
     }
+
+    $identificacaoNota = identificacaoNotaFiscalEnergia($texto);
+    $dados['nota_fiscal'] = $identificacaoNota['nota_fiscal'];
+    $dados['serie_nota'] = $identificacaoNota['serie_nota'];
+    $dados['chave_documento'] = chaveDocumentoEnergia(
+        $dados['unidade_consumidora'],
+        $dados['nota_fiscal'],
+        $dados['serie_nota']
+    );
 
     foreach ($linhas as $idx => $linha) {
         if (stripos($linha, 'Referente a') !== false && isset($linhas[$idx + 1]) && preg_match('/^([A-Z]{3}\/\d{4})\s+(\d{2}\/\d{2}\/\d{4})\s+([\d\.,]+)/i', $linhas[$idx + 1], $m)) {

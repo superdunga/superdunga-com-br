@@ -30,35 +30,63 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $texto = extrairTextoPdfEnergia($arquivo['absoluto']);
             $dados = parseContaEnergiaCemig($texto);
 
+            if ($dados['chave_documento'] !== null) {
+                $stmtDuplicada = $pdo_master->prepare("
+                    SELECT id
+                    FROM energia_contas
+                    WHERE empresa_id = ?
+                      AND chave_documento = ?
+                    LIMIT 1
+                ");
+                $stmtDuplicada->execute([$empresaId, $dados['chave_documento']]);
+                $contaDuplicadaId = (int)$stmtDuplicada->fetchColumn();
+                if ($contaDuplicadaId > 0) {
+                    @unlink($arquivo['absoluto']);
+                    throw new RuntimeException('Esta conta ja foi importada (conta #' . $contaDuplicadaId . ').');
+                }
+            }
+
             $stmt = $pdo_master->prepare("
                 INSERT INTO energia_contas (
                     empresa_id, arquivo_nome, arquivo_caminho, logradouro_complemento,
-                    unidade_consumidora, referencia, vencimento, valor_total, data_emissao,
+                    unidade_consumidora, nota_fiscal, serie_nota, chave_documento,
+                    referencia, vencimento, valor_total, data_emissao,
                     consumo_kwh, valor_unitario_kw, franquia_minima,
                     custo_disponibilidade, contribuicao_iluminacao,
                     texto_extraido, criado_por
                 ) VALUES (
-                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
                 )
             ");
-            $stmt->execute([
-                $empresaId,
-                $arquivo['nome'],
-                $arquivo['caminho'],
-                $dados['logradouro_complemento'],
-                $dados['unidade_consumidora'],
-                $dados['referencia'],
-                $dados['vencimento'] ?: null,
-                $dados['valor_total'],
-                $dados['data_emissao'] ?: null,
-                $dados['consumo_kwh'],
-                $dados['valor_unitario_kw'],
-                $dados['franquia_minima'],
-                $dados['custo_disponibilidade'],
-                $dados['contribuicao_iluminacao'],
-                $texto,
-                $usuarioId ?: null,
-            ]);
+            try {
+                $stmt->execute([
+                    $empresaId,
+                    $arquivo['nome'],
+                    $arquivo['caminho'],
+                    $dados['logradouro_complemento'],
+                    $dados['unidade_consumidora'],
+                    $dados['nota_fiscal'] ?: null,
+                    $dados['serie_nota'] ?: null,
+                    $dados['chave_documento'],
+                    $dados['referencia'],
+                    $dados['vencimento'] ?: null,
+                    $dados['valor_total'],
+                    $dados['data_emissao'] ?: null,
+                    $dados['consumo_kwh'],
+                    $dados['valor_unitario_kw'],
+                    $dados['franquia_minima'],
+                    $dados['custo_disponibilidade'],
+                    $dados['contribuicao_iluminacao'],
+                    $texto,
+                    $usuarioId ?: null,
+                ]);
+            } catch (PDOException $e) {
+                @unlink($arquivo['absoluto']);
+                if ((string)$e->getCode() === '23000') {
+                    throw new RuntimeException('Esta conta ja foi importada para esta empresa.');
+                }
+                throw $e;
+            }
 
             header('Location: contas.php?ok=importado&id=' . (int)$pdo_master->lastInsertId());
             exit;
