@@ -415,11 +415,25 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $valorContaComDesconto = 0;
             }
 
+            $valorPagoFornecedor = decimalPostEnergiaOperacao((string)($_POST['valor_total_pago_fornecedor'] ?? '0'));
+            if ($quantidadeKw <= 0) {
+                throw new RuntimeException('A quantidade de kW injetada precisa ser maior que zero.');
+            }
+            if ($percentualDesconto <= 0) {
+                throw new RuntimeException('O percentual de desconto precisa ser maior que zero.');
+            }
+            if ($valorContaComDesconto <= 0) {
+                throw new RuntimeException('O valor da conta com desconto precisa ser maior que zero.');
+            }
+            if ($valorPagoFornecedor <= 0) {
+                throw new RuntimeException('O valor total pago ao fornecedor precisa ser maior que zero.');
+            }
+
             $dados = [
                 'quantidade_kw_injetada' => $quantidadeKw,
                 'percentual_desconto_venda' => $percentualDesconto,
                 'valor_conta_com_desconto' => $valorContaComDesconto,
-                'valor_total_pago_fornecedor' => decimalPostEnergiaOperacao((string)($_POST['valor_total_pago_fornecedor'] ?? '0')),
+                'valor_total_pago_fornecedor' => $valorPagoFornecedor,
                 'observacao' => trim((string)($_POST['observacao'] ?? '')),
             ];
 
@@ -534,8 +548,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $valorContaComDesconto = (float)$operacaoFechar['valor_conta_com_desconto'];
             $valorPagoFornecedor = (float)$operacaoFechar['valor_total_pago_fornecedor'];
             $valorComissao = round($valorContaComDesconto - $valorPagoFornecedor, 2);
+            if ((float)$operacaoFechar['quantidade_kw_injetada'] <= 0) {
+                throw new RuntimeException('A quantidade de kW injetada precisa ser maior que zero.');
+            }
+            if ((float)$operacaoFechar['percentual_desconto_venda'] <= 0) {
+                throw new RuntimeException('O percentual de desconto precisa ser maior que zero.');
+            }
             if ($valorContaComDesconto <= 0) {
                 throw new RuntimeException('Valor da conta com desconto precisa ser maior que zero.');
+            }
+            if ($valorPagoFornecedor <= 0) {
+                throw new RuntimeException('O valor total pago ao fornecedor precisa ser maior que zero.');
             }
             if ($valorComissao < 0) {
                 throw new RuntimeException('Valor total pago ao fornecedor maior que o valor da conta com desconto. Nao e possivel gerar comissao negativa.');
@@ -792,7 +815,7 @@ require '../../layout/header.php';
         <div class="card shadow-sm h-100">
             <div class="card-body">
                 <h2 class="h6 fw-bold mb-3"><?= ((int)$form['id'] > 0) ? 'Editar operacao' : 'Nova operacao' ?></h2>
-                <form method="post" class="row g-3">
+                <form method="post" class="row g-3" id="form_operacao_energia">
                     <input type="hidden" name="acao" value="salvar_operacao">
                     <input type="hidden" name="id" value="<?= (int)$form['id'] ?>">
 
@@ -818,11 +841,11 @@ require '../../layout/header.php';
                     </div>
                     <div class="col-md-6">
                         <label class="form-label small fw-semibold">Quantidade de kW injetada</label>
-                        <input type="text" name="quantidade_kw_injetada" id="quantidade_kw_injetada" inputmode="decimal" class="form-control" value="<?= qtdEnergiaOperacao((float)$form['quantidade_kw_injetada']) ?>">
+                        <input type="text" name="quantidade_kw_injetada" id="quantidade_kw_injetada" inputmode="decimal" class="form-control" value="<?= qtdEnergiaOperacao((float)$form['quantidade_kw_injetada']) ?>" required>
                     </div>
                     <div class="col-md-6">
                         <label class="form-label small fw-semibold">% desconto na venda</label>
-                        <input type="text" name="percentual_desconto_venda" id="percentual_desconto_venda" inputmode="decimal" class="form-control" value="<?= number_format((float)$form['percentual_desconto_venda'], 4, ',', '.') ?>">
+                        <input type="text" name="percentual_desconto_venda" id="percentual_desconto_venda" inputmode="decimal" class="form-control" value="<?= number_format((float)$form['percentual_desconto_venda'], 4, ',', '.') ?>" required>
                     </div>
                     <div class="col-md-6">
                         <label class="form-label small fw-semibold">Valor da conta com desconto</label>
@@ -831,7 +854,7 @@ require '../../layout/header.php';
                     </div>
                     <div class="col-md-6">
                         <label class="form-label small fw-semibold">Valor total pago ao fornecedor</label>
-                        <input type="text" name="valor_total_pago_fornecedor" inputmode="decimal" class="form-control" value="<?= moedaEnergiaOperacao((float)$form['valor_total_pago_fornecedor']) ?>">
+                        <input type="text" name="valor_total_pago_fornecedor" id="valor_total_pago_fornecedor" inputmode="decimal" class="form-control" value="<?= moedaEnergiaOperacao((float)$form['valor_total_pago_fornecedor']) ?>" required>
                     </div>
                     <div class="col-12">
                         <label class="form-label small fw-semibold">Observacao</label>
@@ -1040,6 +1063,8 @@ document.addEventListener('DOMContentLoaded', function () {
     const quantidade = document.getElementById('quantidade_kw_injetada');
     const desconto = document.getElementById('percentual_desconto_venda');
     const valorFinal = document.getElementById('valor_conta_com_desconto');
+    const valorFornecedor = document.getElementById('valor_total_pago_fornecedor');
+    const formOperacao = document.getElementById('form_operacao_energia');
     const parsePt = (valor) => {
         valor = String(valor || '').replace(/[^\d,.-]/g, '');
         if (valor.includes(',')) {
@@ -1068,6 +1093,36 @@ document.addEventListener('DOMContentLoaded', function () {
         conta.addEventListener('change', recalcular);
         quantidade.addEventListener('input', recalcular);
         desconto.addEventListener('input', recalcular);
+    }
+    if (formOperacao) {
+        [quantidade, desconto, valorFornecedor].forEach(function (campo) {
+            if (campo) {
+                campo.addEventListener('input', function () {
+                    campo.setCustomValidity('');
+                });
+            }
+        });
+        formOperacao.addEventListener('submit', function (event) {
+            const campos = [
+                [quantidade, 'Informe uma quantidade de kW maior que zero.'],
+                [desconto, 'Informe um percentual de desconto maior que zero.'],
+                [valorFinal, 'O valor da conta com desconto precisa ser maior que zero.'],
+                [valorFornecedor, 'Informe o valor pago ao fornecedor, maior que zero.']
+            ];
+            for (const item of campos) {
+                const campo = item[0];
+                if (!campo) {
+                    continue;
+                }
+                campo.setCustomValidity('');
+                if (parsePt(campo.value) <= 0) {
+                    campo.setCustomValidity(item[1]);
+                    campo.reportValidity();
+                    event.preventDefault();
+                    return;
+                }
+            }
+        });
     }
 });
 </script>
