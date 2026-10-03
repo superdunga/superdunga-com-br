@@ -661,6 +661,14 @@ function normalizarCabecalhoExtrato(string $valor): string
     return preg_replace('/[^a-z0-9]+/', '_', $valor);
 }
 
+function historicoCompoeSaldoExtrato(string $historico): bool
+{
+    return !in_array(normalizarCabecalhoExtrato($historico), [
+        'saldo_anterior',
+        'saldo_do_dia',
+    ], true);
+}
+
 function buscarCampoExtrato(array $linha, array $nomes): string
 {
     foreach ($nomes as $nome) {
@@ -1084,7 +1092,9 @@ function importarLinhasExtratoBanco(PDO $pdo, int $empresaId, int $usuarioId, in
     $datasImportacao = [];
     $ocorrenciasNaturaisImportacao = [];
     foreach ($linhas as $linha) {
-        if (empty($linha['data_movimento']) || (float)$linha['valor'] == 0.0) {
+        if (empty($linha['data_movimento'])
+            || (float)$linha['valor'] == 0.0
+            || !historicoCompoeSaldoExtrato((string)($linha['historico'] ?? ''))) {
             continue;
         }
 
@@ -2669,7 +2679,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['acao'] ?? '') === 'importa
                 $datasImportacao = [];
                 $ocorrenciasNaturaisImportacao = [];
                 foreach ($linhas as $linha) {
-                    if (empty($linha['data_movimento']) || (float)$linha['valor'] == 0.0) {
+                    if (empty($linha['data_movimento'])
+                        || (float)$linha['valor'] == 0.0
+                        || !historicoCompoeSaldoExtrato((string)($linha['historico'] ?? ''))) {
                         continue;
                     }
 
