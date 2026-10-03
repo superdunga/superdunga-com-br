@@ -58,6 +58,28 @@ def aplicar_empresa_lista(dados):
     return dados
 
 
+def validar_resposta_envio(resposta):
+    resposta.raise_for_status()
+    texto = resposta.text.strip()
+
+    try:
+        retorno = resposta.json()
+    except ValueError:
+        texto_erro = texto.lower()
+        marcadores_erro = ("fatal error", "uncaught", "parse error", "warning:")
+        if any(marcador in texto_erro for marcador in marcadores_erro):
+            raise RuntimeError(f"Erro retornado pelo SuperDunga: {texto[:500]}")
+        return texto
+
+    if isinstance(retorno, dict):
+        erro = retorno.get("erro") or retorno.get("error")
+        status = str(retorno.get("status", "")).lower()
+        if erro or status in ("erro", "error", "failed", "falha"):
+            raise RuntimeError(f"Erro retornado pelo SuperDunga: {erro or retorno}")
+
+    return retorno
+
+
 def registrar_log(tabela, registros, status, mensagem):
     try:
         url = "https://superdunga.com.br/modulos/tesouraria/log_sync.php"
@@ -122,7 +144,7 @@ def processar_tabela(nome, url_api, tabela_php, forcar_completo=False):
                     print(f"Enviando lote {i // tamanho_lote + 1} com {len(lote)} registros...")
 
                     envio = requests.post(url_php, params=params_site({"tabela": tabela_php}), json=aplicar_empresa_lista(lote), timeout=600)
-                    envio.raise_for_status()
+                    validar_resposta_envio(envio)
 
                     resposta_texto = envio.text
 
@@ -135,7 +157,7 @@ def processar_tabela(nome, url_api, tabela_php, forcar_completo=False):
 
             else:
                 envio = requests.post(url_php, params=params_site({"tabela": tabela_php}), json=aplicar_empresa_lista(dados), timeout=600)
-                envio.raise_for_status()
+                validar_resposta_envio(envio)
 
                 resposta_texto = envio.text
 
@@ -199,7 +221,7 @@ def processar_tabela_paginada(nome, url_api, tabela_php, tamanho_lote=1000, para
             print(f"Enviando {nome} lote {lote_numero} com {len(dados)} registros...")
 
             envio = requests.post(url_php, params=params_site({"tabela": tabela_php}), json=aplicar_empresa_lista(dados), timeout=600)
-            envio.raise_for_status()
+            validar_resposta_envio(envio)
 
             print("Resposta do servidor:")
             print(envio.text)
@@ -260,7 +282,7 @@ def enviar_cr001_ativos():
             json=ids,
             timeout=600
         )
-        envio.raise_for_status()
+        validar_resposta_envio(envio)
 
         print("Resposta do servidor CR001 ativos:")
         print(envio.text)
@@ -307,7 +329,7 @@ def enviar_ativos(nome, url_api, tabela_php, tamanho_lote=1000, params_api=None,
                 json=aplicar_empresa_lista(lote),
                 timeout=600
             )
-            envio.raise_for_status()
+            validar_resposta_envio(envio)
 
             print(f"Resposta do servidor {nome} lote {lote_numero}:")
             print(envio.text)
@@ -327,7 +349,7 @@ def enviar_ativos(nome, url_api, tabela_php, tamanho_lote=1000, params_api=None,
             json=[],
             timeout=600
         )
-        envio_final.raise_for_status()
+        validar_resposta_envio(envio_final)
 
         print(f"Resposta do servidor {nome} ativos:")
         print(envio_final.text)
@@ -383,7 +405,7 @@ def verificar_est008_ativos_lotes(tamanho_lote=1000):
                 json=aplicar_empresa_lista(ids),
                 timeout=600
             )
-            envio.raise_for_status()
+            validar_resposta_envio(envio)
 
             print("Resposta do servidor EST008 lote:")
             print(envio.text)
@@ -403,7 +425,7 @@ def verificar_est008_ativos_lotes(tamanho_lote=1000):
             json=[],
             timeout=600
         )
-        envio_final.raise_for_status()
+        validar_resposta_envio(envio_final)
 
         print("Resposta final do servidor EST008 ativos:")
         print(envio_final.text)
@@ -547,7 +569,7 @@ try:
                 json=aplicar_empresa_lista(lote),
                 timeout=600
             )
-            envio.raise_for_status()
+            validar_resposta_envio(envio)
 
             resposta_texto = envio.text
 
@@ -580,7 +602,7 @@ try:
             url_php_ids = f"{BASE_SITE}/modulos/tesouraria/receber_ids_bnc001.php"
 
             envio_ids = requests.post(url_php_ids, params=params_site({"token": "123456"}), json=ids, timeout=600)
-            envio_ids.raise_for_status()
+            validar_resposta_envio(envio_ids)
 
             print("Resposta do servidor deletados:")
             print(envio_ids.text)

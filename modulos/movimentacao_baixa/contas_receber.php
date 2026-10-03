@@ -164,7 +164,7 @@ function crbBuscarTipoes(PDO $pdo, $empresaId, $tipoes)
     return $stmt->fetch(PDO::FETCH_ASSOC);
 }
 
-function crbValidar(PDO $pdo, $empresaId, array $dados)
+function crbValidar(PDO $pdo, $empresaId, array $dados, $permitirTipoesContrapartida = false)
 {
     $erros = [];
     $qtdParcelas = max(1, (int)($dados['qtd_parcelas'] ?? 1));
@@ -178,8 +178,11 @@ function crbValidar(PDO $pdo, $empresaId, array $dados)
     if (empty($dados['clicontador']) || !crbBuscarCliente($pdo, $empresaId, (int)$dados['clicontador'])) {
         $erros[] = 'Informe um cliente valido.';
     }
-    if (empty($dados['tipoes']) || !crbBuscarTipoes($pdo, $empresaId, (int)$dados['tipoes'])) {
+    $tipoesCadastro = empty($dados['tipoes']) ? false : crbBuscarTipoes($pdo, $empresaId, (int)$dados['tipoes']);
+    if (!$tipoesCadastro) {
         $erros[] = 'Informe um TIPOES valido.';
+    } elseif (!$permitirTipoesContrapartida && mbaTipoesExigeOrigemControlada($tipoesCadastro)) {
+        $erros[] = mbaMensagemTipoesOrigemControlada();
     }
     if (crbFloat($dados['valor']) <= 0) {
         $erros[] = 'Informe um valor maior que zero.';
@@ -203,9 +206,9 @@ function crbValidar(PDO $pdo, $empresaId, array $dados)
     return $erros;
 }
 
-function crbSalvar(PDO $pdo, $empresaId, $usuarioId, array $dados, $crcontadorEdicao = null)
+function crbSalvar(PDO $pdo, $empresaId, $usuarioId, array $dados, $crcontadorEdicao = null, $permitirTipoesContrapartida = false)
 {
-    $erros = crbValidar($pdo, $empresaId, $dados);
+    $erros = crbValidar($pdo, $empresaId, $dados, $permitirTipoesContrapartida);
     if ($erros) {
         throw new RuntimeException(implode(' ', $erros));
     }
@@ -414,7 +417,9 @@ function crbBaixarTitulos(PDO $pdo, $empresaId, $usuarioId, array $dados)
         $baixados = [];
 
         foreach ($titulos as $titulo) {
-            $tipoes = $tipoesBaixa > 0 ? $tipoesBaixa : (int)($titulo['TIPOES'] ?? 0);
+            $tipoesOriginal = (int)($titulo['TIPOES'] ?? 0);
+            $tipoOriginal = $tipoesOriginal > 0 ? crbBuscarTipoes($pdo, $empresaId, $tipoesOriginal) : false;
+            $tipoes = mbaResolverTipoesBaixa($tipoOriginal,$tipoesOriginal,$tipoesBaixa,'CR',(int)$titulo['CRCONTADOR']);
             if ($tipoes <= 0) {
                 throw new RuntimeException('O titulo CR #' . (int)$titulo['CRCONTADOR'] . ' nao possui TIPOES. Informe um TIPOES para a baixa.');
             }
@@ -427,6 +432,9 @@ function crbBaixarTitulos(PDO $pdo, $empresaId, $usuarioId, array $dados)
             $tipomovPrincipal = strtoupper((string)$tipo['TIPOMOV']);
             $contrapTipoes = !empty($tipo['CONTRAP_TIPOES']) ? (int)$tipo['CONTRAP_TIPOES'] : 0;
             $exigeContrap = $contrapTipoes > 0;
+            if (mbaVinculoCpCrValidoNaBaixa($pdo,(int)$empresaId,'CR',(int)$titulo['CRCONTADOR'],$tipoes,$contrapTipoes)) {
+                $exigeContrap = false;
+            }
             if (($titulo['TIPODOCORIGEM'] ?? '') === 'SUPERDUNGA'
                 && ($titulo['CONTROLE'] ?? '') === 'MOV_BAIXA_CONTRAPARTIDA') {
                 if ($tipoes !== (int)$titulo['TIPOES'] || $tipomovPrincipal !== 'C' || !$exigeContrap) {
@@ -591,8 +599,12 @@ function crbAgruparTitulos(PDO $pdo, $empresaId, $usuarioId, array $dados)
     if ($novoTitulo === '') {
         throw new RuntimeException('Informe o documento/titulo do agrupamento.');
     }
-    if ($tipoes <= 0 || !crbBuscarTipoes($pdo, $empresaId, $tipoes)) {
+    $tipoesCadastro = $tipoes > 0 ? crbBuscarTipoes($pdo, $empresaId, $tipoes) : false;
+    if (!$tipoesCadastro) {
         throw new RuntimeException('Informe um TIPOES valido para o novo titulo.');
+    }
+    if (mbaTipoesExigeOrigemControlada($tipoesCadastro)) {
+        throw new RuntimeException(mbaMensagemTipoesOrigemControlada());
     }
 
     $titulos = crbCarregarTitulosParaBaixa($pdo, $empresaId, $crcontadores);
@@ -1161,7 +1173,7 @@ $stmtClientes->execute([$empresaId]);
 $clientes = $stmtClientes->fetchAll(PDO::FETCH_ASSOC);
 
 $stmtTipoes = $pdo->prepare("
-    SELECT ESCONTADOR, DESCES, TIPOMOV
+    SELECT ESCONTADOR, DESCES, TIPOMOV, CONTRAP_TIPOES, CONTRAP_CBCONTADOR
     FROM armazem_bnc005
     WHERE EMPRESA = ?
       AND TIPOMOV = 'C'
@@ -1171,6 +1183,10 @@ $stmtTipoes = $pdo->prepare("
 ");
 $stmtTipoes->execute([$empresaId]);
 $tipos = $stmtTipoes->fetchAll(PDO::FETCH_ASSOC);
+$tiposPorId = [];
+foreach ($tipos as $tipo) {
+    $tiposPorId[(int)$tipo['ESCONTADOR']] = $tipo;
+}
 
 $stmtContas = $pdo->prepare("
     SELECT CBCONTADOR, NUMERO, DESCABREV, TITULAR
@@ -1469,6 +1485,14 @@ require '../../layout/header.php';
     <?php if ($titulosBaixa): ?>
         <?php
             $dataBaixaPadrao = $_POST['data_baixa'] ?? '';
+            $baixaPossuiTipoesProtegido = false;
+            foreach ($titulosBaixa as $tituloBaixa) {
+                $tipoBaixaAtual = $tiposPorId[(int)($tituloBaixa['TIPOES'] ?? 0)] ?? null;
+                if ($tipoBaixaAtual && mbaTipoesTemContrapartida($tipoBaixaAtual)) {
+                    $baixaPossuiTipoesProtegido = true;
+                    break;
+                }
+            }
             if ($dataBaixaPadrao === '') {
                 $vencimentosBaixa = array_filter(array_map(static function ($titulo) {
                     return !empty($titulo['DTVENC']) ? date('Y-m-d', strtotime($titulo['DTVENC'])) : null;
@@ -1508,7 +1532,7 @@ require '../../layout/header.php';
                     </div>
                     <div class="crb-field w4">
                         <label for="tipoes_baixa">TIPOES da baixa</label>
-                        <select id="tipoes_baixa" name="tipoes_baixa">
+                        <select id="tipoes_baixa" name="tipoes_baixa" <?= $baixaPossuiTipoesProtegido ? 'disabled' : '' ?>>
                             <option value="">Manter TIPOES de cada titulo</option>
                             <?php foreach ($tipos as $tipo): ?>
                                 <option value="<?= (int)$tipo['ESCONTADOR'] ?>" <?= (string)($_POST['tipoes_baixa'] ?? '') === (string)$tipo['ESCONTADOR'] ? 'selected' : '' ?>>
@@ -1547,7 +1571,12 @@ require '../../layout/header.php';
                                     <td><?= crbH(crbData($tituloBaixa['DTVENC'])) ?></td>
                                     <td><?= crbH(($tituloBaixa['CLICONTADOR'] ?? '') . ' - ' . ($tituloBaixa['cliente_nome'] ?? '')) ?></td>
                                     <td><?= crbH($tituloBaixa['TITULO'] ?? '') ?></td>
-                                    <td><?= crbH($tituloBaixa['TIPOES'] ?? '') ?><?php if (($tituloBaixa['TIPODOCORIGEM'] ?? '') === 'SUPERDUNGA' && ($tituloBaixa['CONTROLE'] ?? '') === 'MOV_BAIXA_CONTRAPARTIDA'): ?><div class="text-muted small">Contrapartida no lancamento de origem</div><?php endif; ?></td>
+                                    <td>
+                                        <?= crbH($tituloBaixa['TIPOES'] ?? '') ?>
+                                        <?php $tipoLinhaBaixa = $tiposPorId[(int)($tituloBaixa['TIPOES'] ?? 0)] ?? null; ?>
+                                        <?php if ($tipoLinhaBaixa && mbaTipoesTemContrapartida($tipoLinhaBaixa)): ?><div class="text-muted small">Fixo pela contrapartida</div><?php endif; ?>
+                                        <?php if (($tituloBaixa['TIPODOCORIGEM'] ?? '') === 'SUPERDUNGA' && ($tituloBaixa['CONTROLE'] ?? '') === 'MOV_BAIXA_CONTRAPARTIDA'): ?><div class="text-muted small">Contrapartida no lancamento de origem</div><?php endif; ?>
+                                    </td>
                                     <td>
                                         <input type="text" name="valor_baixa[<?= (int)$tituloBaixa['CRCONTADOR'] ?>]" value="<?= crbH($valorCampo) ?>" inputmode="decimal" style="width:120px;text-align:right;">
                                         <div class="text-muted small">Restante: <?= crbH(crbMoeda($valorBaixa)) ?></div>
@@ -1614,7 +1643,7 @@ require '../../layout/header.php';
                         <select id="tipoes_agrupamento" name="tipoes_agrupamento" required>
                             <option value="">Selecione</option>
                             <?php foreach ($tipos as $tipo): ?>
-                                <option value="<?= (int)$tipo['ESCONTADOR'] ?>" <?= (string)($_POST['tipoes_agrupamento'] ?? ($titulosAgrupamento[0]['TIPOES'] ?? '')) === (string)$tipo['ESCONTADOR'] ? 'selected' : '' ?>>
+                                <option value="<?= (int)$tipo['ESCONTADOR'] ?>" <?= (string)($_POST['tipoes_agrupamento'] ?? ($titulosAgrupamento[0]['TIPOES'] ?? '')) === (string)$tipo['ESCONTADOR'] ? 'selected' : '' ?> <?= mbaTipoesExigeOrigemControlada($tipo) ? 'disabled' : '' ?>>
                                     <?= crbH(($tipo['DESCES'] ?? '') . ' (' . $tipo['ESCONTADOR'] . ')') ?>
                                 </option>
                             <?php endforeach; ?>
@@ -1707,7 +1736,7 @@ require '../../layout/header.php';
                     <select id="tipoes" name="tipoes" required>
                         <option value="">Selecione</option>
                         <?php foreach ($tipos as $tipo): ?>
-                            <option value="<?= (int)$tipo['ESCONTADOR'] ?>" <?= (string)$form['tipoes'] === (string)$tipo['ESCONTADOR'] ? 'selected' : '' ?>>
+                            <option value="<?= (int)$tipo['ESCONTADOR'] ?>" <?= (string)$form['tipoes'] === (string)$tipo['ESCONTADOR'] ? 'selected' : '' ?> <?= mbaTipoesExigeOrigemControlada($tipo) ? 'disabled' : '' ?>>
                                 <?= crbH(($tipo['DESCES'] ?? '') . ' (' . $tipo['ESCONTADOR'] . ')') ?>
                             </option>
                         <?php endforeach; ?>

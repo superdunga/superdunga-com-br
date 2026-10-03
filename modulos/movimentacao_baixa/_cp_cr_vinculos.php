@@ -24,6 +24,50 @@ function mbaVinculoCpCr(PDO $pdo,int $empresa,string $lado,int $contador): ?arra
     return $s->fetch(PDO::FETCH_ASSOC)?:null;
 }
 
+function mbaTipoesExigeOrigemControlada(array $tipoes): bool
+{
+    return mbaTipoesTemContrapartida($tipoes)
+        && (int)($tipoes['CONTRAP_CBCONTADOR'] ?? 0) <= 0;
+}
+
+function mbaTipoesTemContrapartida(array $tipoes): bool
+{
+    return (int)($tipoes['CONTRAP_TIPOES'] ?? 0) > 0;
+}
+
+function mbaMensagemTipoesOrigemControlada(): string
+{
+    return 'Este TIPOES exige uma contrapartida vinculada. Gere o titulo pelo lancamento de origem ou utilize a opcao de gerar CP/CR vinculado.';
+}
+
+function mbaResolverTipoesBaixa($tipoOriginalCadastro,int $tipoesOriginal,int $tipoesSolicitado,string $lado,int $contador): int
+{
+    $protegido=is_array($tipoOriginalCadastro) && mbaTipoesTemContrapartida($tipoOriginalCadastro);
+    if($protegido && $tipoesSolicitado>0 && $tipoesSolicitado!==$tipoesOriginal){
+        throw new RuntimeException('Mantenha o TIPOES original para baixar o '.$lado.' de contrapartida #'.$contador.'.');
+    }
+    return $protegido?$tipoesOriginal:($tipoesSolicitado>0?$tipoesSolicitado:$tipoesOriginal);
+}
+
+function mbaVinculoCpCrValidoNaBaixa(PDO $pdo,int $empresa,string $lado,int $contador,int $tipoes,int $contrapTipoes): bool
+{
+    $vinculo=mbaVinculoCpCr($pdo,$empresa,$lado,$contador);
+    if(!$vinculo)return false;
+    if($contrapTipoes<=0)throw new RuntimeException('O titulo vinculado nao possui TIPOES de contrapartida configurado.');
+
+    $outroLado=$lado==='CP'?'CR':'CP';
+    $tabela=$outroLado==='CP'?'armazem_cp001':'armazem_cr001';
+    $chave=$outroLado==='CP'?'CPCONTADOR':'CRCONTADOR';
+    $outroId=(int)$vinculo[strtolower($outroLado).'contador'];
+    $s=$pdo->prepare("SELECT t.TIPOES,e.TIPOMOV,e.CONTRAP_TIPOES FROM $tabela t INNER JOIN armazem_bnc005 e ON e.EMPRESA=t.EMPRESA AND e.ESCONTADOR=t.TIPOES WHERE t.EMPRESA=? AND t.$chave=? AND COALESCE(t.excluido_firebird,'N')<>'S' LIMIT 1");
+    $s->execute([$empresa,$outroId]);$outro=$s->fetch(PDO::FETCH_ASSOC);
+    $tipomovEsperado=$outroLado==='CP'?'D':'C';
+    if(!$outro || (int)$outro['TIPOES']!==$contrapTipoes || strtoupper((string)$outro['TIPOMOV'])!==$tipomovEsperado || (int)$outro['CONTRAP_TIPOES']!==$tipoes){
+        throw new RuntimeException('O par CP/CR possui TIPOES de contrapartida incoerentes. Baixa nao realizada.');
+    }
+    return true;
+}
+
 function mbaTipoesParCpCr(PDO $pdo,int $empresa): array
 {
     $s=$pdo->prepare("SELECT ESCONTADOR,TIPOMOV,CONTRAP_TIPOES,UPPER(REPLACE(TRIM(DESCES),' ','')) AS nome FROM armazem_bnc005 WHERE EMPRESA=? AND COALESCE(REGDISAB,'N')<>'S' AND COALESCE(excluido_firebird,'N')<>'S' AND UPPER(REPLACE(TRIM(DESCES),' ','')) IN ('DCONTRAPARTIDAPAGAR','CCONTRAPARTIDARECEBER')");

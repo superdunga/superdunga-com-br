@@ -95,7 +95,7 @@ def buscar_por_regstamp(tabela, ultima_regstamp, order_by="REGSTAMP", empresa=No
     cursor.execute(f"""
         SELECT *
         FROM {tabela}
-        WHERE REGSTAMP > ?
+        WHERE REGSTAMP >= DATEADD(1 SECOND TO CAST(? AS TIMESTAMP))
         {filtro_empresa}
         ORDER BY {order_by}
     """, tuple(parametros))
@@ -117,19 +117,25 @@ def buscar_por_regstamp(tabela, ultima_regstamp, order_by="REGSTAMP", empresa=No
 def dados_bnc001():
     try:
         ultima_regstamp = request.args.get("ultima_regstamp", default="1900-01-01 00:00:00", type=str)
+        empresa = empresa_requisitada()
 
         con = conectar()
         cursor = con.cursor()
 
+        filtro_empresa = " AND EMPRESA = ?" if empresa is not None else ""
+        parametros = [ultima_regstamp]
+        if empresa is not None:
+            parametros.append(empresa)
         sql = f"""
             SELECT *
             FROM BNC001
-            WHERE DTMOV >= '2025-01-01'
-              AND REGSTAMP > '{ultima_regstamp}'
+            WHERE DTMOV >= DATE '2025-01-01'
+              AND REGSTAMP >= DATEADD(1 SECOND TO CAST(? AS TIMESTAMP))
+              {filtro_empresa}
             ORDER BY REGSTAMP, EMPRESA, MOVCONTADOR
         """
 
-        cursor.execute(sql)
+        cursor.execute(sql, tuple(parametros))
 
         colunas = [desc[0] for desc in cursor.description]
         dados = []
@@ -187,18 +193,24 @@ def dados_bnc002_ativos():
 def dados_bnc005():
     try:
         ultima_regstamp = request.args.get("ultima_regstamp", default="1900-01-01 00:00:00", type=str)
+        empresa = empresa_requisitada()
 
         con = conectar()
         cursor = con.cursor()
 
+        filtro_empresa = " AND EMPRESA = ?" if empresa is not None else ""
+        parametros = [ultima_regstamp]
+        if empresa is not None:
+            parametros.append(empresa)
         sql = f"""
             SELECT *
             FROM BNC005
-            WHERE REGSTAMP > '{ultima_regstamp}'
+            WHERE REGSTAMP >= DATEADD(1 SECOND TO CAST(? AS TIMESTAMP))
+            {filtro_empresa}
             ORDER BY REGSTAMP, EMPRESA, ESCONTADOR
         """
 
-        cursor.execute(sql)
+        cursor.execute(sql, tuple(parametros))
 
         colunas = [desc[0] for desc in cursor.description]
         dados = []
@@ -220,18 +232,24 @@ def dados_bnc005():
 def dados_bnc002():
     try:
         ultima_regstamp = request.args.get("ultima_regstamp", default="1900-01-01 00:00:00", type=str)
+        empresa = empresa_requisitada()
 
         con = conectar()
         cursor = con.cursor()
 
+        filtro_empresa = " AND EMPRESA = ?" if empresa is not None else ""
+        parametros = [ultima_regstamp]
+        if empresa is not None:
+            parametros.append(empresa)
         sql = f"""
             SELECT *
             FROM BNC002
-            WHERE REGSTAMP > '{ultima_regstamp}'
+            WHERE REGSTAMP >= DATEADD(1 SECOND TO CAST(? AS TIMESTAMP))
+            {filtro_empresa}
             ORDER BY REGSTAMP, EMPRESA, CBCONTADOR
         """
 
-        cursor.execute(sql)
+        cursor.execute(sql, tuple(parametros))
 
         colunas = [desc[0] for desc in cursor.description]
         dados = []
@@ -305,18 +323,24 @@ def dados_func001():
 def dados_cp001():
     try:
         ultima_regstamp = request.args.get("ultima_regstamp", default="1900-01-01 00:00:00", type=str)
+        empresa = empresa_requisitada()
 
         con = conectar()
         cursor = con.cursor()
 
+        filtro_empresa = " AND EMPRESA = ?" if empresa is not None else ""
+        parametros = [ultima_regstamp]
+        if empresa is not None:
+            parametros.append(empresa)
         sql = f"""
             SELECT *
             FROM CP001
-            WHERE REGSTAMP > '{ultima_regstamp}'
+            WHERE REGSTAMP >= DATEADD(1 SECOND TO CAST(? AS TIMESTAMP))
+            {filtro_empresa}
             ORDER BY REGSTAMP, EMPRESA, CPCONTADOR
         """
 
-        cursor.execute(sql)
+        cursor.execute(sql, tuple(parametros))
 
         colunas = [desc[0] for desc in cursor.description]
         dados = []
@@ -338,18 +362,24 @@ def dados_cp001():
 def dados_cp003():
     try:
         ultima_regstamp = request.args.get("ultima_regstamp", default="1900-01-01 00:00:00", type=str)
+        empresa = empresa_requisitada()
 
         con = conectar()
         cursor = con.cursor()
 
+        filtro_empresa = " AND EMPRESA = ?" if empresa is not None else ""
+        parametros = [ultima_regstamp]
+        if empresa is not None:
+            parametros.append(empresa)
         sql = f"""
             SELECT *
             FROM CP003
-            WHERE REGSTAMP > '{ultima_regstamp}'
+            WHERE REGSTAMP >= DATEADD(1 SECOND TO CAST(? AS TIMESTAMP))
+            {filtro_empresa}
             ORDER BY REGSTAMP, EMPRESA, FCONTADOR
         """
 
-        cursor.execute(sql)
+        cursor.execute(sql, tuple(parametros))
 
         colunas = [desc[0] for desc in cursor.description]
         dados = []
@@ -370,16 +400,20 @@ def dados_cp003():
 @app.route("/dados/cp004", methods=["GET"])
 def dados_cp004():
     try:
+        empresa = empresa_requisitada()
         con = conectar()
         cursor = con.cursor()
 
+        filtro_empresa = " WHERE EMPRESA = ?" if empresa is not None else ""
+        parametros = (empresa,) if empresa is not None else ()
         sql = f"""
             SELECT *
             FROM CP004
+            {filtro_empresa}
             ORDER BY EMPRESA, QTCPCONTADOR
         """
 
-        cursor.execute(sql)
+        cursor.execute(sql, parametros)
 
         colunas = [desc[0] for desc in cursor.description]
         dados = []
@@ -451,18 +485,24 @@ def dados_zconfig005_ativos():
 def dados_est005():
     try:
         ultima_regstamp = request.args.get("ultima_regstamp", default="1900-01-01 00:00:00", type=str)
+        empresa = empresa_requisitada()
 
         con = conectar()
         cursor = con.cursor()
 
+        filtro_empresa = " AND EMPRESA = ?" if empresa is not None else ""
+        parametros = [ultima_regstamp]
+        if empresa is not None:
+            parametros.append(empresa)
         sql = f"""
             SELECT *
             FROM EST005
-            WHERE REGSTAMP > '{ultima_regstamp}'
+            WHERE REGSTAMP >= DATEADD(1 SECOND TO CAST(? AS TIMESTAMP))
+            {filtro_empresa}
             ORDER BY REGSTAMP, EMPRESA, COMPRACONTADOR
         """
 
-        cursor.execute(sql)
+        cursor.execute(sql, tuple(parametros))
 
         colunas = [desc[0] for desc in cursor.description]
         dados = []
@@ -484,18 +524,24 @@ def dados_est005():
 def dados_est006():
     try:
         ultima_regstamp = request.args.get("ultima_regstamp", default="1900-01-01 00:00:00", type=str)
+        empresa = empresa_requisitada()
 
         con = conectar()
         cursor = con.cursor()
 
+        filtro_empresa = " AND EMPRESA = ?" if empresa is not None else ""
+        parametros = [ultima_regstamp]
+        if empresa is not None:
+            parametros.append(empresa)
         sql = f"""
             SELECT *
             FROM EST006
-            WHERE REGSTAMP > '{ultima_regstamp}'
+            WHERE REGSTAMP >= DATEADD(1 SECOND TO CAST(? AS TIMESTAMP))
+            {filtro_empresa}
             ORDER BY REGSTAMP, EMPRESA, COMPRACONTA
         """
 
-        cursor.execute(sql)
+        cursor.execute(sql, tuple(parametros))
 
         colunas = [desc[0] for desc in cursor.description]
         dados = []
@@ -595,18 +641,24 @@ def dados_est007_ativos():
 def dados_est004():
     try:
         ultima_regstamp = request.args.get("ultima_regstamp", default="1900-01-01 00:00:00", type=str)
+        empresa = empresa_requisitada()
 
         con = conectar()
         cursor = con.cursor()
 
+        filtro_empresa = " AND EMPRESA = ?" if empresa is not None else ""
+        parametros = [ultima_regstamp]
+        if empresa is not None:
+            parametros.append(empresa)
         sql = f"""
             SELECT *
             FROM EST004
-            WHERE REGSTAMP > '{ultima_regstamp}'
+            WHERE REGSTAMP >= DATEADD(1 SECOND TO CAST(? AS TIMESTAMP))
+            {filtro_empresa}
             ORDER BY REGSTAMP, EMPRESA, CODPRODUTO
         """
 
-        cursor.execute(sql)
+        cursor.execute(sql, tuple(parametros))
 
         colunas = [desc[0] for desc in cursor.description]
         dados = []
@@ -682,6 +734,7 @@ def dados_est008():
         limit = request.args.get("limit", default=1000, type=int)
         offset = request.args.get("offset", default=0, type=int)
         item_inicio = request.args.get("item_inicio", default=55908, type=int)
+        empresa = empresa_requisitada()
 
         limit = max(1, int(limit))
         offset = max(0, int(offset))
@@ -691,16 +744,21 @@ def dados_est008():
         con = conectar()
         cursor = con.cursor()
 
+        filtro_empresa = " AND EMPRESA = ?" if empresa is not None else ""
+        parametros = [ultima_regstamp, int(item_inicio)]
+        if empresa is not None:
+            parametros.append(empresa)
         sql = f"""
             SELECT *
             FROM EST008
-            WHERE REGSTAMP > '{ultima_regstamp}'
-              AND ITEMVENDACONTADOR >= {int(item_inicio)}
+            WHERE REGSTAMP >= DATEADD(1 SECOND TO CAST(? AS TIMESTAMP))
+              AND ITEMVENDACONTADOR >= ?
+              {filtro_empresa}
             ORDER BY REGSTAMP, EMPRESA, VENDACONTA, ITEMVENDACONTADOR
             ROWS {inicio} TO {fim}
         """
 
-        cursor.execute(sql)
+        cursor.execute(sql, tuple(parametros))
 
         colunas = [desc[0] for desc in cursor.description]
         dados = []
@@ -722,18 +780,24 @@ def dados_est008():
 def dados_cr001():
     try:
         ultima_regstamp = request.args.get("ultima_regstamp", default="1900-01-01 00:00:00", type=str)
+        empresa = empresa_requisitada()
 
         con = conectar()
         cursor = con.cursor()
 
+        filtro_empresa = " AND EMPRESA = ?" if empresa is not None else ""
+        parametros = [ultima_regstamp]
+        if empresa is not None:
+            parametros.append(empresa)
         sql = f"""
             SELECT *
             FROM CR001
-            WHERE REGSTAMP > '{ultima_regstamp}'
+            WHERE REGSTAMP >= DATEADD(1 SECOND TO CAST(? AS TIMESTAMP))
+            {filtro_empresa}
             ORDER BY REGSTAMP
         """
 
-        cursor.execute(sql)
+        cursor.execute(sql, tuple(parametros))
 
         colunas = [desc[0] for desc in cursor.description]
         dados = []
@@ -790,18 +854,24 @@ def dados_cr001_ativos():
 def dados_cr002():
     try:
         ultima_regstamp = request.args.get("ultima_regstamp", default="1900-01-01 00:00:00", type=str)
+        empresa = empresa_requisitada()
 
         con = conectar()
         cursor = con.cursor()
 
+        filtro_empresa = " AND EMPRESA = ?" if empresa is not None else ""
+        parametros = [ultima_regstamp]
+        if empresa is not None:
+            parametros.append(empresa)
         sql = f"""
             SELECT *
             FROM CR002
-            WHERE REGSTAMP > '{ultima_regstamp}'
+            WHERE REGSTAMP >= DATEADD(1 SECOND TO CAST(? AS TIMESTAMP))
+            {filtro_empresa}
             ORDER BY REGSTAMP
         """
 
-        cursor.execute(sql)
+        cursor.execute(sql, tuple(parametros))
 
         colunas = [desc[0] for desc in cursor.description]
         dados = []
@@ -823,19 +893,25 @@ def dados_cr002():
 def dados_zconfig005():
     try:
         ultima_regstamp = request.args.get("ultima_regstamp", default="1900-01-01 00:00:00", type=str)
+        empresa = empresa_requisitada()
 
         con = conectar()
         cursor = con.cursor()
 
+        filtro_empresa = " AND EMPRESA = ?" if empresa is not None else ""
+        parametros = [ultima_regstamp]
+        if empresa is not None:
+            parametros.append(empresa)
         sql = f"""
             SELECT EMPRESA, CODUSER, NOMEUSER, DESATIVADO, CODCX, REGSTAMP
             FROM ZCONFIG005
             WHERE DESATIVADO = '0'
-              AND REGSTAMP > '{ultima_regstamp}'
+              AND REGSTAMP >= DATEADD(1 SECOND TO CAST(? AS TIMESTAMP))
+              {filtro_empresa}
             ORDER BY REGSTAMP
         """
 
-        cursor.execute(sql)
+        cursor.execute(sql, tuple(parametros))
 
         colunas = [desc[0] for desc in cursor.description]
         dados = []
@@ -857,19 +933,25 @@ def dados_zconfig005():
 def dados_est007():
     try:
         ultima_regstamp = request.args.get("ultima_regstamp", default="1900-01-01 00:00:00", type=str)
+        empresa = empresa_requisitada()
 
         con = conectar()
         cursor = con.cursor()
 
+        filtro_empresa = " AND EMPRESA = ?" if empresa is not None else ""
+        parametros = [ultima_regstamp]
+        if empresa is not None:
+            parametros.append(empresa)
         sql = f"""
             SELECT *
             FROM EST007
             WHERE CAST(DTEMISSAO AS DATE) >= DATE '2025-01-01'
-              AND REGSTAMP > '{ultima_regstamp}'
+              AND REGSTAMP >= DATEADD(1 SECOND TO CAST(? AS TIMESTAMP))
+              {filtro_empresa}
             ORDER BY REGSTAMP
         """
 
-        cursor.execute(sql)
+        cursor.execute(sql, tuple(parametros))
 
         colunas = [desc[0] for desc in cursor.description]
         dados = []

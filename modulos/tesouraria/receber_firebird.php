@@ -1622,7 +1622,9 @@ elseif ($tabela === 'cr002') {
             ':RAMOATIVIDADE' => $d['RAMOATIVIDADE'] ?? null,
             ':DTNASC' => $d['DTNASC'] ?? null,
             ':LIMITECREDITO' => $d['LIMITECREDITO'] ?? null,
-            ':CONDPAGTO' => $d['CONDPAGTO'] ?? null,
+            ':CONDPAGTO' => isset($d['CONDPAGTO']) && trim((string)$d['CONDPAGTO']) !== ''
+                ? $d['CONDPAGTO']
+                : null,
             ':SEXO' => $d['SEXO'] ?? null,
             ':CODCLIFORN' => $d['CODCLIFORN'] ?? null,
             ':REGSTAMP' => $d['REGSTAMP'] ?? null,
