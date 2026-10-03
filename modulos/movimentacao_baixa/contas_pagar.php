@@ -401,11 +401,14 @@ function cpbBaixarTitulos(PDO $pdo, $empresaId, $usuarioId, array $dados)
                 if ($contrapCbcontador <= 0 || !cpbBuscarContaBaixa($pdo, $empresaId, $contrapCbcontador)) {
                     throw new RuntimeException('O TIPOES ' . $tipoes . ' exige contrapartida, mas nao possui conta de investimento/contrapartida valida.');
                 }
-                $tipoContrap = cpbBuscarTipoes($pdo, $empresaId, $contrapTipoes);
+                $tipoContrap = mbaBuscarTipoes($pdo, $empresaId, $contrapTipoes);
                 if (!$tipoContrap) {
                     throw new RuntimeException('O TIPOES de contrapartida ' . $contrapTipoes . ' nao foi encontrado.');
                 }
                 $contrapTipomov = strtoupper((string)($tipo['CONTRAP_TIPOMOV'] ?: cpbInvertirTipomov($tipomovPrincipal)));
+                if (strtoupper((string)$tipoContrap['TIPOMOV']) !== $contrapTipomov) {
+                    throw new RuntimeException('O TIPOES de contrapartida ' . $contrapTipoes . ' possui natureza incompativel.');
+                }
             }
 
             $valor = (float)($titulo['VLRRESTANTE'] ?? 0);
