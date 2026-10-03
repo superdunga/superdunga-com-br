@@ -11,6 +11,16 @@ error_log
 *.tmp
 *.swp
 *~
+**/__pycache__/
+*.py[cod]
+/tmp/
+/output/
+/backups/
+/uploads/extratos_bancarios/
+/uploads/relatorios/
+
+# Utilitários locais de manutenção
+/docs/integracao_firebird/armazem/integracao_superdunga/reenviar_todas_tabelas_empresa1.py
 
 # Backup do WordPress
 wp-config.php
