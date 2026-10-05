@@ -36,6 +36,21 @@ function garantirTabelaRegrasImportacao(PDO $pdo): void
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
     ");
 
+    $stmtTon = $pdo->prepare("
+        INSERT INTO fechamento_importacao_regras (
+            empresa_id, nome, grupo, tipo, origem, arquivo_php, estabelecimento,
+            cm_debito, cm_credito, cm_pix, ativo, ordem
+        )
+        SELECT 5, 'TON Comercial', 'Comercial', 'ton_comercial', 'TON_COMERCIAL',
+               'importar_ton_comercial.php', 'PB0921C678651,6C229257',
+               3, 2, 12, 'S', 25
+        WHERE NOT EXISTS (
+            SELECT 1 FROM fechamento_importacao_regras
+            WHERE empresa_id = 5 AND tipo = 'ton_comercial' AND grupo = 'Comercial'
+        )
+    ");
+    $stmtTon->execute();
+
     $stmt = $pdo->prepare("
         SELECT COUNT(*)
         FROM information_schema.statistics
@@ -204,6 +219,12 @@ function descricaoRegraImportacao(array $regra): string
 
     if (in_array($tipo, ['sipag_pos', 'granito_pos_comercial'], true)) {
         return 'Debito CMCONTADOR ' . (int)$regra['cm_debito'] . ' | Credito CMCONTADOR ' . (int)$regra['cm_credito'];
+    }
+
+    if ($tipo === 'ton_comercial') {
+        return 'Debito/Pre-pago CMCONTADOR ' . (int)$regra['cm_debito']
+            . ' | Credito CMCONTADOR ' . (int)$regra['cm_credito']
+            . ' | PIX CMCONTADOR ' . (int)$regra['cm_pix'];
     }
 
     return 'CMCONTADOR ' . (int)$regra['cm_pix'];
