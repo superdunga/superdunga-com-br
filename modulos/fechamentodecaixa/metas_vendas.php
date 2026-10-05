@@ -345,45 +345,20 @@ $vendasMesAtualCompleto = $temDiasFechados
     ? vendasPorDiaMetaVendas($pdo_master, $empresaId, $inicioMesAtual, $dataReferencia)
     : [];
 $faturamentoRealMes = array_sum(array_column($vendasMesAtualCompleto, 'total'));
-$totaisAtuaisPorDiaSemana = array_fill(0, 7, 0.0);
-$ocorrenciasAtuaisPorDiaSemana = array_fill(0, 7, 0);
-if ($temDiasFechados) {
-    $cursorDesempenho = strtotime($inicioMesAtual);
-    $fimDesempenho = strtotime($dataReferencia);
-    while ($cursorDesempenho <= $fimDesempenho) {
-        $dataDesempenho = date('Y-m-d', $cursorDesempenho);
-        $diaSemanaDesempenho = (int)date('w', $cursorDesempenho);
-        if (($distribuicaoMeta[$diaSemanaDesempenho]['trabalha'] ?? 'N') === 'S') {
-            $totalDiaDesempenho = (float)($vendasMesAtualCompleto[$dataDesempenho]['total'] ?? 0.0);
-            if ($totalDiaDesempenho > 0) {
-                $totaisAtuaisPorDiaSemana[$diaSemanaDesempenho] += $totalDiaDesempenho;
-                $ocorrenciasAtuaisPorDiaSemana[$diaSemanaDesempenho]++;
-            }
-        }
-        $cursorDesempenho = strtotime('+1 day', $cursorDesempenho);
-    }
-}
-$previsaoRestantePorDesempenho = 0.0;
+$previsaoRestantePorMeta = 0.0;
 $diasRestantesTrabalhados = 0;
-$diasRestantesPelaMedia = 0;
 $diasRestantesPelaMeta = 0;
 $cursorFechamentoDesempenho = strtotime($temDiasFechados ? $dataReferencia . ' +1 day' : $inicioMesAtual);
 while ($cursorFechamentoDesempenho <= $fimDiasMes) {
     $diaSemanaPrevisaoAtual = (int)date('w', $cursorFechamentoDesempenho);
     if (($distribuicaoMeta[$diaSemanaPrevisaoAtual]['trabalha'] ?? 'N') === 'S') {
         $diasRestantesTrabalhados++;
-        if ($ocorrenciasAtuaisPorDiaSemana[$diaSemanaPrevisaoAtual] > 0) {
-            $previsaoRestantePorDesempenho += $totaisAtuaisPorDiaSemana[$diaSemanaPrevisaoAtual]
-                / $ocorrenciasAtuaisPorDiaSemana[$diaSemanaPrevisaoAtual];
-            $diasRestantesPelaMedia++;
-        } else {
-            $previsaoRestantePorDesempenho += (float)($distribuicaoMeta[$diaSemanaPrevisaoAtual]['valor_dia'] ?? 0.0);
-            $diasRestantesPelaMeta++;
-        }
+        $previsaoRestantePorMeta += (float)($distribuicaoMeta[$diaSemanaPrevisaoAtual]['valor_dia'] ?? 0.0);
+        $diasRestantesPelaMeta++;
     }
     $cursorFechamentoDesempenho = strtotime('+1 day', $cursorFechamentoDesempenho);
 }
-$previsaoFechamentoDesempenho = $faturamentoRealMes + $previsaoRestantePorDesempenho;
+$previsaoFechamentoDesempenho = $faturamentoRealMes + $previsaoRestantePorMeta;
 $percentualPrevisaoMeta = $metaVendas > 0 ? ($previsaoFechamentoDesempenho / $metaVendas) * 100 : null;
 
 $vendasMesAtual = $temDiasFechados
@@ -714,13 +689,13 @@ require '../../layout/header.php';
                     </div>
                     <div class="col-sm-4 col-lg-3">
                         <div class="text-muted small">Projetado nos dias restantes</div>
-                        <div class="fw-bold"><?= moedaMetaVendas($previsaoRestantePorDesempenho) ?></div>
+                        <div class="fw-bold"><?= moedaMetaVendas($previsaoRestantePorMeta) ?></div>
                         <div class="small"><?= $diasRestantesTrabalhados ?> dia(s) de trabalho restante(s)</div>
                     </div>
                     <div class="col-sm-4 col-lg-3">
                         <div class="text-muted small">Base da projecao</div>
-                        <div class="fw-semibold"><?= $diasRestantesPelaMedia ?> dia(s) pela media atual</div>
-                        <div class="small"><?= $diasRestantesPelaMeta ?> dia(s) pela meta distribuida</div>
+                        <div class="fw-semibold"><?= $diasRestantesPelaMeta ?> dia(s) pela meta distribuida</div>
+                        <div class="small">Realizado ate a data mais metas dos dias restantes</div>
                     </div>
                 </div>
             </div>
