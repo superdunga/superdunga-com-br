@@ -129,8 +129,7 @@ def dados_bnc001():
         sql = f"""
             SELECT *
             FROM BNC001
-            WHERE DTMOV >= DATE '2025-01-01'
-              AND REGSTAMP >= DATEADD(1 SECOND TO CAST(? AS TIMESTAMP))
+            WHERE REGSTAMP >= DATEADD(1 SECOND TO CAST(? AS TIMESTAMP))
               {filtro_empresa}
             ORDER BY REGSTAMP, EMPRESA, MOVCONTADOR
         """
@@ -945,8 +944,7 @@ def dados_est007():
         sql = f"""
             SELECT *
             FROM EST007
-            WHERE CAST(DTEMISSAO AS DATE) >= DATE '2025-01-01'
-              AND REGSTAMP >= DATEADD(1 SECOND TO CAST(? AS TIMESTAMP))
+            WHERE REGSTAMP >= DATEADD(1 SECOND TO CAST(? AS TIMESTAMP))
               {filtro_empresa}
             ORDER BY REGSTAMP
         """
