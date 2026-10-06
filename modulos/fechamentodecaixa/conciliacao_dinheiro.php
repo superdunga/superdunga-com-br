@@ -58,9 +58,12 @@ function dataMovimentoCaixaExport(array $movimento): string
     return dataHoraCaixaExport($movimento['DTLANC'] ?? $movimento['data_mov'] ?? '');
 }
 
-function sqlDataOperacionalBnc(string $alias = 'b'): string
+function sqlDataOperacionalBnc(string $alias = 'b', string $vendaAlias = 'v'): string
 {
     return "CASE
+        WHEN UPPER(TRIM(COALESCE({$alias}.TIPODOCORIGEM, ''))) = 'VENDA'
+             AND {$vendaAlias}.DTLANC IS NOT NULL
+            THEN DATE(DATE_SUB({$vendaAlias}.DTLANC, INTERVAL 7 HOUR))
         WHEN DATE({$alias}.DTMOV) <> DATE({$alias}.DTLANC) THEN DATE({$alias}.DTMOV)
         ELSE DATE(DATE_SUB({$alias}.DTLANC, INTERVAL 7 HOUR))
     END";
@@ -75,7 +78,7 @@ function buscarDadosExportacaoCaixa(PDO $pdo, int $empresaId, string $dataOperac
 {
     $inicio = $dataOperacional . ' 07:00:00';
     $fim = date('Y-m-d 03:00:00', strtotime($dataOperacional . ' +1 day'));
-    $dataOperacionalBncSql = sqlDataOperacionalBnc('b');
+    $dataOperacionalBncSql = sqlDataOperacionalBnc('b', 'v');
 
     $stmtOperador = $pdo->prepare("
         SELECT COALESCE(MIN(NULLIF(NOMEUSER, '')), CONCAT('Caixa ', ?)) AS operador
@@ -97,6 +100,10 @@ function buscarDadosExportacaoCaixa(PDO $pdo, int $empresaId, string $dataOperac
                 END
             ), 0) AS diferenca_dinheiro
         FROM armazem_bnc001 b
+        LEFT JOIN armazem_est007 v
+          ON v.EMPRESA = b.EMPRESA
+         AND v.VENDACONTADOR = CAST(b.NUMDOCORIGEM AS UNSIGNED)
+         AND UPPER(TRIM(COALESCE(b.TIPODOCORIGEM, ''))) = 'VENDA'
         WHERE b.EMPRESA = ?
           AND b.CBCONTADOR = ?
           AND $dataOperacionalBncSql = ?
@@ -109,8 +116,12 @@ function buscarDadosExportacaoCaixa(PDO $pdo, int $empresaId, string $dataOperac
     }
 
     $stmtAbertura = $pdo->prepare("
-        SELECT MOVCONTADOR, VALORMOV, DTLANC, HISTMOV
+        SELECT b.MOVCONTADOR, b.VALORMOV, b.DTLANC, b.HISTMOV
         FROM armazem_bnc001 b
+        LEFT JOIN armazem_est007 v
+          ON v.EMPRESA = b.EMPRESA
+         AND v.VENDACONTADOR = CAST(b.NUMDOCORIGEM AS UNSIGNED)
+         AND UPPER(TRIM(COALESCE(b.TIPODOCORIGEM, ''))) = 'VENDA'
         WHERE b.EMPRESA = ?
           AND b.CBCONTADOR = ?
           AND $dataOperacionalBncSql = ?
@@ -123,8 +134,12 @@ function buscarDadosExportacaoCaixa(PDO $pdo, int $empresaId, string $dataOperac
     $abertura = $stmtAbertura->fetch(PDO::FETCH_ASSOC) ?: [];
 
     $stmtSangrias = $pdo->prepare("
-        SELECT MOVCONTADOR, VALORMOV, DTLANC, HISTMOV
+        SELECT b.MOVCONTADOR, b.VALORMOV, b.DTLANC, b.HISTMOV
         FROM armazem_bnc001 b
+        LEFT JOIN armazem_est007 v
+          ON v.EMPRESA = b.EMPRESA
+         AND v.VENDACONTADOR = CAST(b.NUMDOCORIGEM AS UNSIGNED)
+         AND UPPER(TRIM(COALESCE(b.TIPODOCORIGEM, ''))) = 'VENDA'
         WHERE b.EMPRESA = ?
           AND b.CBCONTADOR = ?
           AND $dataOperacionalBncSql = ?
@@ -136,8 +151,12 @@ function buscarDadosExportacaoCaixa(PDO $pdo, int $empresaId, string $dataOperac
     $sangrias = $stmtSangrias->fetchAll(PDO::FETCH_ASSOC);
 
     $stmtFechamento = $pdo->prepare("
-        SELECT MOVCONTADOR, VALORMOV, DTLANC, HISTMOV
+        SELECT b.MOVCONTADOR, b.VALORMOV, b.DTLANC, b.HISTMOV
         FROM armazem_bnc001 b
+        LEFT JOIN armazem_est007 v
+          ON v.EMPRESA = b.EMPRESA
+         AND v.VENDACONTADOR = CAST(b.NUMDOCORIGEM AS UNSIGNED)
+         AND UPPER(TRIM(COALESCE(b.TIPODOCORIGEM, ''))) = 'VENDA'
         WHERE b.EMPRESA = ?
           AND b.CBCONTADOR = ?
           AND $dataOperacionalBncSql = ?
@@ -720,7 +739,7 @@ if ($filtroFinalizado === 'finalizado') {
     $whereFinalizado = ' AND f.id IS NULL';
 }
 
-$dataOperacionalBncSql = sqlDataOperacionalBnc('b');
+$dataOperacionalBncSql = sqlDataOperacionalBnc('b', 'v');
 
 $sql = "
 SELECT
@@ -735,6 +754,10 @@ SELECT
     ) AS saldo_final,
     f.finalizado_em
 FROM armazem_bnc001 b
+LEFT JOIN armazem_est007 v
+    ON v.EMPRESA = b.EMPRESA
+   AND v.VENDACONTADOR = CAST(b.NUMDOCORIGEM AS UNSIGNED)
+   AND UPPER(TRIM(COALESCE(b.TIPODOCORIGEM, ''))) = 'VENDA'
 INNER JOIN (
     SELECT DISTINCT CODCX
     FROM armazem_zconfig005

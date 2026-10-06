@@ -26,8 +26,17 @@ if (!$data || !$caixa) {
 }
 
 $dataOperacionalBncSql = "CASE
+    WHEN UPPER(TRIM(COALESCE(b.TIPODOCORIGEM, ''))) = 'VENDA'
+         AND v.DTLANC IS NOT NULL
+        THEN DATE(DATE_SUB(v.DTLANC, INTERVAL 7 HOUR))
     WHEN DATE(b.DTMOV) <> DATE(b.DTLANC) THEN DATE(b.DTMOV)
     ELSE DATE(DATE_SUB(b.DTLANC, INTERVAL 7 HOUR))
+END";
+$dataHoraMovimentoBncSql = "CASE
+    WHEN UPPER(TRIM(COALESCE(b.TIPODOCORIGEM, ''))) = 'VENDA'
+         AND v.DTLANC IS NOT NULL
+        THEN v.DTLANC
+    ELSE b.DTLANC
 END";
 
 $stmt = $pdo_master->prepare("
@@ -37,6 +46,7 @@ $stmt = $pdo_master->prepare("
         b.HISTMOV,
         b.NUMDOCORIGEM,
         b.DTLANC,
+        $dataHoraMovimentoBncSql AS DTLANC_CAIXA,
         b.TIPOMOV,
         b.VALORMOV,
 
@@ -52,13 +62,17 @@ $stmt = $pdo_master->prepare("
         END AS status
 
     FROM armazem_bnc001 b
+    LEFT JOIN armazem_est007 v
+      ON v.EMPRESA = b.EMPRESA
+     AND v.VENDACONTADOR = CAST(b.NUMDOCORIGEM AS UNSIGNED)
+     AND UPPER(TRIM(COALESCE(b.TIPODOCORIGEM, ''))) = 'VENDA'
 
     WHERE b.CBCONTADOR = ?
       AND b.EMPRESA = ?
       AND $dataOperacionalBncSql = ?
       AND COALESCE(b.deletado, 'N') <> 'S'
 
-    ORDER BY TIME(b.DTLANC), b.MOVCONTADOR
+    ORDER BY TIME($dataHoraMovimentoBncSql), b.MOVCONTADOR
 ");
 
 $stmt->execute([$caixa, $empresa_id, $data]);
@@ -118,7 +132,7 @@ $saldo = 0;
 ?>
 
 <tr>
-    <td><?= date('H:i:s', strtotime($l['DTLANC'])) ?></td>
+    <td><?= date('H:i:s', strtotime($l['DTLANC_CAIXA'])) ?></td>
     <td><?= htmlspecialchars($l['HISTMOV']) ?></td>
     <td><?= $l['NUMDOCORIGEM'] ?></td>
     <td><?= $l['TIPOMOV'] == 'C' ? 'Entrada' : 'Saída' ?></td>
@@ -156,7 +170,7 @@ $saldo = 0;
 <?php foreach ($deletados as $l): ?>
 
 <tr class="table-danger">
-    <td><?= date('H:i:s', strtotime($l['DTLANC'])) ?></td>
+    <td><?= date('H:i:s', strtotime($l['DTLANC_CAIXA'])) ?></td>
     <td><?= htmlspecialchars($l['HISTMOV']) ?></td>
     <td><?= $l['NUMDOCORIGEM'] ?></td>
     <td><?= $l['TIPOMOV'] == 'C' ? 'Entrada' : 'Saída' ?></td>
