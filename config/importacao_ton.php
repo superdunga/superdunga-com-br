@@ -75,8 +75,12 @@ function tonLerXlsx(string $arquivo): array
 
         foreach ($xpath->query('//x:sheetData/x:row') as $noLinha) {
             $linha = [];
+            $indiceSequencial = 0;
             foreach ($xpath->query('./x:c', $noLinha) as $celula) {
-                $indice = tonIndiceColuna($celula->getAttribute('r'));
+                $referencia = $celula->getAttribute('r');
+                $indice = $referencia !== ''
+                    ? tonIndiceColuna($referencia)
+                    : $indiceSequencial;
                 $tipo = $celula->getAttribute('t');
                 $valor = '';
 
@@ -95,6 +99,7 @@ function tonLerXlsx(string $arquivo): array
                 }
 
                 $linha[$indice] = trim((string)$valor);
+                $indiceSequencial = $indice + 1;
             }
 
             if ($linha) {
