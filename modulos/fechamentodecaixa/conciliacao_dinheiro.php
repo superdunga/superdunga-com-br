@@ -58,6 +58,14 @@ function dataMovimentoCaixaExport(array $movimento): string
     return dataHoraCaixaExport($movimento['DTLANC'] ?? $movimento['data_mov'] ?? '');
 }
 
+function sqlDataOperacionalBnc(string $alias = 'b'): string
+{
+    return "CASE
+        WHEN DATE({$alias}.DTMOV) <> DATE({$alias}.DTLANC) THEN DATE({$alias}.DTMOV)
+        ELSE DATE(DATE_SUB({$alias}.DTLANC, INTERVAL 7 HOUR))
+    END";
+}
+
 function historicoMovimentoCaixaExport(array $movimento): string
 {
     return (string)($movimento['HISTMOV'] ?? $movimento['observacao'] ?? '');
@@ -67,6 +75,7 @@ function buscarDadosExportacaoCaixa(PDO $pdo, int $empresaId, string $dataOperac
 {
     $inicio = $dataOperacional . ' 07:00:00';
     $fim = date('Y-m-d 03:00:00', strtotime($dataOperacional . ' +1 day'));
+    $dataOperacionalBncSql = sqlDataOperacionalBnc('b');
 
     $stmtOperador = $pdo->prepare("
         SELECT COALESCE(MIN(NULLIF(NOMEUSER, '')), CONCAT('Caixa ', ?)) AS operador
@@ -87,13 +96,13 @@ function buscarDadosExportacaoCaixa(PDO $pdo, int $empresaId, string $dataOperac
                     ELSE 0
                 END
             ), 0) AS diferenca_dinheiro
-        FROM armazem_bnc001
-        WHERE EMPRESA = ?
-          AND CBCONTADOR = ?
-          AND DTLANC BETWEEN ? AND ?
-          AND COALESCE(deletado, 'N') <> 'S'
+        FROM armazem_bnc001 b
+        WHERE b.EMPRESA = ?
+          AND b.CBCONTADOR = ?
+          AND $dataOperacionalBncSql = ?
+          AND COALESCE(b.deletado, 'N') <> 'S'
     ");
-    $stmtSaldo->execute([$empresaId, $cbcontador, $inicio, $fim]);
+    $stmtSaldo->execute([$empresaId, $cbcontador, $dataOperacional]);
     $diferencaDinheiro = (float)$stmtSaldo->fetchColumn();
     if (abs($diferencaDinheiro) <= 0.01) {
         $diferencaDinheiro = 0.0;
@@ -101,43 +110,43 @@ function buscarDadosExportacaoCaixa(PDO $pdo, int $empresaId, string $dataOperac
 
     $stmtAbertura = $pdo->prepare("
         SELECT MOVCONTADOR, VALORMOV, DTLANC, HISTMOV
-        FROM armazem_bnc001
-        WHERE EMPRESA = ?
-          AND CBCONTADOR = ?
-          AND DTLANC BETWEEN ? AND ?
-          AND COALESCE(deletado, 'N') <> 'S'
-          AND UPPER(TRIM(HISTMOV)) LIKE 'ABERTURA%'
-        ORDER BY DTLANC ASC, MOVCONTADOR ASC
+        FROM armazem_bnc001 b
+        WHERE b.EMPRESA = ?
+          AND b.CBCONTADOR = ?
+          AND $dataOperacionalBncSql = ?
+          AND COALESCE(b.deletado, 'N') <> 'S'
+          AND UPPER(TRIM(b.HISTMOV)) LIKE 'ABERTURA%'
+        ORDER BY TIME(b.DTLANC) ASC, b.MOVCONTADOR ASC
         LIMIT 1
     ");
-    $stmtAbertura->execute([$empresaId, $cbcontador, $inicio, $fim]);
+    $stmtAbertura->execute([$empresaId, $cbcontador, $dataOperacional]);
     $abertura = $stmtAbertura->fetch(PDO::FETCH_ASSOC) ?: [];
 
     $stmtSangrias = $pdo->prepare("
         SELECT MOVCONTADOR, VALORMOV, DTLANC, HISTMOV
-        FROM armazem_bnc001
-        WHERE EMPRESA = ?
-          AND CBCONTADOR = ?
-          AND DTLANC BETWEEN ? AND ?
-          AND COALESCE(deletado, 'N') <> 'S'
-          AND UPPER(TRIM(HISTMOV)) LIKE 'SANGRIA%'
-        ORDER BY DTLANC ASC, MOVCONTADOR ASC
+        FROM armazem_bnc001 b
+        WHERE b.EMPRESA = ?
+          AND b.CBCONTADOR = ?
+          AND $dataOperacionalBncSql = ?
+          AND COALESCE(b.deletado, 'N') <> 'S'
+          AND UPPER(TRIM(b.HISTMOV)) LIKE 'SANGRIA%'
+        ORDER BY TIME(b.DTLANC) ASC, b.MOVCONTADOR ASC
     ");
-    $stmtSangrias->execute([$empresaId, $cbcontador, $inicio, $fim]);
+    $stmtSangrias->execute([$empresaId, $cbcontador, $dataOperacional]);
     $sangrias = $stmtSangrias->fetchAll(PDO::FETCH_ASSOC);
 
     $stmtFechamento = $pdo->prepare("
         SELECT MOVCONTADOR, VALORMOV, DTLANC, HISTMOV
-        FROM armazem_bnc001
-        WHERE EMPRESA = ?
-          AND CBCONTADOR = ?
-          AND DTLANC BETWEEN ? AND ?
-          AND COALESCE(deletado, 'N') <> 'S'
-          AND UPPER(TRIM(HISTMOV)) LIKE 'FECHAMENTO%'
-        ORDER BY DTLANC DESC, MOVCONTADOR DESC
+        FROM armazem_bnc001 b
+        WHERE b.EMPRESA = ?
+          AND b.CBCONTADOR = ?
+          AND $dataOperacionalBncSql = ?
+          AND COALESCE(b.deletado, 'N') <> 'S'
+          AND UPPER(TRIM(b.HISTMOV)) LIKE 'FECHAMENTO%'
+        ORDER BY TIME(b.DTLANC) DESC, b.MOVCONTADOR DESC
         LIMIT 1
     ");
-    $stmtFechamento->execute([$empresaId, $cbcontador, $inicio, $fim]);
+    $stmtFechamento->execute([$empresaId, $cbcontador, $dataOperacional]);
     $fechamento = $stmtFechamento->fetch(PDO::FETCH_ASSOC) ?: [];
 
     $stmtCr = $pdo->prepare("
@@ -697,8 +706,11 @@ if (!in_array($filtroFinalizado, ['todos', 'finalizado', 'nao_finalizado'], true
 
 $inicio = $mes . '-01 07:00:00';
 $fim = date('Y-m-d 03:00:00', strtotime($mes . '-01 +1 month'));
+$inicioOperacional = $mes . '-01';
+$fimOperacional = date('Y-m-t', strtotime($inicioOperacional));
 if ($mes === date('Y-m')) {
     $fim = date('Y-m-d H:i:s');
+    $fimOperacional = date('Y-m-d');
 }
 
 $whereFinalizado = '';
@@ -708,9 +720,11 @@ if ($filtroFinalizado === 'finalizado') {
     $whereFinalizado = ' AND f.id IS NULL';
 }
 
+$dataOperacionalBncSql = sqlDataOperacionalBnc('b');
+
 $sql = "
 SELECT
-    DATE(DATE_SUB(b.DTLANC, INTERVAL 7 HOUR)) AS data_operacional,
+    $dataOperacionalBncSql AS data_operacional,
     b.CBCONTADOR,
     SUM(
         CASE
@@ -729,14 +743,14 @@ INNER JOIN (
 ) z ON z.CODCX = b.CBCONTADOR
 LEFT JOIN fechamento_caixas_finalizados f
     ON f.empresa_id = b.EMPRESA
-   AND f.data_operacional = DATE(DATE_SUB(b.DTLANC, INTERVAL 7 HOUR))
+   AND f.data_operacional = $dataOperacionalBncSql
    AND f.cbcontador = b.CBCONTADOR
-WHERE b.DTLANC BETWEEN ? AND ?
+WHERE $dataOperacionalBncSql BETWEEN ? AND ?
   AND b.EMPRESA = ?
   AND COALESCE(b.deletado, 'N') <> 'S'
   $whereFinalizado
 GROUP BY
-    DATE(DATE_SUB(b.DTLANC, INTERVAL 7 HOUR)),
+    $dataOperacionalBncSql,
     b.CBCONTADOR,
     f.finalizado_em
 ORDER BY
@@ -745,7 +759,7 @@ ORDER BY
 ";
 
 $stmt = $pdo_master->prepare($sql);
-$stmt->execute([$empresa_id, $inicio, $fim, $empresa_id]);
+$stmt->execute([$empresa_id, $inicioOperacional, $fimOperacional, $empresa_id]);
 $resultados = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
 $stmtPrazoCaixa = $pdo_master->prepare("

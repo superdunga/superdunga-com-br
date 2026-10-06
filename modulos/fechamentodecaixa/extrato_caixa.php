@@ -25,8 +25,10 @@ if (!$data || !$caixa) {
     exit;
 }
 
-$data_inicio = date('Y-m-d 07:00:00', strtotime($data));
-$data_fim    = date('Y-m-d 03:00:00', strtotime($data . ' +1 day'));
+$dataOperacionalBncSql = "CASE
+    WHEN DATE(b.DTMOV) <> DATE(b.DTLANC) THEN DATE(b.DTMOV)
+    ELSE DATE(DATE_SUB(b.DTLANC, INTERVAL 7 HOUR))
+END";
 
 $stmt = $pdo_master->prepare("
     SELECT 
@@ -53,13 +55,13 @@ $stmt = $pdo_master->prepare("
 
     WHERE b.CBCONTADOR = ?
       AND b.EMPRESA = ?
-      AND b.DTLANC BETWEEN ? AND ?
+      AND $dataOperacionalBncSql = ?
       AND COALESCE(b.deletado, 'N') <> 'S'
 
-    ORDER BY b.DTLANC
+    ORDER BY TIME(b.DTLANC), b.MOVCONTADOR
 ");
 
-$stmt->execute([$caixa, $empresa_id, $data_inicio, $data_fim]);
+$stmt->execute([$caixa, $empresa_id, $data]);
 
 $lancamentos = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
