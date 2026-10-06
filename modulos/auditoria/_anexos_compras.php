@@ -23,12 +23,24 @@ function auditoriaGarantirTabelaAnexosCompras(PDO $pdo): void
 
 function auditoriaPastaAnexosCompras(int $empresaId): string
 {
-    $pasta = __DIR__ . '/../../uploads/auditoria_compras/' . $empresaId . '/' . date('Ym');
-    if (!is_dir($pasta) && !mkdir($pasta, 0775, true) && !is_dir($pasta)) {
-        throw new RuntimeException('Nao foi possivel preparar a pasta das fotos.');
+    $raiz = __DIR__ . '/../../uploads/auditoria_compras';
+    $pastas = [
+        $raiz,
+        $raiz . '/' . $empresaId,
+        $raiz . '/' . $empresaId . '/' . date('Ym'),
+    ];
+
+    foreach ($pastas as $pastaProtegida) {
+        if (!is_dir($pastaProtegida) && !mkdir($pastaProtegida, 0775, true) && !is_dir($pastaProtegida)) {
+            throw new RuntimeException('Nao foi possivel preparar a pasta das fotos.');
+        }
+        $indice = $pastaProtegida . DIRECTORY_SEPARATOR . 'index.php';
+        if (!is_file($indice)) {
+            @file_put_contents($indice, "<?php\nhttp_response_code(403);\nexit;\n");
+        }
     }
 
-    return $pasta;
+    return $pastas[2];
 }
 
 function auditoriaNormalizarArquivos(array $arquivos): array
@@ -163,4 +175,3 @@ function auditoriaExcluirFotoCompra(PDO $pdo, int $empresaId, int $anexoId, int 
 
     return $stmt->rowCount() === 1;
 }
-
