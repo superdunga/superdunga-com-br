@@ -256,15 +256,15 @@ function numero($valor, int $casas = 2): string
             </div>
         </form>
 
-        <div class="table-responsive">
-            <table class="table table-sm table-bordered align-middle">
+        <div class="table-responsive auditoria-compras-wrap">
+            <table class="table table-sm table-bordered align-middle auditoria-compras-table">
                 <thead>
                     <tr>
                         <th>Data da Compra</th>
                         <th>Fornecedor</th>
                         <th>Codigo</th>
                         <th>Documento</th>
-                        <th>Classificacao</th>
+                        <th class="col-classificacao text-center" title="Classificacao">Class.</th>
                         <th class="text-end">Valor Total</th>
                         <th class="text-center">Fotos</th>
                         <th class="text-center">Detalhes</th>
@@ -272,7 +272,7 @@ function numero($valor, int $casas = 2): string
                 </thead>
                 <tbody>
                     <?php if (empty($compras)): ?>
-                        <tr>
+                        <tr class="auditoria-vazio">
                             <td colspan="8" class="text-center text-muted py-4">Nenhuma compra encontrada.</td>
                         </tr>
                     <?php endif; ?>
@@ -285,14 +285,14 @@ function numero($valor, int $casas = 2): string
                             $anexos = $anexosPorCompra[$compraId] ?? [];
                             $abrirCompra = (int)($_GET['abrir'] ?? 0) === $compraId;
                         ?>
-                        <tr id="compra-<?= $compraId ?>">
-                            <td><?= date('d/m/Y', strtotime($compra['DTEMISSAO'])) ?></td>
-                            <td><?= htmlspecialchars($compra['fornecedor_nome']) ?></td>
-                            <td><?= $compraId ?></td>
-                            <td><?= htmlspecialchars($compra['NUMDOC'] ?? '') ?></td>
-                            <td><?= htmlspecialchars(trim((string)($compra['CLASSIFICACAO'] ?? '')) ?: '-') ?></td>
-                            <td class="text-end"><?= moeda($compra['TOTGERAL']) ?></td>
-                            <td class="text-center">
+                        <tr id="compra-<?= $compraId ?>" class="auditoria-compra-row">
+                            <td data-label="Data da compra"><?= date('d/m/Y', strtotime($compra['DTEMISSAO'])) ?></td>
+                            <td data-label="Fornecedor" class="auditoria-fornecedor"><?= htmlspecialchars($compra['fornecedor_nome']) ?></td>
+                            <td data-label="Codigo"><?= $compraId ?></td>
+                            <td data-label="Documento"><?= htmlspecialchars($compra['NUMDOC'] ?? '') ?></td>
+                            <td data-label="Classificacao" class="col-classificacao text-center"><?= htmlspecialchars(trim((string)($compra['CLASSIFICACAO'] ?? '')) ?: '-') ?></td>
+                            <td data-label="Valor total" class="text-end"><?= moeda($compra['TOTGERAL']) ?></td>
+                            <td data-label="Fotos" class="text-center">
                                 <button class="btn btn-sm btn-outline-secondary"
                                         type="button"
                                         data-bs-toggle="collapse"
@@ -300,7 +300,7 @@ function numero($valor, int $casas = 2): string
                                     Fotos (<?= count($anexos) ?>)
                                 </button>
                             </td>
-                            <td class="text-center">
+                            <td data-label="Detalhes" class="text-center">
                                 <button class="btn btn-sm btn-outline-primary"
                                         type="button"
                                         data-bs-toggle="collapse"
@@ -309,7 +309,7 @@ function numero($valor, int $casas = 2): string
                                 </button>
                             </td>
                         </tr>
-                        <tr class="collapse<?= $abrirCompra ? ' show' : '' ?>" id="<?= $collapseId ?>">
+                        <tr class="collapse auditoria-detalhes-row<?= $abrirCompra ? ' show' : '' ?>" id="<?= $collapseId ?>">
                             <td colspan="8" class="bg-light">
                                 <div class="border-bottom pb-3 mb-3">
                                     <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-2">
@@ -317,17 +317,31 @@ function numero($valor, int $casas = 2): string
                                             <h2 class="h6 mb-1">Fotos da nota</h2>
                                             <div class="small text-muted">Compra <?= $compraId ?> | Documento <?= htmlspecialchars($compra['NUMDOC'] ?? '') ?></div>
                                         </div>
-                                        <form method="post" enctype="multipart/form-data" class="d-flex flex-wrap align-items-end gap-2">
-                                            <input type="hidden" name="csrf" value="<?= htmlspecialchars($csrf) ?>">
-                                            <input type="hidden" name="acao" value="anexar_fotos">
-                                            <input type="hidden" name="compra_contador" value="<?= $compraId ?>">
-                                            <div>
-                                                <label class="form-label small mb-1">Selecionar fotos</label>
-                                                <input type="file" name="fotos[]" class="form-control form-control-sm"
-                                                       accept="image/jpeg,image/png,image/webp" multiple required>
-                                            </div>
-                                            <button class="btn btn-sm btn-primary">Anexar</button>
-                                        </form>
+                                        <div class="d-flex flex-wrap align-items-end gap-3 auditoria-anexos-acoes">
+                                            <form method="post" enctype="multipart/form-data" class="d-flex flex-wrap align-items-end gap-2">
+                                                <input type="hidden" name="csrf" value="<?= htmlspecialchars($csrf) ?>">
+                                                <input type="hidden" name="acao" value="anexar_fotos">
+                                                <input type="hidden" name="compra_contador" value="<?= $compraId ?>">
+                                                <div>
+                                                    <label class="form-label small mb-1">Tirar foto</label>
+                                                    <input type="file" name="fotos[]" class="form-control form-control-sm"
+                                                           accept="image/*" capture="environment" required>
+                                                </div>
+                                                <button class="btn btn-sm btn-primary">Anexar foto</button>
+                                            </form>
+
+                                            <form method="post" enctype="multipart/form-data" class="d-flex flex-wrap align-items-end gap-2">
+                                                <input type="hidden" name="csrf" value="<?= htmlspecialchars($csrf) ?>">
+                                                <input type="hidden" name="acao" value="anexar_fotos">
+                                                <input type="hidden" name="compra_contador" value="<?= $compraId ?>">
+                                                <div>
+                                                    <label class="form-label small mb-1">Selecionar fotos</label>
+                                                    <input type="file" name="fotos[]" class="form-control form-control-sm"
+                                                           accept="image/jpeg,image/png,image/webp" multiple required>
+                                                </div>
+                                                <button class="btn btn-sm btn-outline-primary">Anexar selecionadas</button>
+                                            </form>
+                                        </div>
                                     </div>
 
                                     <?php if (empty($anexos)): ?>
@@ -423,6 +437,115 @@ function numero($valor, int $casas = 2): string
     aspect-ratio: 4 / 3;
     object-fit: cover;
     background: #f1f3f5;
+}
+
+.auditoria-compras-table .col-classificacao {
+    width: 4.5rem;
+    min-width: 4.5rem;
+    max-width: 4.5rem;
+}
+
+@media (max-width: 767.98px) {
+    .auditoria-compras-wrap {
+        overflow-x: visible;
+    }
+
+    .auditoria-compras-table,
+    .auditoria-compras-table > tbody {
+        display: block;
+        width: 100%;
+    }
+
+    .auditoria-compras-wrap > .auditoria-compras-table {
+        min-width: 0;
+    }
+
+    .auditoria-compras-table {
+        border: 0;
+    }
+
+    .auditoria-compras-table > thead {
+        display: none;
+    }
+
+    .auditoria-compras-table > tbody > .auditoria-compra-row {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+        gap: .7rem 1rem;
+        width: 100%;
+        margin-bottom: .75rem;
+        padding: .8rem;
+        border: 1px solid #dfe3e8;
+        border-radius: .375rem;
+        background: #fff;
+    }
+
+    .auditoria-compras-table > tbody > .auditoria-compra-row > td {
+        display: block;
+        min-width: 0;
+        padding: 0;
+        border: 0;
+        text-align: left !important;
+        overflow-wrap: anywhere;
+    }
+
+    .auditoria-compras-table > tbody > .auditoria-compra-row > td::before {
+        content: attr(data-label);
+        display: block;
+        margin-bottom: .1rem;
+        color: #6c757d;
+        font-size: .7rem;
+        font-weight: 600;
+        line-height: 1.2;
+        text-transform: uppercase;
+    }
+
+    .auditoria-compras-table > tbody > .auditoria-compra-row > .auditoria-fornecedor {
+        grid-column: 1 / -1;
+    }
+
+    .auditoria-compras-table > tbody > .auditoria-compra-row > .col-classificacao {
+        width: auto;
+        min-width: 0;
+        max-width: none;
+    }
+
+    .auditoria-compras-table > tbody > .auditoria-compra-row .btn {
+        width: 100%;
+    }
+
+    .auditoria-anexos-acoes,
+    .auditoria-anexos-acoes form,
+    .auditoria-anexos-acoes form > div,
+    .auditoria-anexos-acoes input[type="file"] {
+        width: 100%;
+    }
+
+    .auditoria-compras-table > tbody > .auditoria-detalhes-row {
+        display: none;
+        width: 100%;
+        margin: -.25rem 0 .75rem;
+    }
+
+    .auditoria-compras-table > tbody > .auditoria-detalhes-row.show {
+        display: block;
+    }
+
+    .auditoria-compras-table > tbody > .auditoria-detalhes-row > td {
+        display: block;
+        width: 100%;
+        border: 1px solid #dfe3e8;
+        border-radius: .375rem;
+    }
+
+    .auditoria-compras-table > tbody > .auditoria-vazio {
+        display: block;
+    }
+
+    .auditoria-compras-table > tbody > .auditoria-vazio > td {
+        display: block;
+        width: 100%;
+    }
 }
 </style>
 

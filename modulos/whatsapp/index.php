@@ -331,6 +331,26 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
         }
 
+        if ($acao === 'liberar_reenvio_unimed') {
+            $controleId = (int)($_POST['controle_id'] ?? 0);
+            $stmt = $pdo_master->prepare("
+                UPDATE unimed_whatsapp_envios
+                SET status = 'ERRO',
+                    whatsapp_envio_id = NULL,
+                    erro = 'Reenvio liberado manualmente.',
+                    processando_em = NULL,
+                    enviado_em = NULL
+                WHERE id = ?
+                  AND empresa_id = ?
+                  AND status = 'ENVIADO'
+            ");
+            $stmt->execute([$controleId, $empresaId]);
+            if ($stmt->rowCount() === 0) {
+                throw new Exception('Envio UNIMED concluido nao encontrado.');
+            }
+            $alerta = 'Reenvio do demonstrativo UNIMED liberado. Ele sera processado na proxima execucao.';
+        }
+
         if ($acao === 'enviar_rotina') {
             $rotinaId = (int)($_POST['rotina_id'] ?? 0);
             $stmt = $pdo_master->prepare("SELECT * FROM whatsapp_rotinas WHERE id = ? AND empresa_id = ?");
@@ -348,6 +368,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $alerta = 'Rotina verificada sem envio: ' . ($resultado['motivo'] ?? 'nenhum alerta necessario.');
             } else {
                 $alerta = "Rotina enviada: {$resultado['ok']} OK, {$resultado['falha']} erro(s).";
+                if (!empty($resultado['bloqueado'])) {
+                    $alerta .= ' ' . (int)$resultado['bloqueado'] . ' bloqueado(s) sem telefone.';
+                }
             }
         }
 
@@ -524,6 +547,16 @@ $stmt = $pdo_master->prepare("
 ");
 $stmt->execute([$empresaId]);
 $agendamentosIgnorados = $stmt->fetchAll(PDO::FETCH_ASSOC);
+$stmt = $pdo_master->prepare("
+    SELECT u.*, f.competencia, f.numero_fatura
+    FROM unimed_whatsapp_envios u
+    INNER JOIN unimed_faturas f ON f.id = u.fatura_id AND f.empresa_id = u.empresa_id
+    WHERE u.empresa_id = ?
+    ORDER BY u.atualizado_em DESC, u.id DESC
+    LIMIT 30
+");
+$stmt->execute([$empresaId]);
+$enviosUnimed = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
 $rotinasAtivas = count(array_filter($rotinas, static function (array $rotina): bool {
     return ($rotina['ativo'] ?? 'N') === 'S';
@@ -710,8 +743,10 @@ require __DIR__ . '/../../layout/header.php';
                         }
                         $qtdDestinatariosRotina = count($rotinaDestinatarios[(int)$rotina['id']] ?? []);
                         $rotinaExigeAgenda = strtoupper((string)($rotina['periodicidade'] ?? 'MANUAL')) !== 'MANUAL';
+                        $destinatarioAutomatico = ($rotina['gerador_sistema'] ?? '') === 'unimed_responsaveis_pdf'
+                            || ($rotina['gerador_sistema'] ?? '') === 'fechamento_compras_clientes_pdf';
                         $temAlertaRotina = ($rotina['ativo'] ?? 'N') === 'S'
-                            && ($qtdDestinatariosRotina === 0 || ($rotinaExigeAgenda && $proximaRotina === null));
+                            && ((!$destinatarioAutomatico && $qtdDestinatariosRotina === 0) || ($rotinaExigeAgenda && $proximaRotina === null));
                     ?>
                     <tr>
                         <td><strong><?= htmlspecialchars($rotina['nome']) ?></strong><br><small class="text-muted"><?= htmlspecialchars($rotina['descricao'] ?? '') ?></small></td>
@@ -1104,6 +1139,9 @@ require __DIR__ . '/../../layout/header.php';
                                 <?php if (($r['gerador_sistema'] ?? '') === 'fechamento_compras_clientes_pdf'): ?>
                                     <strong><?= (int)$clientesFechamentoMarcados ?></strong> cliente(s) marcado(s)
                                     <br><small class="text-muted">Busca em Contas a Receber &gt; Clientes</small>
+                                <?php elseif (($r['gerador_sistema'] ?? '') === 'unimed_responsaveis_pdf'): ?>
+                                    <strong>Responsaveis da UNIMED</strong>
+                                    <br><small class="text-muted">Busca faturas com os dois arquivos importados e usa o telefone do responsavel</small>
                                 <?php else: ?>
                                     <?= count($selecionados) ?> vinculado(s)
                                 <?php endif; ?>
@@ -1199,6 +1237,11 @@ require __DIR__ . '/../../layout/header.php';
                                         <input type="text" name="descricao" class="form-control" value="<?= htmlspecialchars($r['descricao'] ?? '') ?>">
                                     </div>
                                     <div class="col-12">
+                                        <?php if (($r['gerador_sistema'] ?? '') === 'unimed_responsaveis_pdf'): ?>
+                                            <div class="alert alert-light border mb-0">
+                                                Os destinatarios sao obtidos automaticamente do responsavel por pagamento cadastrado na UNIMED.
+                                            </div>
+                                        <?php else: ?>
                                         <div class="row g-2">
                                             <?php foreach ($destinatarios as $d): ?>
                                                 <?php if ($d['ativo'] !== 'S') { continue; } ?>
@@ -1213,11 +1256,58 @@ require __DIR__ . '/../../layout/header.php';
                                                 </div>
                                             <?php endforeach; ?>
                                         </div>
+                                        <?php endif; ?>
                                     </div>
                                     <div class="col-12">
                                         <button class="btn btn-primary w-100">Salvar rotina</button>
                                     </div>
                                 </form>
+
+                                <?php if (($r['gerador_sistema'] ?? '') === 'unimed_responsaveis_pdf'): ?>
+                                    <div class="border rounded p-3 mt-3">
+                                        <h3 class="h6 fw-bold mb-3">Controle dos demonstrativos UNIMED</h3>
+                                        <div class="table-responsive">
+                                            <table class="table table-sm align-middle mb-0">
+                                                <thead>
+                                                <tr>
+                                                    <th>Competencia</th>
+                                                    <th>Responsavel</th>
+                                                    <th>Telefone</th>
+                                                    <th>Total</th>
+                                                    <th>Status</th>
+                                                    <th class="text-end">Acao</th>
+                                                </tr>
+                                                </thead>
+                                                <tbody>
+                                                <?php foreach ($enviosUnimed as $envioUnimed): ?>
+                                                    <tr>
+                                                        <td><?= htmlspecialchars(competenciaUnimed((string)$envioUnimed['competencia'])) ?></td>
+                                                        <td><?= htmlspecialchars($envioUnimed['responsavel_nome']) ?></td>
+                                                        <td><?= htmlspecialchars($envioUnimed['telefone'] ?: '-') ?></td>
+                                                        <td>R$ <?= number_format((float)$envioUnimed['valor_total'], 2, ',', '.') ?></td>
+                                                        <td><span class="badge text-bg-<?= $envioUnimed['status'] === 'ENVIADO' ? 'success' : ($envioUnimed['status'] === 'BLOQUEADO' ? 'warning' : 'danger') ?>"><?= htmlspecialchars($envioUnimed['status']) ?></span></td>
+                                                        <td class="text-end">
+                                                            <?php if ($envioUnimed['status'] === 'ENVIADO'): ?>
+                                                                <form method="post" class="d-inline">
+                                                                    <input type="hidden" name="csrf" value="<?= htmlspecialchars($csrf) ?>">
+                                                                    <input type="hidden" name="acao" value="liberar_reenvio_unimed">
+                                                                    <input type="hidden" name="controle_id" value="<?= (int)$envioUnimed['id'] ?>">
+                                                                    <button class="btn btn-sm btn-outline-danger" onclick="return confirm('Liberar um novo envio deste demonstrativo?')">Liberar reenvio</button>
+                                                                </form>
+                                                            <?php else: ?>
+                                                                <small class="text-muted"><?= htmlspecialchars($envioUnimed['erro'] ?: '-') ?></small>
+                                                            <?php endif; ?>
+                                                        </td>
+                                                    </tr>
+                                                <?php endforeach; ?>
+                                                <?php if (empty($enviosUnimed)): ?>
+                                                    <tr><td colspan="6" class="text-center text-muted">Nenhum demonstrativo processado.</td></tr>
+                                                <?php endif; ?>
+                                                </tbody>
+                                            </table>
+                                        </div>
+                                    </div>
+                                <?php endif; ?>
 
                                 <div class="border rounded p-3 mt-3">
                                     <h3 class="h6 fw-bold mb-3">Agendamentos desta rotina</h3>

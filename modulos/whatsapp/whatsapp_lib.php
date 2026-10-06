@@ -1,6 +1,7 @@
 <?php
 
 require_once __DIR__ . '/../tesouraria/estoque_minimo_lib.php';
+require_once __DIR__ . '/../unimed/_lib.php';
 
 function whatsappEnsureTables(PDO $pdo): void
 {
@@ -9,6 +10,7 @@ function whatsappEnsureTables(PDO $pdo): void
         return;
     }
     $executado = true;
+    garantirTabelasUnimed($pdo);
 
     $pdo->exec("
         CREATE TABLE IF NOT EXISTS whatsapp_config (
@@ -172,6 +174,31 @@ function whatsappEnsureTables(PDO $pdo): void
             motivo VARCHAR(120) NOT NULL,
             registrado_em DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
             UNIQUE KEY uq_whatsapp_agendamento_ignorado (agendamento_id, previsto_em)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    ");
+
+    $pdo->exec("
+        CREATE TABLE IF NOT EXISTS unimed_whatsapp_envios (
+            id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+            empresa_id INT NOT NULL,
+            fatura_id INT NOT NULL,
+            responsavel_id INT NOT NULL,
+            responsavel_nome VARCHAR(160) NOT NULL,
+            telefone VARCHAR(30) NULL,
+            valor_mensalidade DECIMAL(12,2) NOT NULL DEFAULT 0,
+            valor_utilizacao DECIMAL(12,2) NOT NULL DEFAULT 0,
+            valor_total DECIMAL(12,2) NOT NULL DEFAULT 0,
+            status ENUM('PROCESSANDO','ENVIADO','ERRO','BLOQUEADO') NOT NULL,
+            tentativas INT UNSIGNED NOT NULL DEFAULT 0,
+            whatsapp_envio_id BIGINT UNSIGNED NULL,
+            erro TEXT NULL,
+            processando_em DATETIME NULL,
+            enviado_em DATETIME NULL,
+            criado_em DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            atualizado_em DATETIME NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            UNIQUE KEY uq_unimed_whatsapp_envio (empresa_id, fatura_id, responsavel_id),
+            INDEX idx_unimed_whatsapp_status (empresa_id, status),
+            INDEX idx_unimed_whatsapp_fatura (fatura_id)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
     ");
 
@@ -366,6 +393,37 @@ function whatsappEnsureTables(PDO $pdo): void
     foreach ($empresaIds as $empresaRotinaId) {
         $stmt->execute([(int)$empresaRotinaId]);
     }
+
+    try {
+        $empresaIdsUnimed = $pdo->query("
+            SELECT DISTINCT em.empresa_id
+            FROM empresa_modulos em
+            INNER JOIN sistema_modulos sm ON sm.id = em.modulo_id
+            WHERE em.ativo = 'S'
+              AND sm.ativo = 'S'
+              AND sm.codigo IN ('unimed', 'unimed_faturas')
+            ORDER BY em.empresa_id
+        ")->fetchAll(PDO::FETCH_COLUMN);
+
+        $stmt = $pdo->prepare("
+            INSERT INTO whatsapp_rotinas
+                (empresa_id, codigo, nome, descricao, mensagem_id, origem_mensagem, gerador_sistema, ativo, evitar_duplicidade_diaria, periodicidade)
+            VALUES
+                (?, 'unimed_responsaveis_pdf', 'Demonstrativos UNIMED', 'Envia uma unica vez o PDF quando os arquivos da fatura estiverem importados.', NULL, 'SISTEMA', 'unimed_responsaveis_pdf', 'N', 'S', 'MANUAL')
+            ON DUPLICATE KEY UPDATE
+                nome = VALUES(nome),
+                descricao = VALUES(descricao),
+                mensagem_id = NULL,
+                origem_mensagem = 'SISTEMA',
+                gerador_sistema = 'unimed_responsaveis_pdf',
+                evitar_duplicidade_diaria = 'S'
+        ");
+        foreach ($empresaIdsUnimed as $empresaRotinaId) {
+            $stmt->execute([(int)$empresaRotinaId]);
+        }
+    } catch (Throwable $e) {
+        // Instalacoes antigas podem ainda nao ter o controle de modulos criado.
+    }
 }
 
 function whatsappEnsureColumn(PDO $pdo, string $table, string $column, string $alterSql): void
@@ -461,6 +519,12 @@ function whatsappGeradoresSistema(): array
             'arquivo' => 'modulos/whatsapp/whatsapp_lib.php',
             'funcao' => 'whatsappMensagemFechamentoComprasClientesPreview',
         ],
+        'unimed_responsaveis_pdf' => [
+            'nome' => 'Demonstrativos UNIMED',
+            'descricao' => 'Envia o PDF individual quando os dois arquivos da fatura estiverem importados, sem repetir envios concluidos.',
+            'arquivo' => 'modulos/whatsapp/whatsapp_lib.php',
+            'funcao' => 'whatsappMensagemUnimedPreview',
+        ],
         'apresentacao_caixa' => [
             'nome' => 'Apresentacao do Caixa',
             'descricao' => 'Mostra a diferenca do dinheiro de todos os operadores do dia, das 07:00 ate 03:00.',
@@ -499,6 +563,7 @@ function whatsappRotinaGerenciada(string $codigo): bool
     return in_array($codigo, [
         'resumo_diario',
         'fechamento_compras_clientes_pdf',
+        'unimed_responsaveis_pdf',
         'reposicao_tesouraria',
         'alerta_cupons_fiscais',
     ], true);
@@ -739,7 +804,8 @@ function whatsappSendDocument(PDO $pdo, array $config, array $destinatario, stri
         return whatsappRegisterSend($pdo, null, $destinatario, $mensagemRegistro, 'ERRO', null, 'Arquivo PDF nao encontrado.', $usuarioId, $rotinaId);
     }
 
-    $base64 = 'data:application/pdf;base64,' . base64_encode((string)file_get_contents($arquivoPdf));
+    $base64Puro = base64_encode((string)file_get_contents($arquivoPdf));
+    $base64DataUrl = 'data:application/pdf;base64,' . $base64Puro;
     if ($provedor === 'EVOLUTION') {
         if ($instancia === '') {
             return whatsappRegisterSend($pdo, null, $destinatario, $mensagemRegistro, 'ERRO', null, 'Instancia da Evolution API nao configurada.', $usuarioId, $rotinaId);
@@ -753,7 +819,7 @@ function whatsappSendDocument(PDO $pdo, array $config, array $destinatario, stri
             'mediatype' => 'document',
             'mimetype' => 'application/pdf',
             'caption' => $mensagemRegistro,
-            'media' => $base64,
+            'media' => $base64Puro,
             'fileName' => $nomeArquivo,
         ];
         $headers = ['Content-Type: application/json', 'apikey: ' . $token];
@@ -763,7 +829,13 @@ function whatsappSendDocument(PDO $pdo, array $config, array $destinatario, stri
             $apiDocumento = preg_replace('#/api/[^/]+$#', '/api/enviar-documento', $apiDocumento);
         }
         $url = rtrim($apiDocumento, '/') . '/' . rawurlencode($token);
-        $payload = ['phone' => $numero, 'base64' => $base64, 'name' => $nomeArquivo];
+        $payload = [
+            'phone' => $numero,
+            'base64' => $base64DataUrl,
+            'name' => $nomeArquivo,
+            'message' => $mensagemRegistro,
+            'caption' => $mensagemRegistro,
+        ];
         $headers = ['Content-Type: application/json'];
     }
 
@@ -915,6 +987,14 @@ function whatsappEnviarRotina(PDO $pdo, array $rotina, string $mensagem, ?int $m
         return $resultado;
     }
 
+    if (($rotina['origem_mensagem'] ?? 'TEXTO') === 'SISTEMA' && ($rotina['gerador_sistema'] ?? '') === 'unimed_responsaveis_pdf') {
+        $resultado = whatsappEnviarUnimedResponsaveisPdf($pdo, $config, $rotina, $usuarioId);
+        $stmt = $pdo->prepare("UPDATE whatsapp_rotinas SET ultima_execucao = NOW() WHERE id = ?");
+        $stmt->execute([(int)$rotina['id']]);
+        whatsappAtualizarProximaExecucao($pdo, (int)$rotina['id']);
+        return $resultado;
+    }
+
     $destinatarios = whatsappDestinatariosRotina($pdo, (int)$rotina['id']);
     if (empty($destinatarios)) {
         throw new Exception('Nenhum destinatario ativo vinculado a rotina.');
@@ -1059,6 +1139,10 @@ function whatsappMensagemRotina(PDO $pdo, array $rotina): array
 
         if ($gerador === 'fechamento_compras_clientes_pdf') {
             return [whatsappMensagemFechamentoComprasClientesPreview($pdo, null, $empresaId), null];
+        }
+
+        if ($gerador === 'unimed_responsaveis_pdf') {
+            return [whatsappMensagemUnimedPreview($pdo, $empresaId), null];
         }
 
         if ($gerador === 'apresentacao_caixa' || $gerador === 'apresentacao_caixa_1') {
@@ -1528,6 +1612,382 @@ function whatsappMensagemFechamentoComprasClientesPreview(PDO $pdo, ?DateTime $b
     $msg .= "Texto enviado junto do PDF: Ola Nome do cliente, segue o fechamento das suas compras!";
 
     return $msg;
+}
+
+function whatsappResponsaveisUnimedFatura(PDO $pdo, int $empresaId, int $faturaId): array
+{
+    $responsaveis = [];
+    $sqlBase = "
+        FROM %s linha
+        LEFT JOIN unimed_beneficiarios b
+            ON b.id = linha.beneficiario_id
+           AND b.empresa_id = ?
+        LEFT JOIN unimed_beneficiarios resp
+            ON resp.id = COALESCE(b.responsavel_pagamento_id, b.id)
+           AND resp.empresa_id = ?
+        WHERE linha.fatura_id = ?
+          AND linha.empresa_id = ?
+    ";
+
+    $stmt = $pdo->prepare("
+        SELECT linha.*, COALESCE(resp.id, b.id, linha.beneficiario_id, 0) AS responsavel_id,
+               COALESCE(resp.nome, b.nome, 'Responsavel nao informado') AS responsavel_nome,
+               COALESCE(resp.telefone_whatsapp, '') AS responsavel_telefone
+        " . sprintf($sqlBase, 'unimed_fatura_itens') . "
+        ORDER BY responsavel_nome, linha.familia, linha.dependente, linha.nome
+    ");
+    $stmt->execute([$empresaId, $empresaId, $faturaId, $empresaId]);
+    $mensalidades = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+    $stmt = $pdo->prepare("
+        SELECT linha.*, COALESCE(resp.id, b.id, linha.beneficiario_id, 0) AS responsavel_id,
+               COALESCE(resp.nome, b.nome, 'Responsavel nao informado') AS responsavel_nome,
+               COALESCE(resp.telefone_whatsapp, '') AS responsavel_telefone
+        " . sprintf($sqlBase, 'unimed_utilizacoes') . "
+        ORDER BY responsavel_nome, linha.familia, linha.dependente, linha.nome, linha.data_atendimento, linha.id
+    ");
+    $stmt->execute([$empresaId, $empresaId, $faturaId, $empresaId]);
+    $utilizacoes = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+    $inicializar = static function (array $linha) use (&$responsaveis): int {
+        $id = (int)($linha['responsavel_id'] ?? 0);
+        if (!isset($responsaveis[$id])) {
+            $responsaveis[$id] = [
+                'id' => $id,
+                'nome' => (string)($linha['responsavel_nome'] ?? 'Responsavel nao informado'),
+                'telefone' => (string)($linha['responsavel_telefone'] ?? ''),
+                'mensalidade' => 0.0,
+                'utilizacao' => 0.0,
+                'mensalidades' => [],
+                'utilizacoes' => [],
+            ];
+        }
+        return $id;
+    };
+
+    foreach ($mensalidades as $linha) {
+        $id = $inicializar($linha);
+        $responsaveis[$id]['mensalidade'] += (float)$linha['valor_mensalidade'];
+        $responsaveis[$id]['mensalidades'][] = $linha;
+    }
+    foreach ($utilizacoes as $linha) {
+        $id = $inicializar($linha);
+        $responsaveis[$id]['utilizacao'] += (float)$linha['valor_total'];
+        $responsaveis[$id]['utilizacoes'][] = $linha;
+    }
+
+    uasort($responsaveis, static function (array $a, array $b): int {
+        return strcasecmp($a['nome'], $b['nome']);
+    });
+    return $responsaveis;
+}
+
+function whatsappSalvarPdfPaginas(string $arquivo, array $paginas): void
+{
+    $objetos = [1 => "<< /Type /Catalog /Pages 2 0 R >>"];
+    $kids = [];
+    $fonteRegularId = 3 + (count($paginas) * 2);
+    $fonteNegritoId = $fonteRegularId + 1;
+    $objetoId = 3;
+    foreach ($paginas as $conteudo) {
+        $paginaId = $objetoId++;
+        $conteudoId = $objetoId++;
+        $kids[] = $paginaId . ' 0 R';
+        $objetos[$paginaId] = "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 {$fonteRegularId} 0 R /F2 {$fonteNegritoId} 0 R >> >> /Contents {$conteudoId} 0 R >>";
+        $objetos[$conteudoId] = "<< /Length " . strlen($conteudo) . " >>\nstream\n{$conteudo}endstream";
+    }
+    $objetos[2] = "<< /Type /Pages /Kids [" . implode(' ', $kids) . "] /Count " . count($paginas) . " >>";
+    $objetos[$fonteRegularId] = "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>";
+    $objetos[$fonteNegritoId] = "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>";
+    ksort($objetos);
+
+    $pdf = "%PDF-1.4\n";
+    $offsets = [0];
+    foreach ($objetos as $id => $objeto) {
+        $offsets[$id] = strlen($pdf);
+        $pdf .= $id . " 0 obj\n" . $objeto . "\nendobj\n";
+    }
+    $xref = strlen($pdf);
+    $maxId = max(array_keys($objetos));
+    $pdf .= "xref\n0 " . ($maxId + 1) . "\n0000000000 65535 f \n";
+    for ($i = 1; $i <= $maxId; $i++) {
+        $pdf .= str_pad((string)($offsets[$i] ?? 0), 10, '0', STR_PAD_LEFT) . " 00000 n \n";
+    }
+    $pdf .= "trailer\n<< /Size " . ($maxId + 1) . " /Root 1 0 R >>\nstartxref\n{$xref}\n%%EOF";
+
+    $pasta = dirname($arquivo);
+    if (!is_dir($pasta) && !mkdir($pasta, 0775, true) && !is_dir($pasta)) {
+        throw new RuntimeException('Nao foi possivel criar a pasta dos demonstrativos UNIMED.');
+    }
+    if (file_put_contents($arquivo, $pdf) === false) {
+        throw new RuntimeException('Nao foi possivel gerar o demonstrativo UNIMED.');
+    }
+}
+
+function whatsappGerarPdfUnimedResponsavel(string $arquivo, string $empresa, array $fatura, array $responsavel): void
+{
+    $linhas = [];
+    foreach ($responsavel['mensalidades'] as $linha) {
+        $linhas[] = [
+            'tipo' => 'Mensalidade',
+            'nome' => (string)$linha['nome'],
+            'detalhe' => (string)($linha['lancamento'] ?? ''),
+            'valor' => (float)$linha['valor_mensalidade'],
+        ];
+    }
+    foreach ($responsavel['utilizacoes'] as $linha) {
+        $data = !empty($linha['data_atendimento']) ? date('d/m/Y', strtotime($linha['data_atendimento'])) : '';
+        $linhas[] = [
+            'tipo' => 'Utilizacao',
+            'nome' => (string)$linha['nome'],
+            'detalhe' => trim($data . ' ' . (string)($linha['prestador'] ?? '')),
+            'valor' => (float)$linha['valor_total'],
+        ];
+    }
+
+    $paginas = [];
+    $partes = array_chunk($linhas, 25);
+    if (empty($partes)) {
+        $partes = [[]];
+    }
+    $total = (float)$responsavel['mensalidade'] + (float)$responsavel['utilizacao'];
+    foreach ($partes as $indice => $parte) {
+        $conteudo = whatsappPdfRetangulo(0, 756, 595, 86, '0.07 0.23 0.48');
+        $conteudo .= "1 1 1 rg\n";
+        $conteudo .= whatsappPdfComandoTexto(32, 812, 16, 'DEMONSTRATIVO UNIMED', true);
+        $conteudo .= whatsappPdfComandoTexto(32, 791, 10, $empresa);
+        $conteudo .= whatsappPdfComandoTexto(360, 791, 9, 'Competencia: ' . competenciaUnimed((string)$fatura['competencia']));
+        $conteudo .= "0 0 0 rg\n";
+        $conteudo .= whatsappPdfComandoTexto(32, 728, 11, 'Responsavel: ' . $responsavel['nome'], true);
+        $conteudo .= whatsappPdfComandoTexto(32, 710, 9, 'Fatura: ' . ($fatura['numero_fatura'] ?? '-'));
+        $conteudo .= whatsappPdfComandoTexto(360, 710, 9, 'Pagina ' . ($indice + 1) . '/' . count($partes));
+
+        $conteudo .= whatsappPdfRetangulo(32, 650, 165, 42, '0.94 0.97 1.00');
+        $conteudo .= whatsappPdfRetangulo(207, 650, 165, 42, '0.94 0.97 1.00');
+        $conteudo .= whatsappPdfRetangulo(382, 650, 181, 42, '0.94 0.97 1.00');
+        $conteudo .= "0 0 0 rg\n";
+        $conteudo .= whatsappPdfComandoTexto(42, 675, 8, 'Mensalidades', true);
+        $conteudo .= whatsappPdfComandoTexto(42, 658, 11, 'R$ ' . number_format((float)$responsavel['mensalidade'], 2, ',', '.'), true);
+        $conteudo .= whatsappPdfComandoTexto(217, 675, 8, 'Utilizacoes', true);
+        $conteudo .= whatsappPdfComandoTexto(217, 658, 11, 'R$ ' . number_format((float)$responsavel['utilizacao'], 2, ',', '.'), true);
+        $conteudo .= whatsappPdfComandoTexto(392, 675, 8, 'Total a depositar', true);
+        $conteudo .= whatsappPdfComandoTexto(392, 658, 11, 'R$ ' . number_format($total, 2, ',', '.'), true);
+
+        $y = 620;
+        $conteudo .= whatsappPdfRetangulo(32, $y, 531, 22, '0.86 0.91 0.98');
+        $conteudo .= "0 0 0 rg\n";
+        $conteudo .= whatsappPdfComandoTexto(38, $y + 7, 8, 'Tipo', true);
+        $conteudo .= whatsappPdfComandoTexto(122, $y + 7, 8, 'Beneficiario', true);
+        $conteudo .= whatsappPdfComandoTexto(300, $y + 7, 8, 'Detalhe', true);
+        $conteudo .= whatsappPdfComandoTexto(500, $y + 7, 8, 'Valor', true);
+        $y -= 20;
+        foreach ($parte as $linha) {
+            $nome = strlen($linha['nome']) > 28 ? substr($linha['nome'], 0, 25) . '...' : $linha['nome'];
+            $detalhe = strlen($linha['detalhe']) > 32 ? substr($linha['detalhe'], 0, 29) . '...' : $linha['detalhe'];
+            $conteudo .= whatsappPdfComandoTexto(38, $y + 5, 8, $linha['tipo']);
+            $conteudo .= whatsappPdfComandoTexto(122, $y + 5, 8, $nome);
+            $conteudo .= whatsappPdfComandoTexto(300, $y + 5, 8, $detalhe);
+            $conteudo .= whatsappPdfComandoTexto(500, $y + 5, 8, 'R$ ' . number_format($linha['valor'], 2, ',', '.'));
+            $conteudo .= "0.82 0.85 0.89 RG 0.35 w\n32 " . ($y - 2) . " 531 0 re S\n";
+            $y -= 19;
+        }
+        $conteudo .= whatsappPdfComandoTexto(32, 24, 8, 'Gerado pelo SuperDunga em ' . date('d/m/Y H:i'));
+        $paginas[] = $conteudo;
+    }
+    whatsappSalvarPdfPaginas($arquivo, $paginas);
+}
+
+function whatsappMensagemUnimed(array $responsavel, array $fatura): string
+{
+    $total = (float)$responsavel['mensalidade'] + (float)$responsavel['utilizacao'];
+    return "Olá, " . $responsavel['nome'] . ".\n\n"
+        . "Segue o demonstrativo da UNIMED referente à competência " . competenciaUnimed((string)$fatura['competencia']) . ".\n\n"
+        . "Este documento reúne os valores dos beneficiários sob sua responsabilidade.\n\n"
+        . "Mensalidades: R$ " . number_format((float)$responsavel['mensalidade'], 2, ',', '.') . "\n"
+        . "Utilizações: R$ " . number_format((float)$responsavel['utilizacao'], 2, ',', '.') . "\n\n"
+        . "*Valor total a ser depositado: R$ " . number_format($total, 2, ',', '.') . "*\n\n"
+        . "Favor realizar o PIX *antes do dia 12*.\n\n"
+        . "*Chave PIX - CNPJ*\n"
+        . "26732639000155\n\n"
+        . "Ethicos37 Serviços Ltda.\n\n"
+        . "Após o pagamento, favor enviar o comprovante.";
+}
+
+function whatsappFaturasUnimedProntas(PDO $pdo, int $empresaId): array
+{
+    $stmt = $pdo->prepare("
+        SELECT f.*
+        FROM unimed_faturas f
+        WHERE f.empresa_id = ?
+          AND COALESCE(NULLIF(TRIM(f.arquivo_nome), ''), '') <> ''
+          AND COALESCE(NULLIF(TRIM(f.arquivo_utilizacao_nome), ''), '') <> ''
+        ORDER BY f.competencia, f.id
+    ");
+    $stmt->execute([$empresaId]);
+    return $stmt->fetchAll(PDO::FETCH_ASSOC);
+}
+
+function whatsappMensagemUnimedPreview(PDO $pdo, int $empresaId = 1): string
+{
+    $faturas = whatsappFaturasUnimedProntas($pdo, $empresaId);
+    $pendentes = 0;
+    $bloqueados = 0;
+    $enviados = 0;
+    foreach ($faturas as $fatura) {
+        foreach (whatsappResponsaveisUnimedFatura($pdo, $empresaId, (int)$fatura['id']) as $responsavel) {
+            $total = (float)$responsavel['mensalidade'] + (float)$responsavel['utilizacao'];
+            if ($total <= 0) {
+                continue;
+            }
+            $stmt = $pdo->prepare("SELECT status FROM unimed_whatsapp_envios WHERE empresa_id = ? AND fatura_id = ? AND responsavel_id = ?");
+            $stmt->execute([$empresaId, (int)$fatura['id'], (int)$responsavel['id']]);
+            $status = (string)$stmt->fetchColumn();
+            if ($status === 'ENVIADO') {
+                $enviados++;
+            } elseif (whatsappNormalizarTelefoneBrasil((string)$responsavel['telefone']) === '') {
+                $bloqueados++;
+            } else {
+                $pendentes++;
+            }
+        }
+    }
+
+    return "*DEMONSTRATIVOS UNIMED*\n\n"
+        . "Empresa: " . whatsappNomeEmpresa($pdo, $empresaId) . "\n"
+        . "Faturas com arquivos importados: " . count($faturas) . "\n"
+        . "Pendentes para envio: {$pendentes}\n"
+        . "Ja enviados: {$enviados}\n"
+        . "Bloqueados sem telefone: {$bloqueados}\n\n"
+        . "No envio real, a mensagem e o PDF individual seguem juntos. Envios concluidos nao sao repetidos.";
+}
+
+function whatsappEnviarUnimedResponsaveisPdf(PDO $pdo, array $config, array $rotina, ?int $usuarioId): array
+{
+    $empresaId = (int)($rotina['empresa_id'] ?? 1);
+    $empresa = whatsappNomeEmpresa($pdo, $empresaId);
+    $resultado = ['ok' => 0, 'falha' => 0, 'ignorado' => 0, 'bloqueado' => 0];
+
+    foreach (whatsappFaturasUnimedProntas($pdo, $empresaId) as $fatura) {
+        foreach (whatsappResponsaveisUnimedFatura($pdo, $empresaId, (int)$fatura['id']) as $responsavel) {
+            $responsavelId = (int)$responsavel['id'];
+            $total = (float)$responsavel['mensalidade'] + (float)$responsavel['utilizacao'];
+            if ($responsavelId <= 0 || $total <= 0) {
+                $resultado['ignorado']++;
+                continue;
+            }
+
+            $telefone = whatsappNormalizarTelefoneBrasil((string)$responsavel['telefone']);
+            $nomeLock = 'sd_unimed_' . $empresaId . '_' . (int)$fatura['id'] . '_' . $responsavelId;
+            $stmtLock = $pdo->prepare("SELECT GET_LOCK(?, 5)");
+            $stmtLock->execute([$nomeLock]);
+            if ((int)$stmtLock->fetchColumn() !== 1) {
+                $resultado['ignorado']++;
+                continue;
+            }
+            $pdo->beginTransaction();
+            try {
+                $stmt = $pdo->prepare("SELECT * FROM unimed_whatsapp_envios WHERE empresa_id = ? AND fatura_id = ? AND responsavel_id = ? FOR UPDATE");
+                $stmt->execute([$empresaId, (int)$fatura['id'], $responsavelId]);
+                $controle = $stmt->fetch(PDO::FETCH_ASSOC);
+                if ($controle && $controle['status'] === 'ENVIADO') {
+                    $pdo->commit();
+                    $pdo->prepare("SELECT RELEASE_LOCK(?)")->execute([$nomeLock]);
+                    $resultado['ignorado']++;
+                    continue;
+                }
+                if ($controle && $controle['status'] === 'PROCESSANDO' && !empty($controle['processando_em'])
+                    && strtotime($controle['processando_em']) >= strtotime('-1 hour')) {
+                    $pdo->commit();
+                    $pdo->prepare("SELECT RELEASE_LOCK(?)")->execute([$nomeLock]);
+                    $resultado['ignorado']++;
+                    continue;
+                }
+
+                $status = $telefone === '' ? 'BLOQUEADO' : 'PROCESSANDO';
+                $erro = $telefone === '' ? 'Responsavel sem telefone WhatsApp.' : null;
+                $stmt = $pdo->prepare("
+                    INSERT INTO unimed_whatsapp_envios
+                        (empresa_id, fatura_id, responsavel_id, responsavel_nome, telefone, valor_mensalidade, valor_utilizacao, valor_total, status, tentativas, erro, processando_em)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ON DUPLICATE KEY UPDATE
+                        responsavel_nome = VALUES(responsavel_nome),
+                        telefone = VALUES(telefone),
+                        valor_mensalidade = VALUES(valor_mensalidade),
+                        valor_utilizacao = VALUES(valor_utilizacao),
+                        valor_total = VALUES(valor_total),
+                        status = VALUES(status),
+                        tentativas = tentativas + VALUES(tentativas),
+                        erro = VALUES(erro),
+                        processando_em = VALUES(processando_em)
+                ");
+                $stmt->execute([
+                    $empresaId, (int)$fatura['id'], $responsavelId, $responsavel['nome'], $telefone,
+                    (float)$responsavel['mensalidade'], (float)$responsavel['utilizacao'], $total,
+                    $status, $telefone === '' ? 0 : 1, $erro, $telefone === '' ? null : date('Y-m-d H:i:s'),
+                ]);
+                $pdo->commit();
+                $pdo->prepare("SELECT RELEASE_LOCK(?)")->execute([$nomeLock]);
+            } catch (Throwable $e) {
+                if ($pdo->inTransaction()) {
+                    $pdo->rollBack();
+                }
+                $pdo->prepare("SELECT RELEASE_LOCK(?)")->execute([$nomeLock]);
+                throw $e;
+            }
+
+            if ($telefone === '') {
+                $resultado['bloqueado']++;
+                continue;
+            }
+
+            $nomeSeguro = whatsappArquivoNomeSeguro((string)$responsavel['nome']);
+            $nomeArquivo = 'unimed_' . preg_replace('/\D/', '', (string)$fatura['competencia']) . '_' . $nomeSeguro . '.pdf';
+            $arquivo = dirname(__DIR__, 2) . '/storage/whatsapp_unimed/empresa_' . $empresaId . '/fatura_' . (int)$fatura['id'] . '/' . $nomeArquivo;
+            try {
+                whatsappGerarPdfUnimedResponsavel($arquivo, $empresa, $fatura, $responsavel);
+                $destinatario = [
+                    'id' => null,
+                    'empresa_id' => $empresaId,
+                    'nome' => $responsavel['nome'],
+                    'numero' => $telefone,
+                    'tipo' => 'PESSOA',
+                ];
+                $envio = whatsappSendDocument(
+                    $pdo, $config, $destinatario, whatsappMensagemUnimed($responsavel, $fatura),
+                    $arquivo, $nomeArquivo, $usuarioId, (int)$rotina['id']
+                );
+                $status = $envio['status'] === 'OK' ? 'ENVIADO' : 'ERRO';
+                $stmt = $pdo->prepare("
+                    UPDATE unimed_whatsapp_envios
+                    SET status = ?, whatsapp_envio_id = ?, erro = ?, enviado_em = ?, processando_em = NULL
+                    WHERE empresa_id = ? AND fatura_id = ? AND responsavel_id = ?
+                ");
+                $stmt->execute([
+                    $status, (int)$envio['envio_id'], $envio['erro'] ?? null,
+                    $status === 'ENVIADO' ? date('Y-m-d H:i:s') : null,
+                    $empresaId, (int)$fatura['id'], $responsavelId,
+                ]);
+                if ($status === 'ENVIADO') {
+                    $resultado['ok']++;
+                } else {
+                    $resultado['falha']++;
+                }
+            } catch (Throwable $e) {
+                $stmt = $pdo->prepare("
+                    UPDATE unimed_whatsapp_envios
+                    SET status = 'ERRO', erro = ?, processando_em = NULL
+                    WHERE empresa_id = ? AND fatura_id = ? AND responsavel_id = ?
+                ");
+                $stmt->execute([$e->getMessage(), $empresaId, (int)$fatura['id'], $responsavelId]);
+                $resultado['falha']++;
+            }
+        }
+    }
+
+    if ($resultado['ok'] === 0 && $resultado['falha'] === 0 && $resultado['bloqueado'] === 0) {
+        $resultado['motivo'] = 'Nenhum demonstrativo UNIMED pendente';
+    }
+    return $resultado;
 }
 
 function whatsappMensagemResumoDiario(PDO $pdo, int $empresaId = 1): string
