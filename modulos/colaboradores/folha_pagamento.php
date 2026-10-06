@@ -702,6 +702,7 @@ if ($gerarRecibos && empty($errosFolha)) {
         WHERE EMPRESA = ?
           AND CLICONTADOR = ?
           AND DATE(DTEMISSAO) <= ?
+          AND CMCONTADOR = 9
           AND STATUS <> 'QT'
           AND COALESCE(excluido_firebird, 'N') <> 'S'
         ORDER BY DTEMISSAO, CRCONTADOR
@@ -712,6 +713,7 @@ if ($gerarRecibos && empty($errosFolha)) {
         FROM armazem_cr001
         WHERE EMPRESA = ?
           AND CLICONTADOR = ?
+          AND CMCONTADOR = 9
           AND STATUS <> 'QT'
           AND COALESCE(excluido_firebird, 'N') <> 'S'
         ORDER BY DTEMISSAO, CRCONTADOR
