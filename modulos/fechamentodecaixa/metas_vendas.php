@@ -1,9 +1,15 @@
 <?php
-require '../../config/auth.php';
-require '../../config/conexao.php';
+$modoPdfMetaVendas = defined('METAS_VENDAS_MODO_PDF') && METAS_VENDAS_MODO_PDF === true;
+$execucaoInternaMetaVendas = defined('METAS_VENDAS_EXECUCAO_INTERNA') && METAS_VENDAS_EXECUCAO_INTERNA === true;
+if (!$execucaoInternaMetaVendas) {
+    require __DIR__ . '/../../config/auth.php';
+}
+require __DIR__ . '/../../config/conexao.php';
 
 date_default_timezone_set('America/Sao_Paulo');
-$empresaId = (int)($_SESSION['empresa_id'] ?? 0);
+$empresaId = $execucaoInternaMetaVendas
+    ? (int)($GLOBALS['METAS_VENDAS_EMPRESA_ID'] ?? 0)
+    : (int)($_SESSION['empresa_id'] ?? 0);
 $mesSistema = date('Y-m');
 $inicioMesSistema = $mesSistema . '-01';
 $ontem = date('Y-m-d', strtotime('-1 day'));
@@ -58,7 +64,23 @@ $diasSelecionados = array_values(array_unique(array_filter(array_map('intval', $
 if (!$diasSelecionados) {
     $diasSelecionados = array_keys($diasSemanaMetaVendas);
 }
-$queryFiltro = http_build_query(['data_ini' => $filtroDataIni, 'data_fim' => $filtroDataFim, 'dias' => $diasSelecionados]);
+$mesComparacaoProduto = (string)($_GET['produto_mes_comparacao'] ?? date('Y-m', strtotime($filtroDataIni . ' -1 month')));
+$mesComparacaoProdutoValido = DateTimeImmutable::createFromFormat('!Y-m', $mesComparacaoProduto);
+if (!$mesComparacaoProdutoValido || $mesComparacaoProdutoValido->format('Y-m') !== $mesComparacaoProduto) {
+    $mesComparacaoProduto = date('Y-m', strtotime($filtroDataIni . ' -1 month'));
+}
+$primeiroDiaMesComparacaoProduto = $mesComparacaoProduto . '-01';
+$diasNoMesComparacaoProduto = (int)date('t', strtotime($primeiroDiaMesComparacaoProduto));
+$diaInicioComparacaoProduto = min((int)date('d', strtotime($filtroDataIni)), $diasNoMesComparacaoProduto);
+$diaFimComparacaoProduto = min((int)date('d', strtotime($filtroDataFim)), $diasNoMesComparacaoProduto);
+$inicioComparacaoProduto = sprintf('%s-%02d', $mesComparacaoProduto, $diaInicioComparacaoProduto);
+$fimComparacaoProduto = sprintf('%s-%02d', $mesComparacaoProduto, $diaFimComparacaoProduto);
+$queryFiltro = http_build_query([
+    'data_ini' => $filtroDataIni,
+    'data_fim' => $filtroDataFim,
+    'dias' => $diasSelecionados,
+    'produto_mes_comparacao' => $mesComparacaoProduto,
+]);
 
 $pdo_master->exec("
     CREATE TABLE IF NOT EXISTS fechamento_metas_vendas (
@@ -85,6 +107,7 @@ $pdo_master->exec("
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
 ");
 
+if (!function_exists('dinheiroParaFloatMetaVendas')) {
 function dinheiroParaFloatMetaVendas(string $valor): float
 {
     $valor = trim($valor);
@@ -113,6 +136,11 @@ function percentualMetaVendas(?float $valor): string
 function numeroMetaVendas(int $valor): string
 {
     return number_format($valor, 0, ',', '.');
+}
+
+function quantidadeMetaVendas(float $valor): string
+{
+    return rtrim(rtrim(number_format($valor, 3, ',', '.'), '0'), ',');
 }
 
 function classeBarraHoraMetaVendas(float $valor, float $maiorValor): string
@@ -259,6 +287,133 @@ function vendasPorHoraMetaVendas(PDO $pdo, int $empresaId, string $inicio, strin
     return $horas;
 }
 
+function vendasPorProdutoMetaVendas(PDO $pdo, int $empresaId, string $inicio, string $fim, array $diasSemana = []): array
+{
+    $dataCaixaSql = "DATE(CASE WHEN TIME(v.DTLANC) < '03:00:00' THEN DATE_SUB(v.DTLANC, INTERVAL 1 DAY) ELSE v.DTLANC END)";
+    $inicioPeriodo = $inicio . ' 07:00:00';
+    $fimPeriodo = date('Y-m-d 03:00:00', strtotime($fim . ' +1 day'));
+    $filtroDiasSql = '';
+    $params = [$inicioPeriodo, $fimPeriodo, $empresaId, $inicio, $fim];
+    if ($diasSemana) {
+        $placeholdersDias = implode(',', array_fill(0, count($diasSemana), '?'));
+        $filtroDiasSql = " AND (DAYOFWEEK($dataCaixaSql) - 1) IN ($placeholdersDias)";
+        $params = array_merge($params, array_values($diasSemana));
+    }
+    $stmt = $pdo->prepare("
+        SELECT
+            i.PRODUTO,
+            COALESCE(NULLIF(MAX(p.CODPRODUTO), ''), CAST(i.PRODUTO AS CHAR)) AS codigo,
+            COALESCE(NULLIF(MAX(p.DESCPRODUTO), ''), CONCAT('Produto ', i.PRODUTO)) AS descricao,
+            COALESCE(NULLIF(MAX(p.UNIDADE), ''), '-') AS unidade,
+            SUM(COALESCE(i.QTDE, 0)) AS quantidade,
+            SUM(COALESCE(i.TOTPROD, 0)) AS total
+        FROM armazem_est007 v
+        INNER JOIN armazem_est008 i
+            ON i.EMPRESA = v.EMPRESA
+           AND i.ITEMVENDACONTADOR = v.VENDACONTADOR
+        LEFT JOIN armazem_est004 p
+            ON p.EMPRESA = i.EMPRESA
+           AND p.CONTAPRODUTO = i.PRODUTO
+        WHERE v.DTLANC >= ?
+          AND v.DTLANC <= ?
+          AND v.EMPRESA = ?
+          AND $dataCaixaSql BETWEEN ? AND ?
+          AND v.CANCELADO = 'N'
+          AND COALESCE(v.excluido_firebird, 'N') <> 'S'
+          AND COALESCE(v.CMCONTADOR, 0) <> 10
+          AND (TIME(v.DTLANC) >= '07:00:00' OR TIME(v.DTLANC) < '03:00:00')
+          AND COALESCE(i.CANCELADO, 'N') <> 'S'
+          AND COALESCE(i.excluido_firebird, 'N') <> 'S'
+          $filtroDiasSql
+        GROUP BY i.PRODUTO
+        ORDER BY total DESC, descricao
+    ");
+    $stmt->execute($params);
+    return $stmt->fetchAll(PDO::FETCH_ASSOC);
+}
+
+function produtosComEstoqueSemVendaMetaVendas(PDO $pdo, int $empresaId, string $inicio, string $fim, array $diasSemana = []): array
+{
+    $dataCaixaSql = "DATE(CASE WHEN TIME(v.DTLANC) < '03:00:00' THEN DATE_SUB(v.DTLANC, INTERVAL 1 DAY) ELSE v.DTLANC END)";
+    $inicioPeriodo = $inicio . ' 07:00:00';
+    $fimPeriodo = date('Y-m-d 03:00:00', strtotime($fim . ' +1 day'));
+    $filtroDiasSql = '';
+    $paramsVendas = [$inicioPeriodo, $fimPeriodo, $empresaId, $inicio, $fim];
+    if ($diasSemana) {
+        $placeholdersDias = implode(',', array_fill(0, count($diasSemana), '?'));
+        $filtroDiasSql = " AND (DAYOFWEEK($dataCaixaSql) - 1) IN ($placeholdersDias)";
+        $paramsVendas = array_merge($paramsVendas, array_values($diasSemana));
+    }
+
+    $stmt = $pdo->prepare("
+        SELECT
+            p.CONTAPRODUTO,
+            p.CODPRODUTO,
+            p.DESCPRODUTO,
+            p.UNIDADE,
+            COALESCE(p.PRECOFINAL, 0) AS preco_venda,
+            CASE
+                WHEN p.ESTOQUE_CALCULADO_EM IS NOT NULL THEN COALESCE(p.ESTOQUE_DISPONIVEL, 0)
+                ELSE COALESCE(p.ESTINICIAL, 0) + COALESCE(e.qtd_entrada, 0) - COALESCE(s.qtd_saida, 0)
+            END AS estoque_atual,
+            COALESCE(vp.qtd_vendida, 0) AS quantidade_vendida_periodo,
+            p.ESTOQUE_CALCULADO_EM
+        FROM armazem_est004 p
+        LEFT JOIN (
+            SELECT i.EMPRESA, i.PRODUTO, SUM(COALESCE(i.QTDE, 0)) AS qtd_entrada
+            FROM armazem_est006 i
+            LEFT JOIN armazem_est005 c
+                ON c.EMPRESA = i.EMPRESA
+               AND c.COMPRACONTADOR = i.COMPRACONTA
+            WHERE i.EMPRESA = ?
+              AND COALESCE(i.excluido_firebird, 'N') <> 'S'
+              AND COALESCE(i.CANCELADO, 'N') <> 'S'
+              AND COALESCE(i.MOVESTOQUE, 'S') <> 'N'
+              AND COALESCE(c.excluido_firebird, 'N') <> 'S'
+              AND COALESCE(c.CANCELADO, 'N') <> 'S'
+              AND COALESCE(c.BAIXAESTOQUE, 'S') <> 'N'
+            GROUP BY i.EMPRESA, i.PRODUTO
+        ) e ON e.EMPRESA = p.EMPRESA AND e.PRODUTO = p.CONTAPRODUTO
+        LEFT JOIN (
+            SELECT i.EMPRESA, i.PRODUTO, SUM(COALESCE(i.QTDE, 0)) AS qtd_saida
+            FROM armazem_est008 i
+            WHERE i.EMPRESA = ?
+              AND COALESCE(i.CANCELADO, 'N') <> 'S'
+              AND i.MOVESTOQUE = 'S'
+            GROUP BY i.EMPRESA, i.PRODUTO
+        ) s ON s.EMPRESA = p.EMPRESA AND s.PRODUTO = p.CONTAPRODUTO
+        LEFT JOIN (
+            SELECT i.EMPRESA, i.PRODUTO, SUM(COALESCE(i.QTDE, 0)) AS qtd_vendida
+            FROM armazem_est007 v
+            INNER JOIN armazem_est008 i
+                ON i.EMPRESA = v.EMPRESA
+               AND i.ITEMVENDACONTADOR = v.VENDACONTADOR
+            WHERE v.DTLANC >= ?
+              AND v.DTLANC <= ?
+              AND v.EMPRESA = ?
+              AND $dataCaixaSql BETWEEN ? AND ?
+              AND v.CANCELADO = 'N'
+              AND COALESCE(v.excluido_firebird, 'N') <> 'S'
+              AND COALESCE(v.CMCONTADOR, 0) <> 10
+              AND (TIME(v.DTLANC) >= '07:00:00' OR TIME(v.DTLANC) < '03:00:00')
+              AND COALESCE(i.CANCELADO, 'N') <> 'S'
+              AND COALESCE(i.excluido_firebird, 'N') <> 'S'
+              $filtroDiasSql
+            GROUP BY i.EMPRESA, i.PRODUTO
+        ) vp ON vp.EMPRESA = p.EMPRESA AND vp.PRODUTO = p.CONTAPRODUTO
+        WHERE p.EMPRESA = ?
+          AND COALESCE(p.excluido_firebird, 'N') <> 'S'
+          AND COALESCE(p.INATIVO, 'N') <> 'S'
+        HAVING estoque_atual > 0
+           AND quantidade_vendida_periodo = 0
+        ORDER BY preco_venda DESC, estoque_atual DESC, p.DESCPRODUTO, p.CODPRODUTO
+    ");
+    $params = array_merge([$empresaId, $empresaId], $paramsVendas, [$empresaId]);
+    $stmt->execute($params);
+    return $stmt->fetchAll(PDO::FETCH_ASSOC);
+}
+}
+
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['acao'] ?? '') === 'salvar_meta_vendas') {
     $valorMeta = dinheiroParaFloatMetaVendas((string)($_POST['valor_meta'] ?? '0'));
     $stmtMetaSalvar = $pdo_master->prepare("
@@ -326,12 +481,14 @@ while ($cursorDiasMes <= $fimDiasMes) {
 }
 $distribuicaoMeta = [];
 $totalDiasTrabalhadosMeta = 0;
+$previsaoDistribuidaMeta = 0.0;
 foreach ($diasSemanaMetaVendas as $diaValor => $diaNome) {
     $trabalhaPadrao = in_array($diaValor, [0, 6], true) ? 'N' : 'S';
     $trabalha = (string)($distribuicaoSalva[$diaValor]['trabalha'] ?? $trabalhaPadrao);
     $quantidade = $quantidadeDiasMesPorSemana[$diaValor];
     if ($trabalha === 'S') {
         $totalDiasTrabalhadosMeta += $quantidade;
+        $previsaoDistribuidaMeta += $quantidade * (float)($distribuicaoSalva[$diaValor]['valor_meta_dia'] ?? 0);
     }
     $distribuicaoMeta[$diaValor] = [
         'nome' => $diaNome,
@@ -340,6 +497,7 @@ foreach ($diasSemanaMetaVendas as $diaValor => $diaNome) {
         'valor_dia' => (float)($distribuicaoSalva[$diaValor]['valor_meta_dia'] ?? 0),
     ];
 }
+$diferencaDistribuicaoMeta = $previsaoDistribuidaMeta - $metaVendas;
 
 $vendasMesAtualCompleto = $temDiasFechados
     ? vendasPorDiaMetaVendas($pdo_master, $empresaId, $inicioMesAtual, $dataReferencia)
@@ -369,6 +527,48 @@ $vendasMesAnteriorCompleto = vendasPorDiaMetaVendas($pdo_master, $empresaId, $in
 $vendasPorHora = $temDiasFechados
     ? vendasPorHoraMetaVendas($pdo_master, $empresaId, $filtroDataIni, $filtroDataFim, $diasSelecionados)
     : [];
+$vendasPorProduto = $temDiasFechados
+    ? vendasPorProdutoMetaVendas($pdo_master, $empresaId, $filtroDataIni, $filtroDataFim, $diasSelecionados)
+    : [];
+$produtosComEstoqueSemVenda = $temDiasFechados
+    ? produtosComEstoqueSemVendaMetaVendas($pdo_master, $empresaId, $filtroDataIni, $filtroDataFim, $diasSelecionados)
+    : [];
+$estoqueAtualSemVenda = array_sum(array_map(static function (array $produto): float {
+    return (float)$produto['estoque_atual'];
+}, $produtosComEstoqueSemVenda));
+$estoqueCalculadoEmSemVenda = null;
+foreach ($produtosComEstoqueSemVenda as $produtoSemVenda) {
+    $calculadoEm = $produtoSemVenda['ESTOQUE_CALCULADO_EM'] ?? null;
+    if ($calculadoEm !== null && ($estoqueCalculadoEmSemVenda === null || $calculadoEm > $estoqueCalculadoEmSemVenda)) {
+        $estoqueCalculadoEmSemVenda = $calculadoEm;
+    }
+}
+$vendasPorProdutoComparacao = vendasPorProdutoMetaVendas(
+    $pdo_master,
+    $empresaId,
+    $inicioComparacaoProduto,
+    $fimComparacaoProduto,
+    $diasSelecionados
+);
+$quantidadesProdutosComparacao = [];
+$valoresProdutosComparacao = [];
+foreach ($vendasPorProdutoComparacao as $produtoComparacao) {
+    $produtoIdComparacao = (string)$produtoComparacao['PRODUTO'];
+    $quantidadesProdutosComparacao[$produtoIdComparacao] = (float)$produtoComparacao['quantidade'];
+    $valoresProdutosComparacao[$produtoIdComparacao] = (float)$produtoComparacao['total'];
+}
+$quantidadeTotalProdutos = array_sum(array_map(static function (array $produto): float {
+    return (float)$produto['quantidade'];
+}, $vendasPorProduto));
+$quantidadeTotalProdutosComparacao = array_sum(array_map(static function (array $produto) use ($quantidadesProdutosComparacao): float {
+    return (float)($quantidadesProdutosComparacao[(string)$produto['PRODUTO']] ?? 0);
+}, $vendasPorProduto));
+$valorTotalProdutosComparacao = array_sum(array_map(static function (array $produto) use ($valoresProdutosComparacao): float {
+    return (float)($valoresProdutosComparacao[(string)$produto['PRODUTO']] ?? 0);
+}, $vendasPorProduto));
+$valorTotalProdutos = array_sum(array_map(static function (array $produto): float {
+    return (float)$produto['total'];
+}, $vendasPorProduto));
 
 $comparativoDias = [];
 $totalAtualAteReferencia = 0.0;
@@ -489,7 +689,127 @@ foreach ($ordemHorasMetaVendas as $hora) {
     ];
 }
 
-require '../../layout/header.php';
+$vendasPorDiaSemana = [];
+foreach ($diasSemanaMetaVendas as $diaSemana => $nomeDiaSemana) {
+    $vendasPorDiaSemana[$diaSemana] = [
+        'nome' => $nomeDiaSemana,
+        'dias_ocorridos' => 0,
+        'total' => 0.0,
+        'qtd' => 0,
+        'media_dia' => 0.0,
+        'ticket_medio' => 0.0,
+    ];
+}
+$cursorDiaSemana = strtotime($filtroDataIni);
+$fimDiaSemana = strtotime($filtroDataFim);
+while ($cursorDiaSemana <= $fimDiaSemana) {
+    $diaSemana = (int)date('w', $cursorDiaSemana);
+    if (in_array($diaSemana, $diasSelecionados, true)) {
+        $vendasPorDiaSemana[$diaSemana]['dias_ocorridos']++;
+    }
+    $cursorDiaSemana = strtotime('+1 day', $cursorDiaSemana);
+}
+foreach ($vendasMesAtual as $dataVenda => $vendaDia) {
+    $diaSemana = (int)date('w', strtotime($dataVenda));
+    $vendasPorDiaSemana[$diaSemana]['total'] += (float)$vendaDia['total'];
+    $vendasPorDiaSemana[$diaSemana]['qtd'] += (int)$vendaDia['qtd'];
+}
+foreach ($vendasPorDiaSemana as $diaSemana => $vendaDiaSemana) {
+    $quantidadeVendas = (int)$vendaDiaSemana['qtd'];
+    $diasOcorridos = (int)$vendaDiaSemana['dias_ocorridos'];
+    $vendasPorDiaSemana[$diaSemana]['media_dia'] = $diasOcorridos > 0
+        ? (float)$vendaDiaSemana['total'] / $diasOcorridos
+        : 0.0;
+    $vendasPorDiaSemana[$diaSemana]['ticket_medio'] = $quantidadeVendas > 0
+        ? (float)$vendaDiaSemana['total'] / $quantidadeVendas
+        : 0.0;
+}
+
+if ($modoPdfMetaVendas) {
+    ?>
+    <!doctype html>
+    <html lang="pt-BR">
+    <head>
+        <meta charset="utf-8">
+        <style>
+            @page { margin: 8mm; }
+            * { box-sizing: border-box; }
+            body { background: #f3f6fb; color: #1f2937; font-family: DejaVu Sans, sans-serif; font-size: 9px; }
+            h1, h2, h3, p { margin-top: 0; }
+            h1, .h3 { font-size: 18px; }
+            h2, .h5 { font-size: 14px; }
+            h3, .h6 { font-size: 11px; }
+            .small { font-size: 8px; }
+            .fw-bold, .fw-semibold { font-weight: bold; }
+            .text-muted { color: #65748b; }
+            .text-white { color: #fff; }
+            .text-end, .text-md-end, .text-lg-end { text-align: right; }
+            .text-center { text-align: center; }
+            .text-start { text-align: left; }
+            .text-success { color: #198754; }
+            .text-danger { color: #dc3545; }
+            .text-nowrap { white-space: nowrap; }
+            .mb-0 { margin-bottom: 0; }
+            .mb-1 { margin-bottom: 3px; }
+            .mb-2 { margin-bottom: 6px; }
+            .mb-3 { margin-bottom: 10px; }
+            .mb-4 { margin-bottom: 14px; }
+            .mt-1 { margin-top: 3px; }
+            .mt-3 { margin-top: 10px; }
+            .mt-4 { margin-top: 14px; }
+            section { margin-bottom: 10px !important; }
+            .p-4, .p-lg-5 { padding: 12px; }
+            .p-3 { padding: 8px; }
+            .border { border: 1px solid #ced7e4; }
+            .border-bottom { border-bottom: 1px solid #ced7e4; }
+            .border-primary { border-color: #1f6fff; }
+            .rounded-2, .card { border-radius: 4px; }
+            .card { background: #fff; border: 1px solid #ced7e4; }
+            .card-header { padding: 10px; }
+            .card-body { padding: 10px; }
+            .badge { display: inline-block; padding: 3px 6px; background: #ffc107; color: #111827; border-radius: 3px; }
+            .row { width: 100%; }
+            .row:after { content: ''; display: table; clear: both; }
+            .col, [class*='col-'] { float: left; padding: 3px; }
+            .col-sm-4 { width: 33.333%; }
+            .col-lg-8 { width: 66.666%; }
+            .col-lg-4 { width: 33.333%; }
+            .col-lg-3 { width: 25%; }
+            .col-lg-2 { width: 16.666%; }
+            .row-cols-xl-5 > .col { width: 20%; }
+            .d-flex { display: block; }
+            .d-grid { display: block; }
+            .h-100 { height: auto !important; }
+            .card, .border, .rounded-2 { border-color: #ced7e4 !important; }
+            .shadow-sm { box-shadow: none !important; }
+            .card-header { background: #173a78 !important; color: #fff !important; }
+            .table-responsive { overflow: visible !important; }
+            .form-control, .form-select { border: 1px solid #ced7e4; padding: 4px; width: 100%; }
+            .btn { display: inline-block; padding: 4px 8px; border: 1px solid #6b7280; border-radius: 3px; }
+            .bg-light { background: #f8fafc; }
+            table { width: 100% !important; min-width: 0 !important; border-collapse: collapse; page-break-inside: auto; }
+            thead { display: table-header-group; }
+            tfoot { display: table-row-group; }
+            tr { page-break-inside: avoid; page-break-after: auto; }
+            th, td { border: 1px solid #d6dde7; padding: 3px 4px; font-size: 7.2px; }
+            .table-primary th { background: #173a78 !important; color: #fff !important; }
+            .table-secondary td { background: #e9edf3 !important; }
+            .bg-primary-subtle { background: #dbe8ff !important; }
+            .progress { height: 12px; background: #dce2ea !important; }
+            .progress-bar { height: 12px; background: #1f6fff !important; }
+            .bg-success { background: #198754 !important; }
+            .bg-warning { background: #ffc107 !important; }
+            .bg-danger { background: #dc3545 !important; }
+            .pdf-ocultar { display: none !important; }
+            input, button, select { font-size: 8px !important; }
+            h1, h2, h3 { page-break-after: avoid; }
+        </style>
+    </head>
+    <body>
+    <?php
+} else {
+    require __DIR__ . '/../../layout/header.php';
+}
 ?>
 
 <section class="mb-4">
@@ -500,7 +820,8 @@ require '../../layout/header.php';
                 <h1 class="h3 fw-bold mb-2">Metas de Vendas</h1>
                 <p class="text-muted mb-0">Acompanhe a meta mensal, compare o ritmo com o mes anterior e projete o fechamento.</p>
             </div>
-            <div class="col-lg-4 text-lg-end">
+            <div class="col-lg-4 text-lg-end<?= $modoPdfMetaVendas ? ' pdf-ocultar' : '' ?>">
+                <a href="metas_vendas_pdf.php?<?= htmlspecialchars($queryFiltro) ?>" class="btn btn-danger" target="_blank">PDF</a>
                 <a href="menu_fechamento.php" class="btn btn-outline-secondary">Voltar ao fechamento</a>
             </div>
         </div>
@@ -583,8 +904,8 @@ require '../../layout/header.php';
                 <div class="p-3 d-flex flex-column flex-lg-row justify-content-between gap-3 align-items-lg-center">
                     <div class="d-flex flex-wrap gap-4">
                         <div><span class="small text-muted d-block">Meta mensal</span><strong id="meta-mensal-distribuicao" data-valor="<?= number_format($metaVendas, 2, '.', '') ?>"><?= moedaMetaVendas($metaVendas) ?></strong></div>
-                        <div><span class="small text-muted d-block">Previsao distribuida</span><strong id="previsao-distribuida">R$ 0,00</strong></div>
-                        <div><span class="small text-muted d-block">Diferenca</span><strong id="diferenca-distribuicao">R$ 0,00</strong></div>
+                        <div><span class="small text-muted d-block">Previsao distribuida</span><strong id="previsao-distribuida"><?= moedaMetaVendas($previsaoDistribuidaMeta) ?></strong></div>
+                        <div><span class="small text-muted d-block">Diferenca</span><strong id="diferenca-distribuicao"><?= moedaMetaVendas($diferencaDistribuicaoMeta) ?></strong></div>
                     </div>
                     <div class="d-flex flex-column flex-sm-row gap-2 align-items-sm-center">
                         <span class="badge fs-6" id="status-distribuicao"></span>
@@ -816,10 +1137,206 @@ require '../../layout/header.php';
                     </div>
                 <?php endif; ?>
             </div>
+
+            <div class="mt-3 border rounded-2 p-3">
+                <div class="d-flex flex-column flex-md-row justify-content-between gap-1 mb-3">
+                    <div>
+                        <h3 class="h6 fw-bold mb-1">Vendas por dia da semana</h3>
+                        <div class="small text-muted"><?= date('d/m/Y', strtotime($filtroDataIni)) ?> ate <?= date('d/m/Y', strtotime($filtroDataFim)) ?></div>
+                    </div>
+                    <div class="small text-muted">Considera os dias da semana selecionados no filtro</div>
+                </div>
+                <div class="table-responsive">
+                    <table class="table table-sm table-bordered align-middle mb-0">
+                        <thead class="table-primary">
+                            <tr>
+                                <th>Dia da semana</th>
+                                <th class="text-end">Dias ocorridos</th>
+                                <th class="text-end">Valor</th>
+                                <th class="text-end">Media do dia</th>
+                                <th class="text-end">Ticket medio</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <?php foreach ($vendasPorDiaSemana as $diaSemana => $vendaDiaSemana): ?>
+                                <?php if (!in_array((int)$diaSemana, $diasSelecionados, true)) continue; ?>
+                                <tr>
+                                    <td class="fw-semibold"><?= htmlspecialchars((string)$vendaDiaSemana['nome']) ?></td>
+                                    <td class="text-end"><?= numeroMetaVendas((int)$vendaDiaSemana['dias_ocorridos']) ?></td>
+                                    <td class="text-end"><?= moedaMetaVendas((float)$vendaDiaSemana['total']) ?></td>
+                                    <td class="text-end"><?= moedaMetaVendas((float)$vendaDiaSemana['media_dia']) ?></td>
+                                    <td class="text-end"><?= moedaMetaVendas((float)$vendaDiaSemana['ticket_medio']) ?></td>
+                                </tr>
+                            <?php endforeach; ?>
+                        </tbody>
+                        <tfoot class="table-secondary fw-semibold">
+                            <tr>
+                                <td>Total filtrado</td>
+                                <td class="text-end"><?= numeroMetaVendas(count($comparativoDias)) ?></td>
+                                <td class="text-end"><?= moedaMetaVendas($totalAtualAteReferencia) ?></td>
+                                <td class="text-end"><?= moedaMetaVendas($mediaDiaAtual) ?></td>
+                                <td class="text-end"><?= moedaMetaVendas($ticketMedioAtualAteReferencia) ?></td>
+                            </tr>
+                        </tfoot>
+                    </table>
+                </div>
+            </div>
+
+            <div class="mt-3 border rounded-2 p-3">
+                <div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-end gap-3 mb-3">
+                    <div>
+                        <h3 class="h6 fw-bold mb-1">Vendas por produto</h3>
+                        <div class="small text-muted">Quantidade e valor dos produtos vendidos no periodo filtrado</div>
+                        <div class="small text-muted">
+                            <?= date('d/m/Y', strtotime($filtroDataIni)) ?> ate <?= date('d/m/Y', strtotime($filtroDataFim)) ?>
+                        </div>
+                    </div>
+                    <form method="get" class="d-flex flex-column flex-sm-row align-items-sm-end gap-2">
+                        <input type="hidden" name="data_ini" value="<?= htmlspecialchars($filtroDataIni) ?>">
+                        <input type="hidden" name="data_fim" value="<?= htmlspecialchars($filtroDataFim) ?>">
+                        <?php foreach ($diasSelecionados as $diaSelecionado): ?>
+                            <input type="hidden" name="dias[]" value="<?= (int)$diaSelecionado ?>">
+                        <?php endforeach; ?>
+                        <div>
+                            <label for="produto-mes-comparacao" class="form-label small mb-1">Mes de comparacao</label>
+                            <input
+                                type="month"
+                                class="form-control form-control-sm"
+                                id="produto-mes-comparacao"
+                                name="produto_mes_comparacao"
+                                value="<?= htmlspecialchars($mesComparacaoProduto) ?>"
+                            >
+                            <div class="small text-muted mt-1 text-nowrap">
+                                <?= date('d/m/Y', strtotime($inicioComparacaoProduto)) ?> a <?= date('d/m/Y', strtotime($fimComparacaoProduto)) ?>
+                            </div>
+                        </div>
+                        <button type="submit" class="btn btn-primary btn-sm">Comparar</button>
+                    </form>
+                </div>
+                <?php if (!$vendasPorProduto): ?>
+                    <div class="text-muted small">Nenhum produto vendido no periodo filtrado.</div>
+                <?php else: ?>
+                    <?php
+                    $blocosVendasPorProduto = $modoPdfMetaVendas
+                        ? array_chunk($vendasPorProduto, 60)
+                        : [$vendasPorProduto];
+                    $ultimoBlocoVendasPorProduto = count($blocosVendasPorProduto) - 1;
+                    ?>
+                    <?php foreach ($blocosVendasPorProduto as $indiceBloco => $blocoVendasPorProduto): ?>
+                    <div class="table-responsive<?= $indiceBloco > 0 ? ' mt-3' : '' ?>">
+                        <table class="table table-sm table-bordered table-hover align-middle mb-0" style="min-width: 760px;">
+                            <thead class="table-primary">
+                                <tr>
+                                    <th rowspan="2" class="align-middle text-nowrap" style="width: 1%;">Cod.</th>
+                                    <th rowspan="2" class="align-middle" style="width: 100%;">Descricao</th>
+                                    <th rowspan="2" class="align-middle text-nowrap" style="width: 1%;">Un.</th>
+                                    <th colspan="2" class="text-center text-nowrap">Periodo filtrado</th>
+                                    <th colspan="2" class="text-center text-nowrap">Comparacao</th>
+                                </tr>
+                                <tr>
+                                    <th class="text-end text-nowrap" style="width: 1%;">QTD</th>
+                                    <th class="text-end text-nowrap" style="width: 1%;">Valor</th>
+                                    <th class="text-end text-nowrap" style="width: 1%;">QTD</th>
+                                    <th class="text-end text-nowrap" style="width: 1%;">Valor</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <?php foreach ($blocoVendasPorProduto as $produto): ?>
+                                    <tr>
+                                        <td class="text-nowrap"><?= htmlspecialchars((string)$produto['codigo']) ?></td>
+                                        <td><?= htmlspecialchars((string)$produto['descricao']) ?></td>
+                                        <td class="text-nowrap"><?= htmlspecialchars((string)$produto['unidade']) ?></td>
+                                        <td class="text-end text-nowrap"><?= quantidadeMetaVendas((float)$produto['quantidade']) ?></td>
+                                        <td class="text-end text-nowrap fw-semibold"><?= moedaMetaVendas((float)$produto['total']) ?></td>
+                                        <td class="text-end text-nowrap"><?= quantidadeMetaVendas((float)($quantidadesProdutosComparacao[(string)$produto['PRODUTO']] ?? 0)) ?></td>
+                                        <td class="text-end text-nowrap"><?= moedaMetaVendas((float)($valoresProdutosComparacao[(string)$produto['PRODUTO']] ?? 0)) ?></td>
+                                    </tr>
+                                <?php endforeach; ?>
+                            </tbody>
+                            <?php if ($indiceBloco === $ultimoBlocoVendasPorProduto): ?>
+                            <tfoot class="table-secondary fw-semibold">
+                                <tr>
+                                    <td colspan="3">Total do periodo</td>
+                                    <td class="text-end"><?= quantidadeMetaVendas($quantidadeTotalProdutos) ?></td>
+                                    <td class="text-end"><?= moedaMetaVendas($valorTotalProdutos) ?></td>
+                                    <td class="text-end"><?= quantidadeMetaVendas($quantidadeTotalProdutosComparacao) ?></td>
+                                    <td class="text-end"><?= moedaMetaVendas($valorTotalProdutosComparacao) ?></td>
+                                </tr>
+                            </tfoot>
+                            <?php endif; ?>
+                        </table>
+                    </div>
+                    <?php endforeach; ?>
+                <?php endif; ?>
+            </div>
+
+            <div class="mt-3 border rounded-2 p-3">
+                <div class="d-flex flex-column flex-md-row justify-content-between gap-1 mb-3">
+                    <div>
+                        <h3 class="h6 fw-bold mb-1">Produtos com estoque sem vendas</h3>
+                        <div class="small text-muted">
+                            Estoque atual maior que zero e nenhuma venda de
+                            <?= date('d/m/Y', strtotime($filtroDataIni)) ?> a <?= date('d/m/Y', strtotime($filtroDataFim)) ?>
+                        </div>
+                    </div>
+                    <div class="small text-muted text-md-end">
+                        <div><?= numeroMetaVendas(count($produtosComEstoqueSemVenda)) ?> produto(s)</div>
+                        <?php if ($estoqueCalculadoEmSemVenda): ?>
+                            <div>Estoque Firebird: <?= date('d/m/Y H:i', strtotime($estoqueCalculadoEmSemVenda)) ?></div>
+                        <?php endif; ?>
+                    </div>
+                </div>
+                <?php if (!$produtosComEstoqueSemVenda): ?>
+                    <div class="text-muted small">Nenhum produto com estoque positivo ficou sem vendas no periodo filtrado.</div>
+                <?php else: ?>
+                    <?php
+                    $blocosProdutosSemVenda = $modoPdfMetaVendas
+                        ? array_chunk($produtosComEstoqueSemVenda, 60)
+                        : [$produtosComEstoqueSemVenda];
+                    $ultimoBlocoProdutosSemVenda = count($blocosProdutosSemVenda) - 1;
+                    ?>
+                    <?php foreach ($blocosProdutosSemVenda as $indiceBloco => $blocoProdutosSemVenda): ?>
+                    <div class="table-responsive<?= $indiceBloco > 0 ? ' mt-3' : '' ?>">
+                        <table class="table table-sm table-bordered table-hover align-middle mb-0" style="min-width: 560px;">
+                            <thead class="table-primary">
+                                <tr>
+                                    <th class="text-nowrap" style="width: 1%;">Cod.</th>
+                                    <th style="width: 100%;">Descricao</th>
+                                    <th class="text-nowrap" style="width: 1%;">Un.</th>
+                                    <th class="text-end text-nowrap" style="width: 1%;">Estoque atual</th>
+                                    <th class="text-end text-nowrap" style="width: 1%;">Preco de venda</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <?php foreach ($blocoProdutosSemVenda as $produtoSemVenda): ?>
+                                    <tr>
+                                        <td class="text-nowrap"><?= htmlspecialchars((string)$produtoSemVenda['CODPRODUTO']) ?></td>
+                                        <td><?= htmlspecialchars((string)$produtoSemVenda['DESCPRODUTO']) ?></td>
+                                        <td class="text-nowrap"><?= htmlspecialchars((string)$produtoSemVenda['UNIDADE']) ?></td>
+                                        <td class="text-end text-nowrap fw-semibold"><?= quantidadeMetaVendas((float)$produtoSemVenda['estoque_atual']) ?></td>
+                                        <td class="text-end text-nowrap"><?= moedaMetaVendas((float)$produtoSemVenda['preco_venda']) ?></td>
+                                    </tr>
+                                <?php endforeach; ?>
+                            </tbody>
+                            <?php if ($indiceBloco === $ultimoBlocoProdutosSemVenda): ?>
+                            <tfoot class="table-secondary fw-semibold">
+                                <tr>
+                                    <td colspan="3">Total</td>
+                                    <td class="text-end text-nowrap"><?= quantidadeMetaVendas($estoqueAtualSemVenda) ?></td>
+                                    <td></td>
+                                </tr>
+                            </tfoot>
+                            <?php endif; ?>
+                        </table>
+                    </div>
+                    <?php endforeach; ?>
+                <?php endif; ?>
+            </div>
         </div>
     </div>
 </section>
 
+<?php if (!$modoPdfMetaVendas): ?>
 <script>
 (() => {
     const moeda = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' });
@@ -859,4 +1376,8 @@ require '../../layout/header.php';
 })();
 </script>
 
-<?php require '../../layout/footer.php'; ?>
+<?php require __DIR__ . '/../../layout/footer.php'; ?>
+<?php else: ?>
+</body>
+</html>
+<?php endif; ?>

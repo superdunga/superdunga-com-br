@@ -394,6 +394,23 @@ function whatsappEnsureTables(PDO $pdo): void
         $stmt->execute([(int)$empresaRotinaId]);
     }
 
+    $stmt = $pdo->prepare("
+        INSERT INTO whatsapp_rotinas
+            (empresa_id, codigo, nome, descricao, mensagem_id, origem_mensagem, gerador_sistema, ativo, evitar_duplicidade_diaria, periodicidade)
+        VALUES
+            (?, 'analise_performance_pdf', 'Analise de Performance', 'Envia o PDF completo da tela de metas e desempenho de vendas.', NULL, 'SISTEMA', 'analise_performance_pdf', 'N', 'S', 'MANUAL')
+        ON DUPLICATE KEY UPDATE
+            nome = VALUES(nome),
+            descricao = VALUES(descricao),
+            mensagem_id = NULL,
+            origem_mensagem = 'SISTEMA',
+            gerador_sistema = 'analise_performance_pdf',
+            evitar_duplicidade_diaria = 'S'
+    ");
+    foreach ($empresaIds as $empresaRotinaId) {
+        $stmt->execute([(int)$empresaRotinaId]);
+    }
+
     try {
         $empresaIdsUnimed = $pdo->query("
             SELECT DISTINCT em.empresa_id
@@ -525,6 +542,12 @@ function whatsappGeradoresSistema(): array
             'arquivo' => 'modulos/whatsapp/whatsapp_lib.php',
             'funcao' => 'whatsappMensagemUnimedPreview',
         ],
+        'analise_performance_pdf' => [
+            'nome' => 'Analise de Performance',
+            'descricao' => 'Gera e envia o PDF completo da analise de metas e desempenho de vendas.',
+            'arquivo' => 'modulos/whatsapp/whatsapp_lib.php',
+            'funcao' => 'whatsappMensagemAnalisePerformancePreview',
+        ],
         'apresentacao_caixa' => [
             'nome' => 'Apresentacao do Caixa',
             'descricao' => 'Mostra a diferenca do dinheiro de todos os operadores do dia, das 07:00 ate 03:00.',
@@ -564,6 +587,7 @@ function whatsappRotinaGerenciada(string $codigo): bool
         'resumo_diario',
         'fechamento_compras_clientes_pdf',
         'unimed_responsaveis_pdf',
+        'analise_performance_pdf',
         'reposicao_tesouraria',
         'alerta_cupons_fiscais',
     ], true);
@@ -995,6 +1019,14 @@ function whatsappEnviarRotina(PDO $pdo, array $rotina, string $mensagem, ?int $m
         return $resultado;
     }
 
+    if (($rotina['origem_mensagem'] ?? 'TEXTO') === 'SISTEMA' && ($rotina['gerador_sistema'] ?? '') === 'analise_performance_pdf') {
+        $resultado = whatsappEnviarAnalisePerformancePdf($pdo, $config, $rotina, $mensagem, $usuarioId);
+        $stmt = $pdo->prepare("UPDATE whatsapp_rotinas SET ultima_execucao = NOW() WHERE id = ?");
+        $stmt->execute([(int)$rotina['id']]);
+        whatsappAtualizarProximaExecucao($pdo, (int)$rotina['id']);
+        return $resultado;
+    }
+
     $destinatarios = whatsappDestinatariosRotina($pdo, (int)$rotina['id']);
     if (empty($destinatarios)) {
         throw new Exception('Nenhum destinatario ativo vinculado a rotina.');
@@ -1143,6 +1175,10 @@ function whatsappMensagemRotina(PDO $pdo, array $rotina): array
 
         if ($gerador === 'unimed_responsaveis_pdf') {
             return [whatsappMensagemUnimedPreview($pdo, $empresaId), null];
+        }
+
+        if ($gerador === 'analise_performance_pdf') {
+            return [whatsappMensagemAnalisePerformancePreview($pdo, $empresaId), null];
         }
 
         if ($gerador === 'apresentacao_caixa' || $gerador === 'apresentacao_caixa_1') {
@@ -1584,6 +1620,72 @@ function whatsappEnviarFechamentoComprasClientesPdf(PDO $pdo, array $config, arr
         $pdfResultado = whatsappSendDocument($pdo, $config, $destinatario, 'PDF fechamento compras: ' . $nomeArquivo, $arquivo, $nomeArquivo, $usuarioId, (int)$rotina['id']);
 
         if ($textoResultado['status'] === 'OK' && $pdfResultado['status'] === 'OK') {
+            $ok++;
+        } else {
+            $falha++;
+        }
+    }
+
+    return ['ok' => $ok, 'falha' => $falha];
+}
+
+function whatsappMensagemAnalisePerformancePreview(PDO $pdo, int $empresaId): string
+{
+    $inicio = date('Y-m-01');
+    $fim = max($inicio, date('Y-m-d', strtotime('-1 day')));
+
+    $msg = "*ANALISE DE PERFORMANCE*\n\n";
+    $msg .= 'Empresa: ' . whatsappNomeEmpresa($pdo, $empresaId) . "\n";
+    $msg .= 'Periodo: ' . date('d/m/Y', strtotime($inicio)) . ' a ' . date('d/m/Y', strtotime($fim)) . "\n\n";
+    $msg .= 'Segue o relatorio completo de metas e desempenho de vendas.';
+    return $msg;
+}
+
+function whatsappEnviarAnalisePerformancePdf(PDO $pdo, array $config, array $rotina, string $mensagem, ?int $usuarioId): array
+{
+    $empresaId = (int)($rotina['empresa_id'] ?? 1);
+    $rotinaId = (int)$rotina['id'];
+
+    if (($rotina['evitar_duplicidade_diaria'] ?? 'N') === 'S') {
+        $stmt = $pdo->prepare("
+            SELECT COUNT(*)
+            FROM whatsapp_envios
+            WHERE empresa_id = ?
+              AND rotina_id = ?
+              AND status = 'OK'
+              AND enviado_em >= CURDATE()
+              AND enviado_em < DATE_ADD(CURDATE(), INTERVAL 1 DAY)
+        ");
+        $stmt->execute([$empresaId, $rotinaId]);
+        if ((int)$stmt->fetchColumn() > 0) {
+            return ['ok' => 0, 'falha' => 0, 'ignorado' => 1, 'motivo' => 'Analise de Performance ja enviada hoje'];
+        }
+    }
+
+    $destinatarios = whatsappDestinatariosRotina($pdo, $rotinaId);
+    if (!$destinatarios) {
+        throw new Exception('Nenhum destinatario ativo vinculado a rotina.');
+    }
+
+    require_once __DIR__ . '/../fechamentodecaixa/metas_vendas_pdf_lib.php';
+    $nomeArquivo = 'Analise_Performance.pdf';
+    $arquivo = dirname(__DIR__, 2) . '/storage/whatsapp_performance/empresa_' . $empresaId . '/' . $nomeArquivo;
+    metasVendasGerarPdf($empresaId, [], $arquivo);
+
+    $ok = 0;
+    $falha = 0;
+    foreach ($destinatarios as $destinatario) {
+        $envio = whatsappSendDocument(
+            $pdo,
+            $config,
+            $destinatario,
+            $mensagem,
+            $arquivo,
+            $nomeArquivo,
+            $usuarioId,
+            $rotinaId
+        );
+        if ($envio['status'] === 'OK') {
             $ok++;
         } else {
             $falha++;
