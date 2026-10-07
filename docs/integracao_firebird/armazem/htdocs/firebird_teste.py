@@ -750,8 +750,7 @@ def dados_cr001():
         sql = f"""
             SELECT *
             FROM CR001
-            WHERE DTVENDA >= '2026-01-01'
-              AND REGSTAMP > '{ultima_regstamp}'
+            WHERE REGSTAMP > '{ultima_regstamp}'
             ORDER BY REGSTAMP
         """
 

@@ -137,8 +137,8 @@ def processar_tabela(nome, url_api, tabela_php, forcar_completo=False):
         if len(dados) > 0:
             url_php = f"{BASE_SITE}/modulos/tesouraria/receber_firebird.php"
 
-            if tabela_php == "est007":
-                tamanho_lote = 10000
+            if tabela_php in ("cr001", "est007"):
+                tamanho_lote = 1000 if tabela_php == "cr001" else 10000
                 total_enviado = 0
 
                 for i in range(0, len(dados), tamanho_lote):
@@ -150,6 +150,18 @@ def processar_tabela(nome, url_api, tabela_php, forcar_completo=False):
                     envio.raise_for_status()
 
                     resposta_texto = envio.text
+
+                    if tabela_php == "cr001":
+                        try:
+                            resposta_json = envio.json()
+                        except ValueError as exc:
+                            raise Exception("Resposta invalida do SuperDunga ao enviar CR001") from exc
+
+                        processados = resposta_json.get("processados")
+                        if resposta_json.get("status") != "ok" or processados != len(lote):
+                            raise Exception(
+                                f"CR001 incompleto no lote: enviados {len(lote)}, processados {processados}"
+                            )
 
                     print("Resposta do servidor:")
                     print(resposta_texto)

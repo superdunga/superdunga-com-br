@@ -134,8 +134,8 @@ def processar_tabela(nome, url_api, tabela_php, forcar_completo=False):
         if len(dados) > 0:
             url_php = f"{BASE_SITE}/modulos/tesouraria/receber_firebird.php"
 
-            if tabela_php == "est007":
-                tamanho_lote = 10000
+            if tabela_php in ("cr001", "est007"):
+                tamanho_lote = 1000 if tabela_php == "cr001" else 10000
                 total_enviado = 0
 
                 for i in range(0, len(dados), tamanho_lote):
@@ -144,7 +144,14 @@ def processar_tabela(nome, url_api, tabela_php, forcar_completo=False):
                     print(f"Enviando lote {i // tamanho_lote + 1} com {len(lote)} registros...")
 
                     envio = requests.post(url_php, params=params_site({"tabela": tabela_php}), json=aplicar_empresa_lista(lote), timeout=600)
-                    validar_resposta_envio(envio)
+                    resposta_json = validar_resposta_envio(envio)
+
+                    if tabela_php == "cr001":
+                        processados = resposta_json.get("processados") if isinstance(resposta_json, dict) else None
+                        if not isinstance(resposta_json, dict) or resposta_json.get("status") != "ok" or processados != len(lote):
+                            raise RuntimeError(
+                                f"CR001 incompleto no lote: enviados {len(lote)}, processados {processados}"
+                            )
 
                     resposta_texto = envio.text
 
