@@ -538,6 +538,8 @@ garantirTabelaParametrosFolha($pdo_master);
 $referencia = $_REQUEST['referencia'] ?? date('Y-m');
 $exportarFolha = strtolower((string)($_GET['exportar'] ?? ''));
 $funcionarioExportarFolha = (int)($_GET['funcionario'] ?? 0);
+$imprimirFolha = !empty($_GET['imprimir']);
+$funcionarioImprimirFolha = (int)($_GET['imprimir_funcionario'] ?? 0);
 $acaoFolha = ($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST' ? (string)($_POST['acao'] ?? '') : '';
 $gerarRecibos = in_array($acaoFolha, ['gerar', 'salvar'], true);
 $salvarRecibos = $acaoFolha === 'salvar';
@@ -815,9 +817,17 @@ if ($gerarRecibos && empty($errosFolha)) {
         $totalComprasAberto = array_sum(array_map(static function ($c) {
             return (float)($c['VLRRESTANTE'] ?? $c['VLRPARCELA'] ?? 0);
         }, $comprasAberto));
-        $totalComprasPagas = array_sum(array_map(static function ($c) {
+        $totalComprasPagasCrap = array_sum(array_map(static function ($c) {
             return (float)($c['VLRPAGO'] ?? $c['VLRPARCELA'] ?? 0);
         }, $comprasPagas));
+        $totalComprasPagasVenda = array_sum(array_map(static function ($c) {
+            return (float)($c['VLRPAGO'] ?? $c['VLRPARCELA'] ?? 0);
+        }, $comprasPagasVenda));
+        // O CRAP consolida titulos de VENDA baixados na mesma operacao.
+        // Quando existir, ele representa sozinho o recebimento para evitar desconto duplicado.
+        $totalComprasPagas = abs($totalComprasPagasCrap) >= 0.005
+            ? $totalComprasPagasCrap
+            : $totalComprasPagasVenda;
 
         $temVencimentoInformado = abs($salarioLiquido) >= 0.005 || abs($premiacao) >= 0.005 || abs($outrosValores) >= 0.005;
         $temDescontoFirebird = abs($totalVales) >= 0.005 || abs($totalComprasAberto) >= 0.005 || abs($totalComprasPagas) >= 0.005;
@@ -866,14 +876,14 @@ if ($gerarRecibos && empty($errosFolha)) {
         $descontos = $descontosVales;
         if (abs($totalComprasPagas) >= 0.005) {
             $descontos[] = [
-                'codigo' => 'CR PAGO',
-                'descricao' => 'CRAP pago na data do pagamento',
+                'codigo' => 'COMPRAS',
+                'descricao' => 'Recebimentos na data do pagamento',
                 'referencia' => dataFolha($dataPagamento),
                 'valor' => $totalComprasPagas,
             ];
         } else {
             $descontos[] = [
-                'codigo' => 'CR ABERTO',
+                'codigo' => 'COMPRAS',
                 'descricao' => 'Total de titulos em aberto',
                 'referencia' => count($comprasAberto) . ' titulo(s)',
                 'valor' => $totalComprasAberto,
@@ -1010,7 +1020,15 @@ if (in_array($exportarFolha, ['pdf', 'csv'], true)) {
     if ($exportarFolha === 'csv') {
         exportarCsvFolhaPagamento($recibos, $referencia, $dataPagamento, $empresaId);
     }
-    gerarPdfFolhaPagamento($recibos, $referencia, $dataPagamento, $empresaNomeFolha, $empresaRazaoFolha, $empresaCnpjFolha, $empresaId, $funcionarioExportarFolha);
+    // Mantem links antigos funcionando, mas usa o mesmo recibo HTML da tela.
+    $destinoImpressao = 'folha_pagamento.php?referencia=' . rawurlencode($referencia);
+    if ($funcionarioExportarFolha > 0) {
+        $destinoImpressao .= '&imprimir_funcionario=' . $funcionarioExportarFolha;
+    } else {
+        $destinoImpressao .= '&imprimir=1';
+    }
+    header('Location: ' . $destinoImpressao);
+    exit;
 }
 
 require '../../layout/header.php';
@@ -1483,11 +1501,9 @@ require '../../layout/header.php';
             <?php endif; ?>
         </div>
         <div class="d-flex flex-wrap gap-2">
+            <button type="button" class="btn btn-outline-primary" onclick="imprimirTodosRecibosFolha()">Imprimir todos</button>
             <?php if ($folhaCarregadaSalva || $salvarRecibos): ?>
-                <a href="folha_pagamento.php?referencia=<?= urlencode($referencia) ?>&exportar=pdf" class="btn btn-outline-danger">Baixar PDF</a>
                 <a href="folha_pagamento.php?referencia=<?= urlencode($referencia) ?>&exportar=csv" class="btn btn-outline-success">Baixar CSV</a>
-            <?php else: ?>
-                <button type="button" class="btn btn-outline-primary" onclick="imprimirTodosRecibosFolha()">Imprimir todos</button>
             <?php endif; ?>
         </div>
     </section>
@@ -1495,24 +1511,19 @@ require '../../layout/header.php';
     <?php foreach ($recibos as $indiceRecibo => $recibo): ?>
         <?php $funcionario = $recibo['funcionario']; ?>
         <?php $reciboHtmlId = 'recibo-folha-' . (int)$funcionario['FUNCCONTADOR'] . '-' . (int)$indiceRecibo; ?>
-        <article class="recibo-folha" id="<?= htmlspecialchars($reciboHtmlId) ?>">
+        <article
+            class="recibo-folha"
+            id="<?= htmlspecialchars($reciboHtmlId) ?>"
+            data-funcionario="<?= (int)$funcionario['FUNCCONTADOR'] ?>"
+        >
             <div class="recibo-acoes no-print">
-                <?php if ($folhaCarregadaSalva || $salvarRecibos): ?>
-                    <a
-                        class="btn btn-sm btn-outline-danger"
-                        href="folha_pagamento.php?referencia=<?= urlencode($referencia) ?>&exportar=pdf&funcionario=<?= (int)$funcionario['FUNCCONTADOR'] ?>"
-                    >
-                        Baixar PDF deste recibo
-                    </a>
-                <?php else: ?>
-                    <button
-                        type="button"
-                        class="btn btn-sm btn-outline-primary"
-                        onclick="imprimirReciboFuncionario('<?= htmlspecialchars($reciboHtmlId) ?>')"
-                    >
-                        Imprimir este recibo
-                    </button>
-                <?php endif; ?>
+                <button
+                    type="button"
+                    class="btn btn-sm btn-outline-primary"
+                    onclick="imprimirReciboFuncionario('<?= htmlspecialchars($reciboHtmlId) ?>')"
+                >
+                    Imprimir este recibo
+                </button>
             </div>
             <div class="recibo-topo">
                 <div>
@@ -1661,6 +1672,19 @@ require '../../layout/header.php';
                 recibo.classList.remove('recibo-imprimir');
             }, 500);
         }
+
+        <?php if ($imprimirFolha): ?>
+            window.addEventListener('load', function () {
+                imprimirTodosRecibosFolha();
+            });
+        <?php elseif ($funcionarioImprimirFolha > 0): ?>
+            window.addEventListener('load', function () {
+                var recibo = document.querySelector('[data-funcionario="<?= (int)$funcionarioImprimirFolha ?>"]');
+                if (recibo) {
+                    imprimirReciboFuncionario(recibo.id);
+                }
+            });
+        <?php endif; ?>
     </script>
 <?php endif; ?>
 
