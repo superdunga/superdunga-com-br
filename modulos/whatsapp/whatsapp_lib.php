@@ -383,6 +383,47 @@ function whatsappEnsureTables(PDO $pdo): void
     } catch (Throwable $e) {
     }
 
+    try {
+        $empresaIdsTesouraria = $pdo->query("
+            SELECT e.id
+            FROM empresas e
+            WHERE NOT EXISTS (
+                SELECT 1
+                FROM empresa_modulos em_config
+                WHERE em_config.empresa_id = e.id
+            )
+               OR EXISTS (
+                SELECT 1
+                FROM empresa_modulos em
+                INNER JOIN sistema_modulos sm ON sm.id = em.modulo_id
+                WHERE em.empresa_id = e.id
+                  AND em.ativo = 'S'
+                  AND sm.ativo = 'S'
+                  AND sm.grupo = 'Tesouraria'
+            )
+            ORDER BY e.id
+        ")->fetchAll(PDO::FETCH_COLUMN);
+
+        $stmt = $pdo->prepare("
+            INSERT INTO whatsapp_rotinas
+                (empresa_id, codigo, nome, descricao, mensagem_id, origem_mensagem, gerador_sistema, ativo, evitar_duplicidade_diaria, periodicidade, horario, dias_semana, proxima_execucao)
+            VALUES
+                (?, 'inventario_tesouraria', 'Inventario atual da Tesouraria', 'Envia o estoque atual de cedulas e moedas da tesouraria.', NULL, 'SISTEMA', 'inventario_tesouraria', 'N', 'S', 'MANUAL', '08:00:00', '1,2,3,4,5', NULL)
+            ON DUPLICATE KEY UPDATE
+                nome = VALUES(nome),
+                descricao = VALUES(descricao),
+                mensagem_id = NULL,
+                origem_mensagem = 'SISTEMA',
+                gerador_sistema = 'inventario_tesouraria',
+                evitar_duplicidade_diaria = 'S'
+        ");
+        foreach ($empresaIdsTesouraria as $empresaRotinaId) {
+            $stmt->execute([(int)$empresaRotinaId]);
+        }
+    } catch (Throwable $e) {
+        // Instalacoes antigas podem ainda nao ter o controle de modulos criado.
+    }
+
     $empresaIds = $pdo->query("SELECT id FROM empresas ORDER BY id")->fetchAll(PDO::FETCH_COLUMN);
     $stmt = $pdo->prepare("
         INSERT IGNORE INTO whatsapp_rotinas
@@ -566,6 +607,12 @@ function whatsappGeradoresSistema(): array
             'arquivo' => 'modulos/whatsapp/whatsapp_lib.php',
             'funcao' => 'whatsappMensagemReposicaoTesouraria',
         ],
+        'inventario_tesouraria' => [
+            'nome' => 'Inventario atual da Tesouraria',
+            'descricao' => 'Mostra cedulas, moedas, totais e itens abaixo do estoque minimo da empresa.',
+            'arquivo' => 'modulos/whatsapp/whatsapp_lib.php',
+            'funcao' => 'whatsappMensagemInventarioTesouraria',
+        ],
         'alerta_cupons_fiscais' => [
             'nome' => 'Alerta de cupons fiscais',
             'descricao' => 'Envia alerta quando os recebiveis do dia superam cupons e notas fiscais.',
@@ -589,6 +636,7 @@ function whatsappRotinaGerenciada(string $codigo): bool
         'unimed_responsaveis_pdf',
         'analise_performance_pdf',
         'reposicao_tesouraria',
+        'inventario_tesouraria',
         'alerta_cupons_fiscais',
     ], true);
 }
@@ -660,6 +708,96 @@ function whatsappMensagemReposicaoTesouraria(PDO $pdo, int $empresaId): string
     $mensagem .= $quantidadeTotal . " unidade(s) para reposicao\n";
     $mensagem .= "Valor estimado: R$ " . number_format($valorTotal, 2, ',', '.') . "\n\n";
     $mensagem .= "Favor providenciar a reposicao da tesouraria.";
+    return $mensagem;
+}
+
+function whatsappInventarioTesouraria(PDO $pdo, int $empresaId): array
+{
+    $stmt = $pdo->prepare("
+        SELECT COUNT(*)
+        FROM tesouraria_movimentacoes_detalhes d
+        INNER JOIN tesouraria_movimentacoes m ON m.id = d.movimentacao_id
+        WHERE m.empresa_id = ?
+    ");
+    $stmt->execute([$empresaId]);
+    $disponivel = (int)$stmt->fetchColumn() > 0;
+
+    $grupos = ['CEDULA' => [], 'MOEDA' => []];
+    $alertas = [];
+    $totais = ['CEDULA' => 0.0, 'MOEDA' => 0.0, 'GERAL' => 0.0];
+    foreach (listarEstoqueMinimo($pdo, $empresaId) as $item) {
+        $tipo = strtoupper((string)$item['tipo']) === 'MOEDA' ? 'MOEDA' : 'CEDULA';
+        $atual = (int)$item['quantidade_atual'];
+        $minimo = max(0, (int)$item['quantidade_minima']);
+        $valorTotal = $atual * (float)$item['valor'];
+
+        $item['quantidade_atual'] = $atual;
+        $item['quantidade_minima'] = $minimo;
+        $item['valor_total'] = $valorTotal;
+        if ($atual !== 0) {
+            $grupos[$tipo][] = $item;
+        }
+
+        $totais[$tipo] += $valorTotal;
+        $totais['GERAL'] += $valorTotal;
+
+        if ($minimo > 0 && $atual < $minimo) {
+            $item['quantidade_repor'] = $minimo - $atual;
+            $alertas[] = $item;
+        }
+    }
+
+    return [
+        'disponivel' => $disponivel,
+        'grupos' => $grupos,
+        'alertas' => $alertas,
+        'totais' => $totais,
+    ];
+}
+
+function whatsappMensagemInventarioTesouraria(PDO $pdo, int $empresaId): string
+{
+    $inventario = whatsappInventarioTesouraria($pdo, $empresaId);
+    $empresa = whatsappNomeEmpresa($pdo, $empresaId);
+    $mensagem = "*INVENTARIO ATUAL DA TESOURARIA*\n\n";
+    $mensagem .= "Empresa: {$empresa}\n";
+    $mensagem .= "Atualizado em: " . date('d/m/Y H:i') . "\n";
+
+    if (!$inventario['disponivel']) {
+        return $mensagem . "\nNao ha movimentacoes de estoque da tesouraria para esta empresa.\n"
+            . "Esta verificacao nao gera envio.";
+    }
+
+    foreach (['CEDULA' => 'CEDULAS', 'MOEDA' => 'MOEDAS'] as $tipo => $titulo) {
+        $mensagem .= "\n*{$titulo}*\n";
+        if (empty($inventario['grupos'][$tipo])) {
+            $mensagem .= "Nenhuma unidade em estoque.\n";
+        } else {
+            foreach ($inventario['grupos'][$tipo] as $item) {
+                $mensagem .= (string)$item['descricao'] . ': '
+                    . (int)$item['quantidade_atual'] . ' un. = R$ '
+                    . number_format((float)$item['valor_total'], 2, ',', '.') . "\n";
+            }
+        }
+        $mensagem .= 'Total em ' . strtolower($titulo) . ': R$ '
+            . number_format((float)$inventario['totais'][$tipo], 2, ',', '.') . "\n";
+    }
+
+    $mensagem .= "\n*TOTAL GERAL: R$ "
+        . number_format((float)$inventario['totais']['GERAL'], 2, ',', '.') . "*\n";
+    $mensagem .= "\n*ESTOQUE MINIMO*\n";
+    if (empty($inventario['alertas'])) {
+        $mensagem .= "Todos os itens estao dentro do minimo configurado.";
+    } else {
+        foreach ($inventario['alertas'] as $item) {
+            $mensagem .= '- ' . (string)$item['descricao']
+                . ': atual ' . (int)$item['quantidade_atual']
+                . ', minimo ' . (int)$item['quantidade_minima']
+                . ', faltam ' . (int)$item['quantidade_repor'] . "\n";
+        }
+        $mensagem = rtrim($mensagem);
+    }
+
     return $mensagem;
 }
 
@@ -1003,6 +1141,29 @@ function whatsappEnviarRotina(PDO $pdo, array $rotina, string $mensagem, ?int $m
         }
     }
 
+    if (($rotina['origem_mensagem'] ?? 'TEXTO') === 'SISTEMA' && ($rotina['gerador_sistema'] ?? '') === 'inventario_tesouraria') {
+        $inventario = whatsappInventarioTesouraria($pdo, $empresaId);
+        if (!$inventario['disponivel']) {
+            return ['ok' => 0, 'falha' => 0, 'ignorado' => 1, 'motivo' => 'Sem dados de estoque da tesouraria'];
+        }
+
+        if (($rotina['evitar_duplicidade_diaria'] ?? 'N') === 'S') {
+            $stmt = $pdo->prepare("
+                SELECT COUNT(*)
+                FROM whatsapp_envios
+                WHERE empresa_id = ?
+                  AND rotina_id = ?
+                  AND status = 'OK'
+                  AND enviado_em >= CURDATE()
+                  AND enviado_em < DATE_ADD(CURDATE(), INTERVAL 1 DAY)
+            ");
+            $stmt->execute([$empresaId, (int)$rotina['id']]);
+            if ((int)$stmt->fetchColumn() > 0) {
+                return ['ok' => 0, 'falha' => 0, 'ignorado' => 1, 'motivo' => 'Inventario da tesouraria ja enviado hoje'];
+            }
+        }
+    }
+
     if (($rotina['origem_mensagem'] ?? 'TEXTO') === 'SISTEMA' && ($rotina['gerador_sistema'] ?? '') === 'fechamento_compras_clientes_pdf') {
         $resultado = whatsappEnviarFechamentoComprasClientesPdf($pdo, $config, $rotina, $usuarioId);
         $stmt = $pdo->prepare("UPDATE whatsapp_rotinas SET ultima_execucao = NOW() WHERE id = ?");
@@ -1191,6 +1352,10 @@ function whatsappMensagemRotina(PDO $pdo, array $rotina): array
 
         if ($gerador === 'reposicao_tesouraria') {
             return [whatsappMensagemReposicaoTesouraria($pdo, $empresaId), null];
+        }
+
+        if ($gerador === 'inventario_tesouraria') {
+            return [whatsappMensagemInventarioTesouraria($pdo, $empresaId), null];
         }
 
         if ($gerador === 'alerta_cupons_fiscais') {
