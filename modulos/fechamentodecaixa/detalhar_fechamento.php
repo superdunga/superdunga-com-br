@@ -624,11 +624,12 @@ require '../../layout/header.php';
             <thead class="table-dark">
                 <tr>
                     <th>Venda</th>
-                    <th>Data/Hora</th>
+                    <th class="text-nowrap">Data/Hora</th>
                     <th>CM</th>
-                    <th>Cliente</th>
+                    <th class="text-center text-nowrap" style="width: 1%;">CL</th>
                     <th>Nome do Cliente</th>
                     <th>Valor</th>
+                    <th>Conciliação</th>
                     <th>Detalhe</th>
                 </tr>
             </thead>
@@ -636,7 +637,7 @@ require '../../layout/header.php';
 
 <?php
 if (empty($vendasRelatorio)) {
-    echo '<tr><td colspan="7" class="text-center text-muted">Nenhuma venda encontrada para o filtro informado.</td></tr>';
+    echo '<tr><td colspan="8" class="text-center text-muted">Nenhuma venda encontrada para o filtro informado.</td></tr>';
 }
 
 foreach ($vendasRelatorio as $v) {
@@ -645,30 +646,44 @@ foreach ($vendasRelatorio as $v) {
     $collapseRecebiveisId = 'recebiveis-venda-' . $vendaId;
     $itens = $itensPorVenda[$vendaId] ?? [];
     $recebiveis = $recebiveisPorVenda[$vendaId] ?? [];
+    $quantidadeRecebiveis = count($recebiveis);
+    $recebiveisConciliados = array_values(array_filter($recebiveis, static function ($recebivel) {
+        return !empty($recebivel['recebimento_id']);
+    }));
+    $quantidadeConciliados = count($recebiveisConciliados);
+    if ($quantidadeRecebiveis === 0) {
+        $conciliacaoClasse = 'secondary';
+        $conciliacaoTexto = 'Nao se aplica';
+    } elseif ($quantidadeConciliados === $quantidadeRecebiveis) {
+        $conciliacaoClasse = 'success';
+        $conciliacaoTexto = 'Conciliada';
+    } elseif ($quantidadeConciliados > 0) {
+        $conciliacaoClasse = 'info';
+        $conciliacaoTexto = 'Parcial ' . $quantidadeConciliados . '/' . $quantidadeRecebiveis;
+    } else {
+        $conciliacaoClasse = 'warning';
+        $conciliacaoTexto = 'Nao';
+    }
 ?>
 <tr>
     <td><?= $vendaId ?></td>
-    <td><?= !empty($v['DTLANC']) ? date('d/m/Y H:i', strtotime($v['DTLANC'])) : '' ?></td>
+    <td class="text-nowrap"><?= !empty($v['DTLANC']) ? date('d/m/Y H:i', strtotime($v['DTLANC'])) : '' ?></td>
     <td><?= htmlspecialchars($v['CMCONTADOR'] ?? '') ?></td>
-    <td><?= htmlspecialchars($v['CLIENTE'] ?? '') ?></td>
+    <td class="text-center text-nowrap" style="width: 1%;"><?= htmlspecialchars($v['CLIENTE'] ?? '') ?></td>
     <td><?= htmlspecialchars($v['nome_cliente'] ?? '') ?></td>
     <td>R$ <?= number_format((float)$v['valor'], 2, ',', '.') ?></td>
-    <td>
-        <div class="d-flex gap-1 flex-wrap">
+    <td class="text-nowrap">
+        <span class="badge bg-<?= $conciliacaoClasse ?> text-<?= $conciliacaoClasse === 'warning' ? 'dark' : 'white' ?>">
+            <?= htmlspecialchars($conciliacaoTexto) ?>
+        </span>
+    </td>
+    <td class="text-nowrap">
+        <div class="d-flex gap-1 flex-nowrap">
             <button class="btn btn-sm btn-outline-primary"
                     type="button"
                     data-bs-toggle="collapse"
                     data-bs-target="#<?= $collapseId ?>">
                 Detalhe
-            </button>
-            <button class="btn btn-sm btn-outline-dark"
-                    type="button"
-                    data-bs-toggle="collapse"
-                    data-bs-target="#<?= $collapseRecebiveisId ?>"
-                    aria-controls="<?= $collapseRecebiveisId ?>"
-                    aria-expanded="false"
-                    title="Ver contas a receber da venda">
-                &#128269;
             </button>
             <a
                 href="detalhar_fechamento.php?data=<?= urlencode($data) ?>&user=<?= urlencode($usuario) ?>&exportar_vendas=pdf&venda=<?= $vendaId ?>"
@@ -676,11 +691,20 @@ foreach ($vendasRelatorio as $v) {
             >
                 PDF
             </a>
+            <button class="btn btn-sm btn-outline-dark"
+                    type="button"
+                    data-bs-toggle="collapse"
+                    data-bs-target="#<?= $collapseRecebiveisId ?>"
+                    aria-controls="<?= $collapseRecebiveisId ?>"
+                    aria-expanded="false"
+                title="Ver contas a receber da venda">
+                &#128269;
+            </button>
         </div>
     </td>
 </tr>
 <tr class="collapse" id="<?= $collapseRecebiveisId ?>">
-    <td colspan="7" class="bg-light">
+    <td colspan="8" class="bg-light">
         <div class="fw-semibold mb-2">Contas a receber da venda <?= $vendaId ?></div>
         <?php if (empty($recebiveis)): ?>
             <div class="text-muted small">Nenhum lancamento de contas a receber encontrado para esta venda.</div>
@@ -725,7 +749,7 @@ foreach ($vendasRelatorio as $v) {
     </td>
 </tr>
 <tr class="collapse" id="<?= $collapseId ?>">
-    <td colspan="7" class="bg-light">
+    <td colspan="8" class="bg-light">
         <?php if (empty($itens)): ?>
             <div class="text-muted small">Nenhum item encontrado para esta venda.</div>
         <?php else: ?>
@@ -765,7 +789,7 @@ foreach ($vendasRelatorio as $v) {
 <tr class="table-secondary fw-bold">
     <td colspan="5">Total</td>
     <td>R$ <?php echo number_format($total_venda_relatorio, 2, ',', '.'); ?></td>
-    <td></td>
+    <td colspan="2"></td>
 </tr>
 
             </tbody>
