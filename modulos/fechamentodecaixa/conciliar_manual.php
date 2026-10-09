@@ -109,6 +109,7 @@ $stmtCr = $pdo_master->prepare("
         c.VLRPARCELA,
         c.CMCONTADOR,
         CASE
+            WHEN DATE_FORMAT(c.DTLANC, '%Y-%m-%d %H:%i') = DATE_FORMAT(?, '%Y-%m-%d %H:%i') THEN -1
             WHEN DATE(c.DTEMISSAO) = DATE(?) AND c.CMCONTADOR = ? THEN 0
             WHEN DATE(c.DTVENDA) = DATE(?) AND c.CMCONTADOR = ? THEN 1
             WHEN DATE(c.DTEMISSAO) = DATE(?) THEN 2
@@ -117,6 +118,7 @@ $stmtCr = $pdo_master->prepare("
             ELSE 5
         END AS prioridade_match,
         CASE
+            WHEN DATE_FORMAT(c.DTLANC, '%Y-%m-%d %H:%i') = DATE_FORMAT(?, '%Y-%m-%d %H:%i') THEN 'Match seguro'
             WHEN DATE(c.DTEMISSAO) = DATE(?) THEN 'Data movimento'
             WHEN DATE(c.DTVENDA) = DATE(?) THEN 'Data venda'
             WHEN c.DTLANC BETWEEN ? AND ? THEN 'Data lancamento'
@@ -148,6 +150,7 @@ $stmtCr = $pdo_master->prepare("
 
 $stmtCr->execute([
     $rec['data_venda'],
+    $rec['data_venda'],
     $rec['CMCONTADOR'],
     $rec['data_venda'],
     $rec['CMCONTADOR'],
@@ -155,6 +158,7 @@ $stmtCr->execute([
     $rec['data_venda'],
     $inicio,
     $fim,
+    $rec['data_venda'],
     $rec['data_venda'],
     $rec['data_venda'],
     $inicio,

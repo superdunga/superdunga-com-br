@@ -23,21 +23,9 @@ $stmtPendSistema = $pdo_master->prepare("
             AND COALESCE(c.excluido_firebird, 'N') = 'N'
             AND COALESCE(c.STATUS, '') <> 'QT'
       )
-      AND NOT EXISTS (
-          SELECT 1
-          FROM armazem_cr001 c
-          WHERE ABS(r.valor_bruto) = ABS(c.VLRPARCELA)
-            AND ABS(TIMESTAMPDIFF(MINUTE, r.data_venda, c.DTLANC)) <= 5
-            AND c.DTLANC BETWEEN ? AND ?
-            AND c.EMPRESA = ?
-            AND c.recebimento_id IS NULL
-            AND (c.validado IS NULL OR c.validado <> 'S')
-            AND COALESCE(c.excluido_firebird, 'N') = 'N'
-            AND COALESCE(c.STATUS, '') <> 'QT'
-      )
     ORDER BY r.data_venda ASC, r.id ASC
 ");
-$stmtPendSistema->execute([$inicio, $fim, $empresa_id, $empresa_id, $inicio, $fim, $empresa_id]);
+$stmtPendSistema->execute([$inicio, $fim, $empresa_id, $empresa_id]);
 $pendentesSistema = $stmtPendSistema->fetchAll(PDO::FETCH_ASSOC);
 
 $stmtPendCR = $pdo_master->prepare("
@@ -54,26 +42,9 @@ $stmtPendCR = $pdo_master->prepare("
       AND c.recebimento_id IS NULL
       AND COALESCE(c.STATUS, '') <> 'QT'
       AND COALESCE(c.excluido_firebird, 'N') = 'N'
-      AND NOT EXISTS (
-          SELECT 1
-          FROM armazem_conciliacao_recebimentos r
-          WHERE ABS(r.valor_bruto) = ABS(c.VLRPARCELA)
-            AND r.empresa_id = ?
-            AND r.CRCONTADOR IS NULL
-            AND ABS(TIMESTAMPDIFF(MINUTE, r.data_venda, c.DTLANC)) <= 5
-            AND r.data_venda BETWEEN ? AND ?
-            AND NOT EXISTS (
-                SELECT 1
-                FROM armazem_cr001 cx
-                WHERE cx.recebimento_id = r.id
-                  AND cx.EMPRESA = ?
-                  AND COALESCE(cx.excluido_firebird, 'N') = 'N'
-                  AND COALESCE(cx.STATUS, '') <> 'QT'
-            )
-      )
     ORDER BY c.DTLANC ASC, c.CRCONTADOR ASC
 ");
-$stmtPendCR->execute([$inicio, $fim, $empresa_id, $empresa_id, $inicio, $fim, $empresa_id]);
+$stmtPendCR->execute([$inicio, $fim, $empresa_id]);
 $pendentesCR001 = $stmtPendCR->fetchAll(PDO::FETCH_ASSOC);
 
 $stmtExcluidosCR = $pdo_master->prepare("

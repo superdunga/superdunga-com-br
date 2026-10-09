@@ -646,20 +646,26 @@ foreach ($vendasRelatorio as $v) {
     $collapseRecebiveisId = 'recebiveis-venda-' . $vendaId;
     $itens = $itensPorVenda[$vendaId] ?? [];
     $recebiveis = $recebiveisPorVenda[$vendaId] ?? [];
-    $quantidadeRecebiveis = count($recebiveis);
-    $recebiveisConciliados = array_values(array_filter($recebiveis, static function ($recebivel) {
+    $recebiveisAbertos = array_values(array_filter($recebiveis, static function ($recebivel) {
+        return strtoupper(trim((string)($recebivel['STATUS'] ?? ''))) !== 'QT';
+    }));
+    $quantidadeRecebiveisAbertos = count($recebiveisAbertos);
+    $recebiveisConciliados = array_values(array_filter($recebiveisAbertos, static function ($recebivel) {
         return !empty($recebivel['recebimento_id']);
     }));
     $quantidadeConciliados = count($recebiveisConciliados);
-    if ($quantidadeRecebiveis === 0) {
+    if (empty($recebiveis)) {
         $conciliacaoClasse = 'secondary';
         $conciliacaoTexto = 'Nao se aplica';
-    } elseif ($quantidadeConciliados === $quantidadeRecebiveis) {
+    } elseif ($quantidadeRecebiveisAbertos === 0) {
+        $conciliacaoClasse = 'secondary';
+        $conciliacaoTexto = 'Quitada';
+    } elseif ($quantidadeConciliados === $quantidadeRecebiveisAbertos) {
         $conciliacaoClasse = 'success';
         $conciliacaoTexto = 'Conciliada';
     } elseif ($quantidadeConciliados > 0) {
         $conciliacaoClasse = 'info';
-        $conciliacaoTexto = 'Parcial ' . $quantidadeConciliados . '/' . $quantidadeRecebiveis;
+        $conciliacaoTexto = 'Parcial ' . $quantidadeConciliados . '/' . $quantidadeRecebiveisAbertos;
     } else {
         $conciliacaoClasse = 'warning';
         $conciliacaoTexto = 'Nao';
@@ -724,7 +730,12 @@ foreach ($vendasRelatorio as $v) {
                     </thead>
                     <tbody>
                         <?php foreach ($recebiveis as $recebivel): ?>
-                            <?php $conciliado = !empty($recebivel['recebimento_id']); ?>
+                            <?php
+                            $conciliado = !empty($recebivel['recebimento_id']);
+                            $quitadoFirebird = strtoupper(trim((string)($recebivel['STATUS'] ?? ''))) === 'QT';
+                            $conciliacaoRecebivelClasse = $conciliado ? 'success' : ($quitadoFirebird ? 'secondary' : 'warning');
+                            $conciliacaoRecebivelTexto = $conciliado ? 'Conciliado' : ($quitadoFirebird ? 'Quitado no Firebird' : 'Nao conciliado');
+                            ?>
                             <tr>
                                 <td><?= (int)$recebivel['CRCONTADOR'] ?></td>
                                 <td><?= dataHoraDetalheCaixa($recebivel['DTLANC'] ?? '') ?></td>
@@ -733,8 +744,8 @@ foreach ($vendasRelatorio as $v) {
                                 <td><?= htmlspecialchars((string)($recebivel['STATUS'] ?? '')) ?></td>
                                 <td><?= moedaDetalheCaixa($recebivel['VLRPARCELA'] ?? 0) ?></td>
                                 <td>
-                                    <span class="badge bg-<?= $conciliado ? 'success' : 'warning' ?> text-<?= $conciliado ? 'white' : 'dark' ?>">
-                                        <?= $conciliado ? 'Conciliado' : 'Nao conciliado' ?>
+                                    <span class="badge bg-<?= $conciliacaoRecebivelClasse ?> text-<?= $conciliacaoRecebivelClasse === 'warning' ? 'dark' : 'white' ?>">
+                                        <?= htmlspecialchars($conciliacaoRecebivelTexto) ?>
                                     </span>
                                     <?php if ($conciliado): ?>
                                         <span class="small text-muted ms-1">#<?= (int)$recebivel['recebimento_id'] ?></span>
