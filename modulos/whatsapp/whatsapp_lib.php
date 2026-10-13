@@ -2257,23 +2257,31 @@ function whatsappEnviarUnimedResponsaveisPdf(PDO $pdo, array $config, array $rot
     return $resultado;
 }
 
-function whatsappMensagemResumoDiario(PDO $pdo, int $empresaId = 1): string
+function whatsappMensagemResumoDiario(PDO $pdo, int $empresaId = 1, ?DateTime $base = null): string
 {
     date_default_timezone_set('America/Sao_Paulo');
 
-    $dataBase = date('Y-m-d');
+    $base = $base ?: new DateTime('now');
+    $dataBase = $base->format('Y-m-d');
     $inicio = $dataBase . ' 07:00:00';
     $fim = date('Y-m-d 03:00:00', strtotime($dataBase . ' +1 day'));
 
     $stmt = $pdo->prepare("
-        SELECT SUM(TOTGERAL)
+        SELECT
+            COALESCE(SUM(TOTGERAL), 0) AS vendas,
+            COALESCE(SUM(CASE WHEN CMCONTADOR = 1 THEN TOTGERAL ELSE 0 END), 0) AS vendas_dinheiro,
+            COALESCE(SUM(CASE WHEN CMCONTADOR IN (7, 12) THEN TOTGERAL ELSE 0 END), 0) AS vendas_pix,
+            COALESCE(SUM(CASE WHEN CMCONTADOR IN (3, 6) THEN TOTGERAL ELSE 0 END), 0) AS vendas_debito,
+            COALESCE(SUM(CASE WHEN CMCONTADOR IN (2, 14) THEN TOTGERAL ELSE 0 END), 0) AS vendas_credito,
+            COALESCE(SUM(CASE WHEN CMCONTADOR = 9 THEN TOTGERAL ELSE 0 END), 0) AS vendas_clientes
         FROM armazem_est007
         WHERE DTLANC BETWEEN ? AND ?
           AND EMPRESA = ?
           AND CANCELADO = 'N'
     ");
     $stmt->execute([$inicio, $fim, $empresaId]);
-    $vendas = $stmt->fetchColumn() ?: 0;
+    $resumoVendas = $stmt->fetch(PDO::FETCH_ASSOC) ?: [];
+    $vendas = (float)($resumoVendas['vendas'] ?? 0);
 
     $stmt = $pdo->prepare("
         SELECT SUM(saldo_final) FROM (
@@ -2326,67 +2334,6 @@ function whatsappMensagemResumoDiario(PDO $pdo, int $empresaId = 1): string
     $diferenca = $sistema - $tesouraria;
 
     $stmt = $pdo->prepare("
-        SELECT COALESCE(SUM(r.valor_bruto), 0)
-        FROM armazem_conciliacao_recebimentos r
-        INNER JOIN armazem_cr001 c
-            ON c.recebimento_id = r.id
-        WHERE r.data_venda BETWEEN ? AND ?
-          AND r.empresa_id = ?
-          AND c.DTLANC BETWEEN ? AND ?
-          AND c.EMPRESA = ?
-          AND COALESCE(c.excluido_firebird, 'N') = 'N'
-    ");
-    $stmt->execute([$inicio, $fim, $empresaId, $inicio, $fim, $empresaId]);
-    $totalSistemaRecebiveis = (float)$stmt->fetchColumn();
-
-    $stmt = $pdo->prepare("
-        SELECT COALESCE(SUM(c.VLRPARCELA), 0)
-        FROM armazem_cr001 c
-        INNER JOIN armazem_conciliacao_recebimentos r
-            ON r.id = c.recebimento_id
-        WHERE c.DTLANC BETWEEN ? AND ?
-          AND c.EMPRESA = ?
-          AND r.data_venda BETWEEN ? AND ?
-          AND r.empresa_id = ?
-          AND c.CMCONTADOR <> 9
-          AND NOT (c.CMCONTADOR = 1 AND c.STATUS = 'QT')
-          AND COALESCE(c.excluido_firebird, 'N') = 'N'
-    ");
-    $stmt->execute([$inicio, $fim, $empresaId, $inicio, $fim, $empresaId]);
-    $totalCR001Recebiveis = (float)$stmt->fetchColumn();
-
-    $stmt = $pdo->prepare("
-        SELECT COALESCE(SUM(r.valor_bruto), 0)
-        FROM armazem_conciliacao_recebimentos r
-        WHERE r.data_venda BETWEEN ? AND ?
-          AND r.empresa_id = ?
-          AND NOT EXISTS (
-              SELECT 1
-              FROM armazem_cr001 c
-              WHERE c.recebimento_id = r.id
-                AND c.EMPRESA = ?
-                AND COALESCE(c.excluido_firebird, 'N') = 'N'
-          )
-    ");
-    $stmt->execute([$inicio, $fim, $empresaId, $empresaId]);
-    $totalRecebiveisNaoConciliados = (float)$stmt->fetchColumn();
-
-    $stmt = $pdo->prepare("
-        SELECT COALESCE(SUM(c.VLRPARCELA), 0)
-        FROM armazem_cr001 c
-        WHERE c.DTLANC BETWEEN ? AND ?
-          AND c.EMPRESA = ?
-          AND c.CMCONTADOR <> 9
-          AND c.recebimento_id IS NULL
-          AND NOT (c.CMCONTADOR = 1 AND c.STATUS = 'QT')
-          AND COALESCE(c.excluido_firebird, 'N') = 'N'
-    ");
-    $stmt->execute([$inicio, $fim, $empresaId]);
-    $totalCR001NaoConciliados = (float)$stmt->fetchColumn();
-
-    $diferencaRecebiveis = ($totalSistemaRecebiveis + $totalRecebiveisNaoConciliados) - ($totalCR001Recebiveis + $totalCR001NaoConciliados);
-
-    $stmt = $pdo->prepare("
         SELECT
             v.CLIENTE,
             COALESCE(NULLIF(c.NOME, ''), CONCAT('Cliente ', v.CLIENTE)) AS nome_cliente,
@@ -2401,7 +2348,6 @@ function whatsappMensagemResumoDiario(PDO $pdo, int $empresaId = 1): string
           AND v.CMCONTADOR = 9
         GROUP BY v.CLIENTE, nome_cliente
         ORDER BY total DESC
-        LIMIT 10
     ");
     $stmt->execute([$inicio, $fim, $empresaId]);
     $maioresClientes = $stmt->fetchAll(PDO::FETCH_ASSOC);
@@ -2452,18 +2398,30 @@ function whatsappMensagemResumoDiario(PDO $pdo, int $empresaId = 1): string
     $stmt->execute([$inicio, $fim, $empresaId]);
     $produtosValor = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
-    $msg = "*Resumo do Dia*\n\n";
-    $msg .= date('d/m/Y') . "\n\n";
-    $msg .= "Vendas: R$ " . number_format($vendas, 2, ',', '.') . "\n";
-    $msg .= "Caixa Sistema: R$ " . number_format($sistema, 2, ',', '.') . "\n";
-    $msg .= "Tesouraria: R$ " . number_format($tesouraria, 2, ',', '.') . "\n";
-    $msg .= "Diferenca Caixa: R$ " . number_format($diferenca, 2, ',', '.') . "\n";
-    $msg .= "Diferenca Recebiveis: R$ " . number_format($diferencaRecebiveis, 2, ',', '.') . "\n\n";
-    $msg .= abs((float)$diferenca) < 0.01 && abs((float)$diferencaRecebiveis) < 0.01
-        ? "Caixa e recebiveis conferidos"
-        : "Ha divergencias para conferir";
+    $percentual = static function (float $valor) use ($vendas): float {
+        return abs($vendas) > 0.00001 ? ($valor / $vendas) * 100 : 0.0;
+    };
+    $linhaVenda = static function (string $titulo, float $valor) use ($percentual): string {
+        return $titulo . ": R$ " . number_format($valor, 2, ',', '.')
+            . " - " . number_format($percentual($valor), 2, ',', '.') . "%\n";
+    };
 
-    $msg .= "\n\n*10 Maiores clientes do dia*\n";
+    $msg = "*Resumo do Dia*\n\n";
+    $msg .= $base->format('d/m/Y') . "\n\n";
+    $msg .= "Vendas: R$ " . number_format($vendas, 2, ',', '.') . "\n";
+    $msg .= "Saldo do Caixa em Dinheiro: R$ " . number_format($sistema, 2, ',', '.') . "\n";
+    if (abs((float)$diferenca) >= 0.01) {
+        $msg .= "\nVerificar diferenca no dinheiro\n";
+    }
+
+    $msg .= "\n*Detalhamento do caixa*\n";
+    $msg .= $linhaVenda("Vendas em Dinheiro", (float)($resumoVendas['vendas_dinheiro'] ?? 0));
+    $msg .= $linhaVenda("Vendas PIX", (float)($resumoVendas['vendas_pix'] ?? 0));
+    $msg .= $linhaVenda("Vendas no Debito", (float)($resumoVendas['vendas_debito'] ?? 0));
+    $msg .= $linhaVenda("Vendas no Credito", (float)($resumoVendas['vendas_credito'] ?? 0));
+    $msg .= $linhaVenda("Vendas em Notinhas", (float)($resumoVendas['vendas_clientes'] ?? 0));
+
+    $msg .= "\n*Clientes do dia*\n";
     if (empty($maioresClientes)) {
         $msg .= "Sem vendas CM 9 no periodo\n";
     } else {
@@ -2695,6 +2653,19 @@ function whatsappMensagemApresentacaoCaixa(PDO $pdo, ?DateTime $base = null, int
     $stmt->execute([$inicio, $fim, $empresaId, $empresaId, $inicio, $fim]);
     $caixas = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
+    $stmt = $pdo->prepare("
+        SELECT
+            COALESCE(SUM(CASE WHEN CMCONTADOR = 1 THEN TOTGERAL ELSE 0 END), 0) AS vendas_dinheiro,
+            COALESCE(SUM(CASE WHEN CMCONTADOR NOT IN (1, 9) THEN TOTGERAL ELSE 0 END), 0) AS vendas_cartoes,
+            COALESCE(SUM(CASE WHEN CMCONTADOR = 9 THEN TOTGERAL ELSE 0 END), 0) AS vendas_clientes
+        FROM armazem_est007
+        WHERE EMPRESA = ?
+          AND DTLANC BETWEEN ? AND ?
+          AND CANCELADO = 'N'
+    ");
+    $stmt->execute([$empresaId, $inicio, $fim]);
+    $vendas = $stmt->fetch(PDO::FETCH_ASSOC) ?: [];
+
     $msg = "*Apresentacao do Caixa*\n\n";
     $msg .= "Data: " . $base->format('d/m/Y') . "\n";
 
@@ -2706,9 +2677,13 @@ function whatsappMensagemApresentacaoCaixa(PDO $pdo, ?DateTime $base = null, int
     foreach ($caixas as $caixa) {
         $diferenca = (float)$caixa['diferenca'];
         $msg .= "Operador: " . $caixa['operador'] . "\n";
-        $msg .= "Valor da Diferenca do dinheiro: R$ " . number_format($diferenca, 2, ',', '.') . "\n";
-        $msg .= "Valor do Fechamento: R$ " . number_format((float)($caixa['valor_fechamento'] ?? 0), 2, ',', '.') . "\n\n";
+        $msg .= "Valor da Diferenca no dinheiro: R$ " . number_format($diferenca, 2, ',', '.') . "\n";
+        $msg .= "Valor da Sangria de Fechamento: R$ " . number_format((float)($caixa['valor_fechamento'] ?? 0), 2, ',', '.') . "\n\n";
     }
+
+    $msg .= "Vendas em Dinheiro: R$ " . number_format((float)($vendas['vendas_dinheiro'] ?? 0), 2, ',', '.') . "\n";
+    $msg .= "Vendas em Cartoes: R$ " . number_format((float)($vendas['vendas_cartoes'] ?? 0), 2, ',', '.') . "\n";
+    $msg .= "Vendas em Clientes: R$ " . number_format((float)($vendas['vendas_clientes'] ?? 0), 2, ',', '.') . "\n";
 
     return trim($msg);
 }
