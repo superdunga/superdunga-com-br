@@ -99,6 +99,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['arquivo'])) {
 
                 // DATA
                 $data_formatada = date('Y-m-d H:i:s', strtotime(str_replace('/', '-', $data_venda)));
+                $data_prevista = substr($data_formatada, 0, 10);
 
                 // IDENTIFICADOR
                 $identificador = $transacao;
@@ -130,6 +131,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['arquivo'])) {
                         empresa_id,
                         origem,
                         data_venda,
+                        data_prevista,
                         valor_bruto,
                         valor_desconto,
                         valor_liquido,
@@ -147,7 +149,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['arquivo'])) {
                     ) VALUES (
                         ?,
                         ?,
-                        ?, ?, ?, ?, ?,
+                        ?, ?, ?, ?, ?, ?,
                         ?, ?,
                         1, 1,
                         ?, ?,
@@ -160,6 +162,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['arquivo'])) {
                     $empresa_id,
                     $regraImportacao['origem'],
                     $data_formatada,
+                    $data_prevista,
                     $valor_bruto,
                     $valor_desconto,
                     $valor_liquido,

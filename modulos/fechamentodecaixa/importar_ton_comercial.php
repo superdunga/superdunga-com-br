@@ -92,6 +92,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['arquivo'])) {
             if ($classificacao['cm'] <= 0) {
                 throw new RuntimeException("Linha {$numeroLinha}: CM nao configurado para {$metodo}.");
             }
+            $dataPrevista = substr($dataVenda, 0, 10);
+            if (in_array($classificacao['cm'], [2, 3], true)) {
+                $dataPrevista = date('Y-m-d', strtotime($dataPrevista . ' +1 day'));
+            }
 
             $identificador = 'TON-' . $idTransacao;
             if (isset($registros[$identificador])) {
@@ -102,6 +106,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['arquivo'])) {
             $registros[$identificador] = [
                 'id_transacao' => $idTransacao,
                 'data_venda' => $dataVenda,
+                'data_prevista' => $dataPrevista,
                 'valor_bruto' => $valorBruto,
                 'valor_desconto' => $valorDesconto,
                 'valor_liquido' => $valorLiquido,
@@ -130,12 +135,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['arquivo'])) {
         ");
         $insert = $pdo_master->prepare("
             INSERT INTO armazem_conciliacao_recebimentos (
-                empresa_id, origem, data_venda, valor_bruto, valor_desconto, valor_liquido,
+                empresa_id, origem, data_venda, data_prevista, valor_bruto, valor_desconto, valor_liquido,
                 identificador, descricao, pagador, parcela, total_parcelas, status,
                 arquivo_origem, CMCONTADOR, tipo_operacao, bandeira, nsu_transacao,
                 numero_estabelecimento, id_transacao
             ) VALUES (
-                ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?
+                ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?
             )
         ");
 
@@ -152,6 +157,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['arquivo'])) {
                 $empresa_id,
                 $regraImportacao['origem'],
                 $registro['data_venda'],
+                $registro['data_prevista'],
                 $registro['valor_bruto'],
                 $registro['valor_desconto'],
                 $registro['valor_liquido'],

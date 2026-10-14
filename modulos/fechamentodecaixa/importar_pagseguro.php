@@ -80,6 +80,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['arquivo'])) {
                 UPDATE armazem_conciliacao_recebimentos
                 SET origem = ?,
                     data_venda = ?,
+                    data_prevista = ?,
                     valor_bruto = ?,
                     valor_desconto = 0,
                     valor_liquido = ?,
@@ -118,6 +119,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['arquivo'])) {
                 if ($valor_float <= 0) continue;
 
                 $data_formatada = date('Y-m-d H:i:s', strtotime(str_replace('/', '-', $data)));
+                $data_prevista = substr($data_formatada, 0, 10);
 
                 $identificador = $codigo;
 
@@ -136,6 +138,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['arquivo'])) {
                     $atualizarRecebivelExtrato->execute([
                         $regraImportacao['origem'],
                         $data_formatada,
+                        $data_prevista,
                         $valor_float,
                         $valor_float,
                         $identificador,
@@ -156,6 +159,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['arquivo'])) {
                         empresa_id,
                         origem,
                         data_venda,
+                        data_prevista,
                         valor_bruto,
                         valor_desconto,
                         valor_liquido,
@@ -171,7 +175,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['arquivo'])) {
                         nsu_transacao,
                         numero_estabelecimento
                     ) VALUES (
-                        ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+                        ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
                     )
                 ");
 
@@ -179,6 +183,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['arquivo'])) {
                     $empresa_id,
                     $regraImportacao['origem'], // origem
                     $data_formatada,     // data_venda
+                    $data_prevista,      // data_prevista
                     $valor_float,        // valor_bruto
                     0,                   // valor_desconto
                     $valor_float,        // valor_liquido
