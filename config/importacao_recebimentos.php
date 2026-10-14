@@ -580,7 +580,11 @@ function aplicarGranitoAgendaTaxaNoRecebimento(PDO $pdo, int $empresaId, string 
             GROUP BY empresa_id, identificador
         ) a ON a.empresa_id = r.empresa_id
             AND a.identificador = r.identificador
-        SET r.data_prevista = a.data_pagamento,
+        SET r.data_prevista = CASE
+                WHEN r.CMCONTADOR IN (3, 6) THEN DATE_ADD(DATE(r.data_venda), INTERVAL 1 DAY)
+                WHEN r.CMCONTADOR IN (2, 14) THEN DATE_ADD(DATE(r.data_venda), INTERVAL 30 DAY)
+                ELSE r.data_prevista
+            END,
             r.data_recebimento = a.data_pagamento,
             r.valor_desconto = a.valor_desconto,
             r.valor_liquido = a.valor_liquido,

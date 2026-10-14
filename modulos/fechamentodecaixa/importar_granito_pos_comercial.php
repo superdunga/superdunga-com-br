@@ -32,6 +32,25 @@ function granitoDataHora($valor) {
     return $dt ? $dt->format('Y-m-d H:i:s') : null;
 }
 
+function granitoDataPrevistaPos($dataVenda, $cmcontador) {
+    if (in_array((int)$cmcontador, [3, 6], true)) {
+        $dias = 1;
+    } elseif (in_array((int)$cmcontador, [2, 14], true)) {
+        $dias = 30;
+    } else {
+        return null;
+    }
+
+    $dataBase = DateTime::createFromFormat('Y-m-d H:i:s', (string)$dataVenda);
+    if (!$dataBase) {
+        return null;
+    }
+
+    $dataBase->setTime(0, 0, 0);
+    $dataBase->modify('+' . $dias . ' days');
+    return $dataBase->format('Y-m-d');
+}
+
 function identificarGrupoGranitoPosPorRecebiveis(PDO $pdo, int $empresaId, string $arquivo, string $grupoSelecionado): array
 {
     $handle = fopen($arquivo, 'r');
@@ -172,6 +191,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['arquivo'])) {
             $importados = 0;
             $duplicados = 0;
             $atualizadosComAgenda = 0;
+            $atualizarDataPrevista = $pdo_master->prepare("
+                UPDATE armazem_conciliacao_recebimentos
+                SET data_prevista = ?
+                WHERE id = ?
+                  AND empresa_id = ?
+            ");
 
             while (($dados = fgetcsv($handle, 0, ';')) !== false) {
                 $linha++;
@@ -198,29 +223,37 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['arquivo'])) {
                 $tipoOperacao = $ehDebito ? 'D' : 'C';
                 $origem = $regraImportacao['origem'];
                 $identificador = identificadorGranitoPos($idGranito);
+                $dataPrevista = granitoDataPrevistaPos($dataVenda, $cmcontador);
+
+                if ($dataPrevista === null) {
+                    throw new RuntimeException("Linha {$linha}: nao foi possivel calcular a data prevista para o CM {$cmcontador}.");
+                }
 
                 $check = $pdo_master->prepare("SELECT id FROM armazem_conciliacao_recebimentos WHERE empresa_id = ? AND identificador = ?");
                 $check->execute([$empresa_id, $identificador]);
-                if ($check->fetch()) {
+                $registroExistente = $check->fetch(PDO::FETCH_ASSOC);
+                if ($registroExistente) {
                     $duplicados++;
+                    $atualizarDataPrevista->execute([$dataPrevista, $registroExistente['id'], $empresa_id]);
                     $atualizadosComAgenda += aplicarGranitoAgendaTaxaNoRecebimento($pdo_master, $empresa_id, $identificador) > 0 ? 1 : 0;
                     continue;
                 }
 
                 $stmt = $pdo_master->prepare("
                     INSERT INTO armazem_conciliacao_recebimentos (
-                        empresa_id, origem, data_venda, valor_bruto, valor_desconto, valor_liquido,
+                        empresa_id, origem, data_venda, data_prevista, valor_bruto, valor_desconto, valor_liquido,
                         identificador, descricao, pagador, parcela, total_parcelas, status,
                         arquivo_origem, CMCONTADOR, tipo_operacao, bandeira, nsu_transacao,
                         autorizacao, numero_estabelecimento, id_granito, id_transacao
                     ) VALUES (
-                        ?, ?, ?, ?, 0, ?, ?, ?, 'GRANITO', 1, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+                        ?, ?, ?, ?, ?, 0, ?, ?, ?, 'GRANITO', 1, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
                     )
                 ");
                 $stmt->execute([
                     $empresa_id,
                     $origem,
                     $dataVenda,
+                    $dataPrevista,
                     $valor,
                     $valor,
                     $identificador,
