@@ -1,6 +1,9 @@
 <?php
 require '../../config/auth.php';
 require '../../config/conexao.php';
+require_once __DIR__ . '/fechamento_troco_lib.php';
+
+garantirTabelasFechamentoTroco($pdo_master);
 
 $empresa_id = $_SESSION['empresa_id'];
 $nivelUsuario = $_SESSION['nivel'] ?? '';
@@ -106,6 +109,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['acao'] ?? '') === 'excluir
         ");
         $stmtArquivos->execute([$movId]);
         $arquivosRemover = $stmtArquivos->fetchAll(PDO::FETCH_COLUMN);
+
+        $stmtTrocoId = $pdo_master->prepare("SELECT id FROM tesouraria_fechamento_trocos WHERE movimentacao_id = ?");
+        $stmtTrocoId->execute([$movId]);
+        $fechamentoTrocoId = (int)$stmtTrocoId->fetchColumn();
+        if ($fechamentoTrocoId > 0) {
+            $pdo_master->prepare("DELETE FROM tesouraria_fechamento_trocos_detalhes WHERE fechamento_troco_id = ?")->execute([$fechamentoTrocoId]);
+            $pdo_master->prepare("DELETE FROM tesouraria_fechamento_trocos WHERE id = ?")->execute([$fechamentoTrocoId]);
+        }
 
         $pdo_master->prepare("DELETE FROM tesouraria_movimentacoes_detalhes WHERE movimentacao_id = ?")->execute([$movId]);
         $pdo_master->prepare("DELETE FROM tesouraria_comprovantes WHERE movimentacao_id = ?")->execute([$movId]);

@@ -4,6 +4,9 @@ error_reporting(E_ALL);
 
 require '../../config/auth.php';
 require '../../config/conexao.php';
+require_once __DIR__ . '/fechamento_troco_lib.php';
+
+garantirTabelasFechamentoTroco($pdo_master);
 
 /* =========================
    MODO EDIÇÃO
@@ -38,6 +41,7 @@ if ($modoEdicao && !in_array($_SESSION['nivel'] ?? '', ['MASTER', 'ADMIN'], true
 $mov = null;
 $entradaEdicao = [];
 $saidaEdicao = [];
+$trocoCaixaEdicao = [];
 
 if ($modoEdicao) {
 
@@ -74,6 +78,8 @@ if (!empty($mov['conciliado']) && $mov['conciliado'] == 'S') {
             $saidaEdicao[$d['tipo_dinheiro_id']] = $d['quantidade'];
         }
     }
+
+    $trocoCaixaEdicao = carregarTrocoFechamento($pdo_master, (int)$id);
 }
 
 /* =========================
@@ -227,6 +233,7 @@ if ($modoEdicao) {
 
     $entrada = $_POST['entrada'] ?? [];
     $saida   = $_POST['saida'] ?? [];
+    $trocoCaixa = $fluxo === 'fechamento' ? ($_POST['troco_caixa'] ?? []) : [];
 
     $totalEntrada = 0.0;
     $totalSaida   = 0.0;
@@ -361,7 +368,19 @@ if ($modoEdicao) {
             $jaExiste = $verifica->fetch(PDO::FETCH_ASSOC);
 
             if ($jaExiste) {
-                $pdo_master->rollBack();
+                if ($fluxo === 'fechamento') {
+                    salvarTrocoFechamento(
+                        $pdo_master,
+                        (int)$jaExiste['id'],
+                        $empresa_id,
+                        $usuario_id,
+                        $trocoCaixa,
+                        $tiposMap
+                    );
+                    $pdo_master->commit();
+                } else {
+                    $pdo_master->rollBack();
+                }
                 header("Location: movimentar.php?sucesso=1&mov_id=" . $jaExiste['id'] . ($fluxoEspecial ? "&fluxo=" . urlencode($fluxo) : ""));
                 exit;
             }
@@ -607,6 +626,17 @@ if ($modoEdicao) {
             }
         }
 
+        if ($fluxo === 'fechamento') {
+            salvarTrocoFechamento(
+                $pdo_master,
+                (int)$mov_id,
+                $empresa_id,
+                $usuario_id,
+                $trocoCaixa,
+                $tiposMap
+            );
+        }
+
         $pdo_master->commit();
 
         header("Location: movimentar.php?sucesso=1&mov_id=" . $mov_id . ($modoEdicao ? "&id=" . $mov_id : "") . ($fluxoEspecial ? "&fluxo=" . urlencode($fluxo) : "") . ($retorno !== '' ? "&retorno=" . urlencode($retorno) : ""));
@@ -645,7 +675,7 @@ $historicoFormulario = $mov['observacao'] ?? ($fluxoEspecial['historico'] ?? '')
 $urlVoltar = $urlRetorno;
 $mostrarEntrada = !$fluxoEspecial || $fluxo === 'fechamento';
 $mostrarSaida = !$fluxoEspecial || $fluxo === 'abertura';
-$colunaDinheiro = ($mostrarEntrada && $mostrarSaida) ? 'col-12 col-md-6' : 'col-12';
+$colunaDinheiro = ($mostrarEntrada && $mostrarSaida) || $fluxo === 'fechamento' ? 'col-12 col-lg-6' : 'col-12';
 
 if ($mov_id) {
     $stmt = $pdo_master->prepare("
@@ -888,6 +918,50 @@ input[type="file"] {
     .subcabecalho {
         font-size: 11px;
     }
+}
+
+.contagem-card {
+    height: 100%;
+    padding: 14px;
+    background: #fff;
+    border: 1px solid #dfe6ef;
+    border-radius: 8px;
+}
+
+.contagem-card-troco {
+    border-top: 4px solid #f0ad4e;
+}
+
+.contagem-card-sangria {
+    border-top: 4px solid #198754;
+}
+
+.resumo-fechamento {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+    margin-top: 10px;
+}
+
+.resumo-fechamento-item {
+    padding: 9px 10px;
+    background: #f8fafc;
+    border: 1px solid #e3e9f0;
+    border-radius: 8px;
+}
+
+.resumo-fechamento-item span {
+    display: block;
+    color: #5a6877;
+    font-size: 12px;
+    font-weight: 700;
+}
+
+.resumo-fechamento-item strong {
+    display: block;
+    margin-top: 2px;
+    font-size: 17px;
+    color: #17283b;
 }
 
 /* UX mobile-first para tesouraria */
@@ -1146,6 +1220,11 @@ textarea {
     #saldoFinal {
         font-size: 22px;
     }
+
+    .resumo-fechamento {
+        grid-template-columns: 1fr;
+        gap: 7px;
+    }
 }
 </style>
 
@@ -1190,7 +1269,8 @@ textarea {
                 <!-- Entrada -->
                 <?php if ($mostrarEntrada): ?>
                 <div class="<?= htmlspecialchars($colunaDinheiro) ?> mb-2">
-                    <div class="titulo-secao text-success">Entrada de dinheiro</div>
+                    <div class="contagem-card <?= $fluxo === 'fechamento' ? 'contagem-card-sangria' : '' ?>">
+                    <div class="titulo-secao text-success"><?= $fluxo === 'fechamento' ? 'Sangria para Tesouraria' : 'Entrada de dinheiro' ?></div>
 
                     <div class="subcabecalho">
                         <div class="coluna">Valores</div>
@@ -1246,11 +1326,69 @@ textarea {
                     <?php endfor; ?>
 
                     <div class="total-secao">
-                        Total Entrada: R$ <span id="totalEntrada">0,00</span>
+                        <?= $fluxo === 'fechamento' ? 'Total da Sangria' : 'Total Entrada' ?>: R$ <span id="totalEntrada">0,00</span>
+                    </div>
                     </div>
                 </div>
                 <?php else: ?>
                     <span id="totalEntrada" class="d-none">0,00</span>
+                <?php endif; ?>
+
+                <?php if ($fluxo === 'fechamento'): ?>
+                <div class="<?= htmlspecialchars($colunaDinheiro) ?> mb-2">
+                    <div class="contagem-card contagem-card-troco">
+                    <div class="titulo-secao text-warning">Troco para Caixa Seguinte <small class="text-muted">(opcional)</small></div>
+
+                    <div class="subcabecalho">
+                        <div class="coluna">Valores</div>
+                        <div class="coluna">Cédulas</div>
+                    </div>
+
+                    <?php for ($i = 0; $i < $linhas; $i++): ?>
+                        <div class="linha-dupla">
+                            <div class="bloco-dinheiro">
+                                <?php if (isset($moedas[$i])): ?>
+                                    <span class="valor-label">R$ <?= number_format($moedas[$i]['valor'], 2, ',', '.') ?></span>
+                                    <button type="button" class="btn btn-outline-danger btn-ajuste btn-minus">-</button>
+                                    <input
+                                        type="text"
+                                        readonly
+                                        class="form-control qtd troco-caixa"
+                                        name="troco_caixa[<?= $moedas[$i]['id'] ?>]"
+                                        data-valor="<?= htmlspecialchars($moedas[$i]['valor']) ?>"
+                                        value="<?= $trocoCaixaEdicao[$moedas[$i]['id']] ?? 0 ?>"
+                                    >
+                                    <button type="button" class="btn btn-outline-success btn-ajuste btn-plus">+</button>
+                                    <button type="button" class="btn btn-outline-primary btn-ajuste btn-plus10">+10</button>
+                                    <span class="total-denominacao">R$ 0,00</span>
+                                <?php endif; ?>
+                            </div>
+
+                            <div class="bloco-dinheiro">
+                                <?php if (isset($cedulas[$i])): ?>
+                                    <span class="valor-label">R$ <?= number_format($cedulas[$i]['valor'], 2, ',', '.') ?></span>
+                                    <button type="button" class="btn btn-outline-danger btn-ajuste btn-minus">-</button>
+                                    <input
+                                        type="text"
+                                        readonly
+                                        class="form-control qtd troco-caixa"
+                                        name="troco_caixa[<?= $cedulas[$i]['id'] ?>]"
+                                        data-valor="<?= htmlspecialchars($cedulas[$i]['valor']) ?>"
+                                        value="<?= $trocoCaixaEdicao[$cedulas[$i]['id']] ?? 0 ?>"
+                                    >
+                                    <button type="button" class="btn btn-outline-success btn-ajuste btn-plus">+</button>
+                                    <button type="button" class="btn btn-outline-primary btn-ajuste btn-plus10">+10</button>
+                                    <span class="total-denominacao">R$ 0,00</span>
+                                <?php endif; ?>
+                            </div>
+                        </div>
+                    <?php endfor; ?>
+
+                    <div class="total-secao">
+                        Total do Troco: R$ <span id="totalTrocoCaixa">0,00</span>
+                    </div>
+                    </div>
+                </div>
                 <?php endif; ?>
 
                 <!-- Saída -->
@@ -1323,8 +1461,22 @@ textarea {
             <hr class="my-2">
 
             <div class="text-center">
-                <h5>Resultado da Movimentação</h5>
-                <h3 id="saldoFinal">R$ 0,00</h3>
+                <?php if ($fluxo === 'fechamento'): ?>
+                    <h5>Resumo do Fechamento</h5>
+                    <div class="resumo-fechamento">
+                        <div class="resumo-fechamento-item">
+                            <span>Sangria para Tesouraria</span>
+                            <strong id="saldoFinal">R$ 0,00</strong>
+                        </div>
+                        <div class="resumo-fechamento-item">
+                            <span>Troco para Caixa Seguinte</span>
+                            <strong id="resumoTrocoCaixa">R$ 0,00</strong>
+                        </div>
+                    </div>
+                <?php else: ?>
+                    <h5>Resultado da Movimentação</h5>
+                    <h3 id="saldoFinal">R$ 0,00</h3>
+                <?php endif; ?>
                 <div id="msgSaldo"></div>
             </div>
 
@@ -1449,6 +1601,7 @@ if (inputComprovante) {
 function calcular() {
     let totalEntrada = 0;
     let totalSaida = 0;
+    let totalTrocoCaixa = 0;
 
     document.querySelectorAll('.entrada').forEach(function(input) {
         const valor = parseFloat(input.dataset.valor);
@@ -1464,11 +1617,28 @@ function calcular() {
         atualizarTotalDenominacao(input);
     });
 
+    document.querySelectorAll('.troco-caixa').forEach(function(input) {
+        const valor = parseFloat(input.dataset.valor);
+        const qtd = parseInt(input.value || 0, 10);
+        totalTrocoCaixa += valor * qtd;
+        atualizarTotalDenominacao(input);
+    });
+
     totalEntrada = Math.round(totalEntrada * 100) / 100;
     totalSaida = Math.round(totalSaida * 100) / 100;
+    totalTrocoCaixa = Math.round(totalTrocoCaixa * 100) / 100;
 
     document.getElementById('totalEntrada').innerText = formatar(totalEntrada);
     document.getElementById('totalSaida').innerText = formatar(totalSaida);
+
+    const totalTrocoCaixaElemento = document.getElementById('totalTrocoCaixa');
+    const resumoTrocoCaixa = document.getElementById('resumoTrocoCaixa');
+    if (totalTrocoCaixaElemento) {
+        totalTrocoCaixaElemento.innerText = formatar(totalTrocoCaixa);
+    }
+    if (resumoTrocoCaixa) {
+        resumoTrocoCaixa.innerText = 'R$ ' + formatar(totalTrocoCaixa);
+    }
 
     const saldo = Math.round((totalEntrada - totalSaida) * 100) / 100;
     document.getElementById('saldoFinal').innerText = 'R$ ' + formatar(saldo);
@@ -1568,10 +1738,13 @@ document.getElementById('formMovimentacao').addEventListener('submit', function(
         T: 'Troca'
     }[tipo] || 'Movimentação';
     const valor = document.getElementById('saldoFinal').innerText;
+    const trocoCaixa = document.getElementById('resumoTrocoCaixa');
+    const detalheTroco = trocoCaixa ? '\nTroco para o caixa seguinte: ' + trocoCaixa.innerText : '';
+    const rotuloValor = trocoCaixa ? 'Sangria para a Tesouraria: ' : 'Valor: ';
     const confirmado = confirm(
         'Confirma salvar esta movimentação?\n\n' +
         'Tipo: ' + tipoTexto + '\n' +
-        'Valor: ' + valor
+        rotuloValor + valor + detalheTroco
     );
 
     if (!confirmado) {
