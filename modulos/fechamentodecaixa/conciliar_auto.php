@@ -208,7 +208,7 @@ function conciliar($pdo, $rec_id, $cm, $crcontador, $empresa_id) {
 
     // Evita reutilizar o mesmo recebivel quando o vinculo ja foi gravado nele.
     $checkRecebivel = $pdo->prepare("
-        SELECT CRCONTADOR
+        SELECT CRCONTADOR, data_prevista
         FROM armazem_conciliacao_recebimentos
         WHERE id = ?
           AND empresa_id = ?
@@ -217,7 +217,7 @@ function conciliar($pdo, $rec_id, $cm, $crcontador, $empresa_id) {
     $checkRecebivel->execute([$rec_id, $empresa_id]);
     $recebivel = $checkRecebivel->fetch(PDO::FETCH_ASSOC);
 
-    if (!$recebivel || !empty($recebivel['CRCONTADOR'])) {
+    if (!$recebivel || !empty($recebivel['CRCONTADOR']) || empty($recebivel['data_prevista'])) {
         return false;
     }
 
@@ -260,6 +260,7 @@ function conciliar($pdo, $rec_id, $cm, $crcontador, $empresa_id) {
             UPDATE armazem_cr001
             SET recebimento_id = ?,
                 CMCONTADOR = ?,
+                DTVENC = ?,
                 enviado_firebird = 'N',
                 data_envio_firebird = NULL
             WHERE CRCONTADOR = ?
@@ -269,7 +270,7 @@ function conciliar($pdo, $rec_id, $cm, $crcontador, $empresa_id) {
             AND COALESCE(STATUS, '') <> 'QT'
         ");
 
-        $update->execute([$rec_id, $cm, $crcontador, $empresa_id]);
+        $update->execute([$rec_id, $cm, $recebivel['data_prevista'], $crcontador, $empresa_id]);
 
         if ($update->rowCount() < 1) {
             $pdo->rollBack();

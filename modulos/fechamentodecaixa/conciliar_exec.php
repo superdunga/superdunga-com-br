@@ -19,7 +19,7 @@ if (!$data) {
 }
 
 $stmt = $pdo_master->prepare("
-    SELECT CMCONTADOR, CRCONTADOR
+    SELECT CMCONTADOR, CRCONTADOR, data_prevista
     FROM armazem_conciliacao_recebimentos
     WHERE id = ?
       AND empresa_id = ?
@@ -33,6 +33,10 @@ if (!$rec) {
 
 if (!empty($rec['CRCONTADOR'])) {
     die("Este recebivel ja esta vinculado ao CR001 " . (int)$rec['CRCONTADOR'] . ".");
+}
+
+if (empty($rec['data_prevista'])) {
+    die("Este recebivel nao possui data prevista para atualizar o vencimento no Firebird.");
 }
 
 $stmt = $pdo_master->prepare("
@@ -62,6 +66,7 @@ try {
         SET
             recebimento_id = ?,
             CMCONTADOR = ?,
+            DTVENC = ?,
             enviado_firebird = 'N',
             data_envio_firebird = NULL
         WHERE CRCONTADOR = ?
@@ -73,6 +78,7 @@ try {
     $stmt->execute([
         $rec_id,
         $rec['CMCONTADOR'],
+        $rec['data_prevista'],
         $cr_id,
         $empresa_id
     ]);

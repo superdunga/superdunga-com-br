@@ -13,3 +13,14 @@ After committing and pushing only the intended files, publish them with `scripts
 The deployable source in `origin/master` must always match the files published on the production site. Treat commit, push, FTP upload, and remote hash verification as one deployment operation; do not leave a production fix only on FTP or a deployable fix only in the local working tree. Server-side integration scripts that are installed manually must also be committed and pushed in the matching project path after validation.
 
 Before reporting a deployment as complete, compare the intended files with `origin/master` and confirm the production copy. If any previously deployed or locally completed change is not represented in both places, tell the user immediately which files differ, where each version currently exists, and the exact commit, push, upload, or verification still required. Generated backups, uploads, caches, logs, temporary files, and local credential helpers are operational artifacts and are excluded from this parity rule.
+
+## Firebird integration architecture
+
+Never conflate the auxiliary servers with the main Armazem and Emporio servers.
+
+- The Armazem auxiliary server and the Emporio auxiliary server run only the fiscal-document mirror in `docs/integracao_firebird/auxiliar`: `EST007` and `EST026`, in complete and incremental modes. They do not synchronize `CR001`, do not process general financial or stock tables, and do not send receipt reconciliations back to Firebird.
+- The main Armazem server runs the general integration for SuperDunga company 1, including `enviar_dados.py` and the reverse reconciliation flow implemented by `enviar_conciliados.py`.
+- The main Emporio server runs the general integration for the mappings Firebird 1 -> SuperDunga 4 and Firebird 6 -> SuperDunga 5, including `enviar_dados.py` and `enviar_conciliados.py`.
+- A reconciliation created in SuperDunga is queued on the site and is applied to `CR001` by `enviar_conciliados.py` on the corresponding main server, never by an auxiliary fiscal server.
+
+Before attributing an execution, update, log, scheduled task, or failure to a server, identify the exact script path and machine. Do not infer that an auxiliary server performed an operation merely because it belongs to the same store. Use `docs/integracao_firebird/README.md` as the architecture reference.
