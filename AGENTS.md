@@ -24,3 +24,7 @@ Never conflate the auxiliary servers with the main Armazem and Emporio servers.
 - A reconciliation created in SuperDunga is queued on the site and is applied to `CR001` by `enviar_conciliados.py` on the corresponding main server, never by an auxiliary fiscal server.
 
 Before attributing an execution, update, log, scheduled task, or failure to a server, identify the exact script path and machine. Do not infer that an auxiliary server performed an operation merely because it belongs to the same store. Use `docs/integracao_firebird/README.md` as the architecture reference.
+
+## Receipt import dates
+
+When a receipt import file provides a valid expected payment date, that date is authoritative and must be stored in `data_prevista`. Rules that calculate `data_prevista` from `data_venda` and `CMCONTADOR` are fallbacks only for layouts that do not provide an expected date. Never replace a valid date supplied by an acquirer file with a generic D+1 or D+30 calculation.
