@@ -1209,19 +1209,21 @@ if (in_array(($_GET['exportar'] ?? ''), ['csv', 'pdf'], true)) {
             !empty($registro['DTVENC']) ? date('d/m/Y', strtotime($registro['DTVENC'])) : '',
             (string)$registro['fornecedor_nome'], (string)$registro['tipoes_desc'],
             (string)($registro['TITULO'] ?: $registro['NOTAFISCAL'] ?: $registro['NUMDOCORIGEM']),
-            number_format((float)$registro['VLRPARCELA'], 2, ',', '.'), number_format((float)$registro['VLRRESTANTE'], 2, ',', '.'),
+            number_format((float)$registro['VLRPARCELA'], 2, ',', '.'), number_format((float)$registro['VLRPAGO'], 2, ',', '.'),
+            number_format((float)$registro['VLRRESTANTE'], 2, ',', '.'),
             (string)$registro['STATUS'], (string)$registro['origem_titulo'],
         ];
     }, $registrosExportar);
     $nomeExportacao = 'movbaixa_contas_pagar_empresa_' . $empresaId . '_' . date('Ymd_His');
-    $cabecalhos = ['CP', 'Compra', 'Vencimento', 'Fornecedor', 'TIPOES', 'Documento', 'Valor', 'Restante', 'Status', 'Origem'];
+    $cabecalhos = ['CP', 'Compra', 'Vencimento', 'Fornecedor', 'TIPOES', 'Documento', 'Valor original', 'Valor quitado', 'Restante', 'Status', 'Origem'];
     if ($_GET['exportar'] === 'csv') {
         mbxExportarCsv($nomeExportacao, $cabecalhos, $linhasExportar);
     }
     mbxExportarPdf($nomeExportacao, 'MovBaixa - Contas a Pagar', ['Empresa: ' . $empresaId, 'Registros filtrados: ' . count($linhasExportar)], [
         ['titulo'=>'CP','largura'=>42,'limite'=>8], ['titulo'=>'Compra','largura'=>58,'limite'=>10], ['titulo'=>'Venc.','largura'=>58,'limite'=>10],
-        ['titulo'=>'Fornecedor','largura'=>150,'limite'=>28], ['titulo'=>'TIPOES','largura'=>120,'limite'=>22], ['titulo'=>'Documento','largura'=>105,'limite'=>19],
-        ['titulo'=>'Valor','largura'=>68,'limite'=>13], ['titulo'=>'Restante','largura'=>68,'limite'=>13], ['titulo'=>'Status','largura'=>45,'limite'=>8], ['titulo'=>'Origem','largura'=>70,'limite'=>12],
+        ['titulo'=>'Fornecedor','largura'=>125,'limite'=>23], ['titulo'=>'TIPOES','largura'=>95,'limite'=>17], ['titulo'=>'Documento','largura'=>90,'limite'=>16],
+        ['titulo'=>'Original','largura'=>62,'limite'=>12], ['titulo'=>'Quitado','largura'=>62,'limite'=>12], ['titulo'=>'Restante','largura'=>62,'limite'=>12],
+        ['titulo'=>'Status','largura'=>40,'limite'=>7], ['titulo'=>'Origem','largura'=>55,'limite'=>10],
     ], $linhasExportar);
 }
 
@@ -1231,9 +1233,11 @@ $titulos = $stmtLista->fetchAll(PDO::FETCH_ASSOC);
 $stmtVinculos=$pdo->prepare("SELECT cpcontador,crcontador FROM movimentacao_baixa_cp_cr_vinculos WHERE empresa_id=? AND status='ATIVO'");$stmtVinculos->execute([$empresaId]);$vinculosCp=[];foreach($stmtVinculos->fetchAll(PDO::FETCH_ASSOC) as $v){$vinculosCp[(int)$v['cpcontador']]=(int)$v['crcontador'];}
 
 $totalValorLista = 0.0;
+$totalQuitadoLista = 0.0;
 $totalRestanteLista = 0.0;
 foreach ($titulos as $tituloTotal) {
     $totalValorLista += (float)($tituloTotal['VLRPARCELA'] ?? 0);
+    $totalQuitadoLista += (float)($tituloTotal['VLRPAGO'] ?? 0);
     $totalRestanteLista += (float)($tituloTotal['VLRRESTANTE'] ?? 0);
 }
 
@@ -1755,6 +1759,10 @@ require '../../layout/header.php';
                     <div class="cpb-summary-value"><?= cpbH(cpbMoeda($totalValorLista)) ?></div>
                 </div>
                 <div class="cpb-summary-item">
+                    <div class="cpb-summary-label">Total quitado</div>
+                    <div class="cpb-summary-value"><?= cpbH(cpbMoeda($totalQuitadoLista)) ?></div>
+                </div>
+                <div class="cpb-summary-item">
                     <div class="cpb-summary-label">Total restante</div>
                     <div class="cpb-summary-value"><?= cpbH(cpbMoeda($totalRestanteLista)) ?></div>
                 </div>
@@ -1830,7 +1838,8 @@ require '../../layout/header.php';
                                 </td>
                                 <td><?= cpbH(($titulo['TIPOES'] ?? '') . ' - ' . ($titulo['tipoes_desc'] ?? '')) ?></td>
                                 <td>
-                                    <div class="small text-muted">Valor</div><strong><?= cpbH(cpbMoeda($titulo['VLRPARCELA'])) ?></strong>
+                                    <div class="small text-muted">Valor original</div><strong><?= cpbH(cpbMoeda($titulo['VLRPARCELA'])) ?></strong>
+                                    <div class="small text-muted mt-1">Valor quitado</div><?= cpbH(cpbMoeda($titulo['VLRPAGO'])) ?>
                                     <div class="small text-muted mt-1">Restante</div><?= cpbH(cpbMoeda($titulo['VLRRESTANTE'])) ?>
                                 </td>
                                 <td>
