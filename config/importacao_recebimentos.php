@@ -51,6 +51,21 @@ function garantirTabelaRegrasImportacao(PDO $pdo): void
     ");
     $stmtTon->execute();
 
+    $stmtPagBank = $pdo->prepare("
+        INSERT INTO fechamento_importacao_regras (
+            empresa_id, nome, grupo, tipo, origem, arquivo_php, estabelecimento,
+            cm_debito, cm_credito, cm_pix, ativo, ordem
+        )
+        SELECT 5, 'PagBank Comercial', 'Comercial', 'pagbank_comercial', 'PAGBANK_COMERCIAL',
+               'importar_pagbank_comercial.php', 'COMERCIAL CMX LTDA',
+               3, 2, 12, 'S', 30
+        WHERE NOT EXISTS (
+            SELECT 1 FROM fechamento_importacao_regras
+            WHERE empresa_id = 5 AND tipo = 'pagbank_comercial' AND grupo = 'Comercial'
+        )
+    ");
+    $stmtPagBank->execute();
+
     $stmt = $pdo->prepare("
         SELECT COUNT(*)
         FROM information_schema.statistics
@@ -223,6 +238,12 @@ function descricaoRegraImportacao(array $regra): string
 
     if ($tipo === 'ton_comercial') {
         return 'Debito/Pre-pago CMCONTADOR ' . (int)$regra['cm_debito']
+            . ' | Credito CMCONTADOR ' . (int)$regra['cm_credito']
+            . ' | PIX CMCONTADOR ' . (int)$regra['cm_pix'];
+    }
+
+    if ($tipo === 'pagbank_comercial') {
+        return 'Debito CMCONTADOR ' . (int)$regra['cm_debito']
             . ' | Credito CMCONTADOR ' . (int)$regra['cm_credito']
             . ' | PIX CMCONTADOR ' . (int)$regra['cm_pix'];
     }
