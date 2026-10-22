@@ -15,7 +15,10 @@ $csrf = (string)$_SESSION['csrf_auditoria_compras'];
 
 function auditoriaUrlListagem(array $parametros = []): string
 {
-    $permitidos = ['data_ini', 'data_fim', 'fornecedor', 'produto', 'documento'];
+    $permitidos = [
+        'data_ini', 'data_fim', 'fornecedor', 'produto', 'documento',
+        'codigo', 'classificacao', 'valor_de', 'valor_ate', 'foto'
+    ];
     $query = [];
     foreach ($permitidos as $campo) {
         if (isset($_GET[$campo]) && !is_array($_GET[$campo]) && $_GET[$campo] !== '') {
@@ -27,6 +30,22 @@ function auditoriaUrlListagem(array $parametros = []): string
     }
 
     return 'listar.php' . (!empty($query) ? '?' . http_build_query($query) : '');
+}
+
+function auditoriaValorFiltro($valor)
+{
+    $valor = trim((string)$valor);
+    if ($valor === '') {
+        return null;
+    }
+
+    if (strpos($valor, ',') !== false) {
+        $valor = str_replace('.', '', $valor);
+        $valor = str_replace(',', '.', $valor);
+    }
+    $valor = str_replace(['R$', ' '], '', $valor);
+
+    return is_numeric($valor) ? (float)$valor : null;
 }
 
 if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
@@ -88,6 +107,13 @@ $dataFim = $_GET['data_fim'] ?? date('Y-m-d');
 $fornecedor = trim($_GET['fornecedor'] ?? '');
 $produto = trim($_GET['produto'] ?? '');
 $documento = trim($_GET['documento'] ?? '');
+$codigo = trim($_GET['codigo'] ?? '');
+$classificacao = trim($_GET['classificacao'] ?? '');
+$valorDeTexto = trim($_GET['valor_de'] ?? '');
+$valorAteTexto = trim($_GET['valor_ate'] ?? '');
+$foto = trim($_GET['foto'] ?? '');
+$valorDe = auditoriaValorFiltro($valorDeTexto);
+$valorAte = auditoriaValorFiltro($valorAteTexto);
 
 $where = [
     "c.EMPRESA = ?",
@@ -131,7 +157,62 @@ if ($documento !== '') {
     $params[] = "%$documento%";
 }
 
+if ($codigo !== '' && ctype_digit($codigo)) {
+    $where[] = "c.COMPRACONTADOR = ?";
+    $params[] = (int)$codigo;
+}
+
+if ($classificacao === '1') {
+    $where[] = "TRIM(COALESCE(c.CLASSIFICACAO, '')) = '1'";
+} elseif ($classificacao === 'vazia') {
+    $where[] = "TRIM(COALESCE(c.CLASSIFICACAO, '')) = ''";
+}
+
+if ($valorDe !== null) {
+    $where[] = "c.TOTGERAL >= ?";
+    $params[] = $valorDe;
+}
+
+if ($valorAte !== null) {
+    $where[] = "c.TOTGERAL <= ?";
+    $params[] = $valorAte;
+}
+
+if ($foto === 'com') {
+    $where[] = "EXISTS (
+        SELECT 1
+        FROM auditoria_compra_anexos anexo_filtro
+        WHERE anexo_filtro.empresa_id = c.EMPRESA
+          AND anexo_filtro.compra_contador = c.COMPRACONTADOR
+          AND anexo_filtro.excluido_em IS NULL
+    )";
+} elseif ($foto === 'sem') {
+    $where[] = "NOT EXISTS (
+        SELECT 1
+        FROM auditoria_compra_anexos anexo_filtro
+        WHERE anexo_filtro.empresa_id = c.EMPRESA
+          AND anexo_filtro.compra_contador = c.COMPRACONTADOR
+          AND anexo_filtro.excluido_em IS NULL
+    )";
+}
+
 $whereSql = implode(' AND ', $where);
+
+$stmtTotais = $pdo_master->prepare("
+    SELECT
+        COUNT(*) AS quantidade,
+        COALESCE(SUM(c.TOTGERAL), 0) AS valor_total
+    FROM armazem_est005 c
+    LEFT JOIN armazem_cp003 f
+        ON f.FCONTADOR = c.FORNECEDOR
+       AND f.EMPRESA = c.EMPRESA
+    WHERE $whereSql
+");
+$stmtTotais->execute($params);
+$totaisFiltro = $stmtTotais->fetch(PDO::FETCH_ASSOC) ?: [
+    'quantidade' => 0,
+    'valor_total' => 0,
+];
 
 $stmt = $pdo_master->prepare("
     SELECT
@@ -251,10 +332,60 @@ function numero($valor, int $casas = 2): string
                 <label class="form-label small text-muted">Documento</label>
                 <input type="text" name="documento" class="form-control" value="<?= htmlspecialchars($documento) ?>">
             </div>
+            <div class="col-md-2">
+                <label class="form-label small text-muted">Codigo</label>
+                <input type="text" name="codigo" class="form-control" inputmode="numeric" value="<?= htmlspecialchars($codigo) ?>">
+            </div>
+            <div class="col-md-2">
+                <label class="form-label small text-muted">Class.</label>
+                <select name="classificacao" class="form-select">
+                    <option value="">Todas</option>
+                    <option value="1" <?= $classificacao === '1' ? 'selected' : '' ?>>1</option>
+                    <option value="vazia" <?= $classificacao === 'vazia' ? 'selected' : '' ?>>Vazia</option>
+                </select>
+            </div>
+            <div class="col-md-2">
+                <label class="form-label small text-muted">Valor de R$</label>
+                <input type="text" name="valor_de" class="form-control" inputmode="decimal" value="<?= htmlspecialchars($valorDeTexto) ?>" placeholder="0,00">
+            </div>
+            <div class="col-md-2">
+                <label class="form-label small text-muted">Valor ate R$</label>
+                <input type="text" name="valor_ate" class="form-control" inputmode="decimal" value="<?= htmlspecialchars($valorAteTexto) ?>" placeholder="0,00">
+            </div>
+            <div class="col-md-2">
+                <label class="form-label small text-muted">Fotos</label>
+                <select name="foto" class="form-select">
+                    <option value="">Todas</option>
+                    <option value="com" <?= $foto === 'com' ? 'selected' : '' ?>>C/Foto</option>
+                    <option value="sem" <?= $foto === 'sem' ? 'selected' : '' ?>>S/Foto</option>
+                </select>
+            </div>
             <div class="col-md-2 d-flex align-items-end">
                 <button class="btn btn-primary w-100">Filtrar</button>
             </div>
+            <div class="col-md-2 d-flex align-items-end">
+                <a href="listar.php" class="btn btn-outline-secondary w-100">Limpar filtro</a>
+            </div>
         </form>
+
+        <div class="row g-3 mb-3">
+            <div class="col-sm-6 col-lg-3">
+                <div class="card shadow-sm h-100">
+                    <div class="card-body">
+                        <div class="small text-muted">Registros filtrados</div>
+                        <div class="h4 fw-bold mb-0"><?= number_format((int)$totaisFiltro['quantidade'], 0, ',', '.') ?></div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-sm-6 col-lg-3">
+                <div class="card shadow-sm h-100">
+                    <div class="card-body">
+                        <div class="small text-muted">Valor total</div>
+                        <div class="h4 fw-bold mb-0"><?= moeda($totaisFiltro['valor_total']) ?></div>
+                    </div>
+                </div>
+            </div>
+        </div>
 
         <div class="table-responsive auditoria-compras-wrap">
             <table class="table table-sm table-bordered align-middle auditoria-compras-table">
