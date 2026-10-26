@@ -860,12 +860,22 @@ require '../../layout/header.php';
     const clicontador = document.getElementById('clicontador');
     const tipoes = document.getElementById('tipoes');
 
+    function definirObrigatorio(campo, obrigatorio) {
+        if (!campo) return;
+        if (campo.dataset.mbSelectSearchReady === '1') {
+            campo.required = false;
+            campo.dataset.mbRequired = obrigatorio ? '1' : '0';
+            return;
+        }
+        campo.required = obrigatorio;
+    }
+
     function atualizarTipo() {
         const isReceita = tipo && tipo.value === 'R';
         if (despesa) despesa.style.display = isReceita ? 'none' : '';
         if (receita) receita.style.display = isReceita ? '' : 'none';
-        if (fcontador) fcontador.required = !isReceita;
-        if (clicontador) clicontador.required = isReceita;
+        definirObrigatorio(fcontador, !isReceita);
+        definirObrigatorio(clicontador, isReceita);
         if (!tipoes) return;
         Array.from(tipoes.options).forEach(option => {
             if (!option.value) return;
