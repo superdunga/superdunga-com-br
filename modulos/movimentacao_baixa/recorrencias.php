@@ -541,7 +541,13 @@ $recorrencias = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
 $totalDespesas = 0.0;
 $totalReceitas = 0.0;
+$totalAtivas = 0;
 foreach ($recorrencias as $rec) {
+    if ($rec['ativa'] !== 'S') {
+        continue;
+    }
+
+    $totalAtivas++;
     if ($rec['tipo'] === 'P') {
         $totalDespesas += (float)$rec['valor'];
     } elseif ($rec['tipo'] === 'R') {
@@ -783,16 +789,16 @@ require '../../layout/header.php';
 
         <div class="rec-summary">
             <div class="rec-summary-card despesa">
-                <div class="label">Total de despesas</div>
+                <div class="label">Despesas ativas</div>
                 <div class="value"><?= recH(recMoeda($totalDespesas)) ?></div>
             </div>
             <div class="rec-summary-card receita">
-                <div class="label">Total de receitas</div>
+                <div class="label">Receitas ativas</div>
                 <div class="value"><?= recH(recMoeda($totalReceitas)) ?></div>
             </div>
             <div class="rec-summary-card">
-                <div class="label">Recorrencias filtradas</div>
-                <div class="value"><?= count($recorrencias) ?></div>
+                <div class="label">Recorrencias ativas</div>
+                <div class="value"><?= $totalAtivas ?></div>
             </div>
         </div>
 
