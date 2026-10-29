@@ -149,6 +149,7 @@ $movDataIni = trim((string)($_GET['mov_data_ini'] ?? ''));
 $movDataFim = trim((string)($_GET['mov_data_fim'] ?? ''));
 $movPessoa = trim((string)($_GET['mov_pessoa'] ?? ''));
 $movFinanceiro = trim((string)($_GET['mov_financeiro'] ?? 'todos'));
+$exportarMovimentosCsv = ($_GET['exportar'] ?? '') === 'csv';
 if ($movDataIni === '') {
     $movDataIni = date('Y-m-01');
 }
@@ -199,6 +200,7 @@ if ($permitido && $empresaId === 2) {
         )";
     }
 
+    $limiteMovimentos = $exportarMovimentosCsv ? '' : 'LIMIT 500';
     $stmt = $pdo->prepare("
         SELECT m.*,
                v.identificacao AS vale_identificacao,
@@ -210,7 +212,7 @@ if ($permitido && $empresaId === 2) {
         LEFT JOIN armazem_cr002 c ON c.EMPRESA = m.empresa_id AND c.CLICONTADOR = m.cliente_id
         WHERE " . implode(' AND ', $movWhere) . "
         ORDER BY m.data_movimento DESC, m.id DESC
-        LIMIT 500
+        " . $limiteMovimentos . "
     ");
     $stmt->execute($movParams);
     $movimentos = $stmt->fetchAll(PDO::FETCH_ASSOC);
@@ -223,6 +225,63 @@ if ($permitido && $empresaId === 2) {
         }
     }
     $totaisMovimentos['saldo'] = $totaisMovimentos['compras'] - $totaisMovimentos['vendas'];
+}
+
+if ($exportarMovimentosCsv && $permitido && $empresaId === 2) {
+    $textoCsv = static function ($valor): string {
+        $texto = trim((string)$valor);
+        return preg_match('/^[=+\-@]/', $texto) ? "'" . $texto : $texto;
+    };
+    $dataCsv = static function ($valor): string {
+        return $valor ? date('d/m/Y', strtotime((string)$valor)) : '';
+    };
+    $valorCsv = static function ($valor): string {
+        return number_format((float)$valor, 2, ',', '.');
+    };
+
+    $nomeArquivo = 'vale_compras_movimentos_' . date('Ymd_His') . '.csv';
+    header('Content-Type: text/csv; charset=UTF-8');
+    header('Content-Disposition: attachment; filename="' . $nomeArquivo . '"');
+    header('Cache-Control: no-store, no-cache, must-revalidate');
+
+    $saida = fopen('php://output', 'w');
+    fwrite($saida, "\xEF\xBB\xBF");
+    fputcsv($saida, [
+        'ID',
+        'Vale',
+        'Tipo',
+        'Data',
+        'Fornecedor/Cliente',
+        'Estabelecimento',
+        'Valor',
+        'Vencimento',
+        'Financeiro',
+    ], ';');
+
+    foreach ($movimentos as $movimento) {
+        $isCompra = ($movimento['tipo'] ?? '') === 'COMPRA';
+        $pessoa = $isCompra
+            ? trim((string)($movimento['fornecedor_apelido'] ?: $movimento['fornecedor_nome'] ?: $movimento['fornecedor_id']))
+            : trim((string)($movimento['cliente_apelido'] ?: $movimento['cliente_nome'] ?: $movimento['cliente_id']));
+        $valorMovimento = $isCompra ? (float)$movimento['valor_nominal'] : (float)$movimento['valor'];
+        $financeiroOk = $isCompra
+            ? (!empty($movimento['mov_nominal']) && ((float)$movimento['valor_desagio'] <= 0 || !empty($movimento['mov_desagio'])))
+            : !empty($movimento['crcontador']);
+
+        fputcsv($saida, [
+            (int)$movimento['id'],
+            $textoCsv($movimento['vale_identificacao']),
+            $movimento['tipo'],
+            $dataCsv($movimento['data_movimento']),
+            $textoCsv($pessoa),
+            $textoCsv($movimento['estabelecimento'] ?: '-'),
+            $valorCsv($valorMovimento),
+            $dataCsv($movimento['vencimento']),
+            $financeiroOk ? 'Lancado' : 'Pendente',
+        ], ';');
+    }
+    fclose($saida);
+    exit;
 }
 
 require '../../layout/header.php';
@@ -457,6 +516,7 @@ require '../../layout/header.php';
                     </div>
                     <div class="vc-actions mb-2">
                         <button class="btn btn-sm btn-outline-secondary">Filtrar</button>
+                        <button type="submit" name="exportar" value="csv" class="btn btn-sm btn-outline-success">Exportar CSV</button>
                         <a class="btn btn-sm btn-outline-light text-dark border" href="cadastro.php">Limpar</a>
                     </div>
                 </form>
