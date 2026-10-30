@@ -73,6 +73,12 @@ Para agendamento no servidor principal:
 php scripts/sincronizar-cielo-recebimentos.php
 ```
 
+Na hospedagem de producao, o cPanel executa diariamente as 08:00 e 12:00:
+
+```cron
+0 8,12 * * * /usr/local/bin/php -q /home2/etelema/superdunga.com.br/scripts/sincronizar-cielo-recebimentos.php >/dev/null 2>&1
+```
+
 Sem parametros, o comando consulta os ultimos oito dias, permitindo receber
 arquivos liberados com atraso. Um periodo especifico pode ser informado:
 
