@@ -3,7 +3,7 @@
 ## Escopo atual
 
 A integracao `cielo_api2_comercial_vrs` pertence exclusivamente ao card
-**Comercial** da empresa 5. Ela usa o estabelecimento Cielo `3003947763` e as
+**Comercial** da empresa 1 (Armazem do Dunga). Ela usa o estabelecimento Cielo `3003947763` e as
 mesmas classificacoes comerciais ja adotadas pelos importadores da empresa:
 
 - debito: CM 3;

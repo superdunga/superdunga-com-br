@@ -5,7 +5,12 @@ require_once '../../config/importacao_recebimentos.php';
 require_once '../../config/cielo_extrato.php';
 
 $empresaId = (int)($_SESSION['empresa_id'] ?? 0);
-$regraImportacao = buscarRegraImportacao($pdo_master, $empresaId, 'cielo_api_comercial', []);
+$regraImportacao = buscarRegraImportacao(
+    $pdo_master,
+    $empresaId,
+    'cielo_api_comercial',
+    regraImportacaoCieloComercialArmazem()
+);
 $configCielo = cieloConfiguracaoVrs();
 $statusCredenciais = cieloStatusCredenciais($configCielo);
 $mensagem = null;

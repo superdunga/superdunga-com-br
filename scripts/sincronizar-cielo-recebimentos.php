@@ -9,14 +9,19 @@ require dirname(__DIR__) . '/config/conexao.php';
 require_once dirname(__DIR__) . '/config/importacao_recebimentos.php';
 require_once dirname(__DIR__) . '/config/cielo_extrato.php';
 
-$empresaId = 5;
+$empresaId = 1;
 $dataFinal = isset($argv[2]) ? trim((string)$argv[2]) : date('Y-m-d');
 $dataInicial = isset($argv[1]) ? trim((string)$argv[1]) : date('Y-m-d', strtotime('-7 days'));
 
 try {
-    $regra = buscarRegraImportacao($pdo_master, $empresaId, 'cielo_api_comercial', []);
+    $regra = buscarRegraImportacao(
+        $pdo_master,
+        $empresaId,
+        'cielo_api_comercial',
+        regraImportacaoCieloComercialArmazem()
+    );
     if (!$regra) {
-        throw new RuntimeException('Regra Cielo Comercial nao cadastrada para a empresa 5.');
+        throw new RuntimeException('Regra Cielo Comercial nao cadastrada para a empresa 1.');
     }
 
     $resultado = cieloSincronizarRecebimentos(
