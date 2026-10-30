@@ -66,6 +66,21 @@ function garantirTabelaRegrasImportacao(PDO $pdo): void
     ");
     $stmtPagBank->execute();
 
+    $stmtCielo = $pdo->prepare("
+        INSERT INTO fechamento_importacao_regras (
+            empresa_id, nome, grupo, tipo, origem, arquivo_php, estabelecimento,
+            cm_debito, cm_credito, cm_pix, ativo, ordem
+        )
+        SELECT 5, 'Cielo API', 'Comercial', 'cielo_api_comercial', 'CIELO_API_COMERCIAL',
+               'sincronizar_cielo_comercial.php', '3003947763',
+               3, 2, 12, 'S', 35
+        WHERE NOT EXISTS (
+            SELECT 1 FROM fechamento_importacao_regras
+            WHERE empresa_id = 5 AND tipo = 'cielo_api_comercial' AND grupo = 'Comercial'
+        )
+    ");
+    $stmtCielo->execute();
+
     $stmt = $pdo->prepare("
         SELECT COUNT(*)
         FROM information_schema.statistics
@@ -244,6 +259,12 @@ function descricaoRegraImportacao(array $regra): string
 
     if ($tipo === 'pagbank_comercial') {
         return 'Debito CMCONTADOR ' . (int)$regra['cm_debito']
+            . ' | Credito CMCONTADOR ' . (int)$regra['cm_credito']
+            . ' | PIX CMCONTADOR ' . (int)$regra['cm_pix'];
+    }
+
+    if ($tipo === 'cielo_api_comercial') {
+        return 'Sincronizacao via API - Debito CMCONTADOR ' . (int)$regra['cm_debito']
             . ' | Credito CMCONTADOR ' . (int)$regra['cm_credito']
             . ' | PIX CMCONTADOR ' . (int)$regra['cm_pix'];
     }
