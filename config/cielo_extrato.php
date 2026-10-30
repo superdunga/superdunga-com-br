@@ -27,6 +27,10 @@ function cieloConfiguracaoVrs(): array
             . 'secrets' . DIRECTORY_SEPARATOR . 'cielo_api2_comercial_vrs';
     }
 
+    // No cPanel, HOME pode nao estar disponivel para o processo do PHP.
+    $candidatos[] = dirname(__DIR__, 2) . DIRECTORY_SEPARATOR . '.superdunga' . DIRECTORY_SEPARATOR
+        . 'secrets' . DIRECTORY_SEPARATOR . 'cielo_api2_comercial_vrs';
+
     $diretorio = $diretorioConfigurado;
     foreach ($candidatos as $candidato) {
         if (is_dir($candidato)) {
