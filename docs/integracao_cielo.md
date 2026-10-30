@@ -2,13 +2,13 @@
 
 ## Escopo atual
 
-A integracao `cielo_api2_comercial_vrs` pertence exclusivamente ao card
-**Comercial** da empresa 1 (Armazem do Dunga). Ela usa o estabelecimento Cielo `3003947763` e as
-mesmas classificacoes comerciais ja adotadas pelos importadores da empresa:
+As duas integracoes pertencem a empresa 1 (Armazem do Dunga) e usam as mesmas
+classificacoes ja adotadas pelos demais importadores:
 
-- debito: CM 3;
-- credito: CM 2;
-- Pix: CM 12.
+- `cielo_api2_comercial_vrs`, card **Comercial**, estabelecimento `3003947763`:
+  debito CM 3, credito CM 2 e Pix CM 12;
+- `cielo_api1_outros_ethicos`, card **Outros**, estabelecimento `3003946813`:
+  debito CM 6, credito CM 14 e Pix CM 7.
 
 Os recebiveis sao gravados em `armazem_conciliacao_recebimentos` e seguem o
 fluxo existente de conciliacao do SuperDunga. A integracao nao executa nenhuma
@@ -34,10 +34,13 @@ original do arquivo CIELO03 e a data de pagamento do CIELO16 alimentam
 
 As credenciais nunca ficam no repositorio ou dentro da raiz publica do site.
 O diretorio deve ser indicado pela variavel de ambiente
-`SUPERDUNGA_CIELO_VRS_DIR`. Como alternativas locais, o codigo procura:
+`SUPERDUNGA_CIELO_VRS_DIR` e `SUPERDUNGA_CIELO_ETHICOS_DIR`. Como alternativas
+locais, o codigo procura respectivamente:
 
 - Windows: `%APPDATA%\SuperDunga\secrets\cielo_api2_comercial_vrs`;
 - Linux: `$HOME/.superdunga/secrets/cielo_api2_comercial_vrs`.
+- Windows: `%APPDATA%\SuperDunga\secrets\cielo_api1_outros_ethicos`;
+- Linux: `$HOME/.superdunga/secrets/cielo_api1_outros_ethicos`.
 
 Arquivos esperados no diretorio:
 
@@ -46,6 +49,9 @@ Arquivos esperados no diretorio:
 - `hmac_x_signature.txt`;
 - `comercial-vrs-ltda-extc-prd-mulesoft-mtls.cer`;
 - `comercial-vrs-ltda-extc-prd-mulesoft-mtls.key`.
+
+Na integracao Ethicos, os dois ultimos arquivos usam os nomes
+`ethicos-extc-prd-mulesoft-mtls.cer` e `ethicos-extc-prd-mulesoft-mtls.key`.
 
 A autenticacao usa OAuth2 com mTLS. O header `X-Signature` e calculado em
 HMAC-SHA256 sobre o JSON exato da solicitacao e convertido para Base64.
@@ -65,7 +71,7 @@ quantidade de arquivos, novos registros, atualizacoes e registros ignorados.
 
 O operador pode executar a sincronizacao em:
 
-`Fechamento > Recebimentos > Importar > Comercial > Cielo API`
+`Fechamento > Recebimentos > Importar > Comercial/Outros > Cielo API`
 
 Para agendamento no servidor principal:
 

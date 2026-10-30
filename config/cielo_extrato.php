@@ -6,9 +6,9 @@ if (defined('CIELO_EXTRATO_CONFIG_CARREGADO')) {
 
 define('CIELO_EXTRATO_CONFIG_CARREGADO', true);
 
-function cieloConfiguracaoVrs(): array
+function cieloDiretorioCredenciais(string $variavelAmbiente, string $nomeDiretorio): string
 {
-    $diretorioConfigurado = trim((string)getenv('SUPERDUNGA_CIELO_VRS_DIR'));
+    $diretorioConfigurado = trim((string)getenv($variavelAmbiente));
     $candidatos = [];
 
     if ($diretorioConfigurado !== '') {
@@ -18,18 +18,18 @@ function cieloConfiguracaoVrs(): array
     $appData = trim((string)getenv('APPDATA'));
     if ($appData !== '') {
         $candidatos[] = $appData . DIRECTORY_SEPARATOR . 'SuperDunga' . DIRECTORY_SEPARATOR
-            . 'secrets' . DIRECTORY_SEPARATOR . 'cielo_api2_comercial_vrs';
+            . 'secrets' . DIRECTORY_SEPARATOR . $nomeDiretorio;
     }
 
     $home = trim((string)getenv('HOME'));
     if ($home !== '') {
         $candidatos[] = $home . DIRECTORY_SEPARATOR . '.superdunga' . DIRECTORY_SEPARATOR
-            . 'secrets' . DIRECTORY_SEPARATOR . 'cielo_api2_comercial_vrs';
+            . 'secrets' . DIRECTORY_SEPARATOR . $nomeDiretorio;
     }
 
     // No cPanel, HOME pode nao estar disponivel para o processo do PHP.
     $candidatos[] = dirname(__DIR__, 2) . DIRECTORY_SEPARATOR . '.superdunga' . DIRECTORY_SEPARATOR
-        . 'secrets' . DIRECTORY_SEPARATOR . 'cielo_api2_comercial_vrs';
+        . 'secrets' . DIRECTORY_SEPARATOR . $nomeDiretorio;
 
     $diretorio = $diretorioConfigurado;
     foreach ($candidatos as $candidato) {
@@ -38,6 +38,16 @@ function cieloConfiguracaoVrs(): array
             break;
         }
     }
+
+    return $diretorio;
+}
+
+function cieloConfiguracaoVrs(): array
+{
+    $diretorio = cieloDiretorioCredenciais(
+        'SUPERDUNGA_CIELO_VRS_DIR',
+        'cielo_api2_comercial_vrs'
+    );
 
     return [
         'chave' => 'cielo_api2_comercial_vrs',
@@ -51,6 +61,28 @@ function cieloConfiguracaoVrs(): array
         'hmac' => 'hmac_x_signature.txt',
         'certificado' => 'comercial-vrs-ltda-extc-prd-mulesoft-mtls.cer',
         'chave_privada' => 'comercial-vrs-ltda-extc-prd-mulesoft-mtls.key',
+    ];
+}
+
+function cieloConfiguracaoEthicos(): array
+{
+    $diretorio = cieloDiretorioCredenciais(
+        'SUPERDUNGA_CIELO_ETHICOS_DIR',
+        'cielo_api1_outros_ethicos'
+    );
+
+    return [
+        'chave' => 'cielo_api1_outros_ethicos',
+        'nome' => 'Cielo Outros - Ethicos',
+        'merchant_code' => '3003946813',
+        'diretorio_credenciais' => $diretorio,
+        'token_url' => 'https://api-internet.cielo.com.br/cielo-security-sys-web/oauth/v2/MulesoftPRD/protocol/openid-connect/token',
+        'links_url' => 'https://api-internet.cielo.com.br/cielo-extc-serv-edi-link-exp-external/extc-serv-edi-link-external/v1/link/generate',
+        'client_id' => 'client_id.txt',
+        'client_secret' => 'access_token.txt',
+        'hmac' => 'hmac_x_signature.txt',
+        'certificado' => 'ethicos-extc-prd-mulesoft-mtls.cer',
+        'chave_privada' => 'ethicos-extc-prd-mulesoft-mtls.key',
     ];
 }
 

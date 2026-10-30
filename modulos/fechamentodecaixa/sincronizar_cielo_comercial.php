@@ -5,13 +5,19 @@ require_once '../../config/importacao_recebimentos.php';
 require_once '../../config/cielo_extrato.php';
 
 $empresaId = (int)($_SESSION['empresa_id'] ?? 0);
+$integracaoOutros = basename((string)($_SERVER['SCRIPT_NAME'] ?? '')) === 'sincronizar_cielo_outros.php';
+$grupoCielo = $integracaoOutros ? 'Outros' : 'Comercial';
+$tipoRegraCielo = $integracaoOutros ? 'cielo_api_outros' : 'cielo_api_comercial';
+$regraFallbackCielo = $integracaoOutros
+    ? regraImportacaoCieloOutrosArmazem()
+    : regraImportacaoCieloComercialArmazem();
 $regraImportacao = buscarRegraImportacao(
     $pdo_master,
     $empresaId,
-    'cielo_api_comercial',
-    regraImportacaoCieloComercialArmazem()
+    $tipoRegraCielo,
+    $regraFallbackCielo
 );
-$configCielo = cieloConfiguracaoVrs();
+$configCielo = $integracaoOutros ? cieloConfiguracaoEthicos() : cieloConfiguracaoVrs();
 $statusCredenciais = cieloStatusCredenciais($configCielo);
 $mensagem = null;
 $mensagemTipo = 'success';
@@ -26,7 +32,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
 if ($regraImportacao && $_SERVER['REQUEST_METHOD'] === 'POST') {
     try {
-        $tokenSessao = (string)($_SESSION['cielo_sync_token'] ?? '');
+        $tokenSessao = (string)($_SESSION['cielo_sync_token_' . $configCielo['chave']] ?? '');
         $tokenPost = (string)($_POST['token'] ?? '');
         if ($tokenSessao === '' || !hash_equals($tokenSessao, $tokenPost)) {
             throw new RuntimeException('Sessao expirada. Atualize a pagina e tente novamente.');
@@ -46,8 +52,9 @@ if ($regraImportacao && $_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 }
 
-if (empty($_SESSION['cielo_sync_token'])) {
-    $_SESSION['cielo_sync_token'] = bin2hex(random_bytes(24));
+$chaveTokenSessao = 'cielo_sync_token_' . $configCielo['chave'];
+if (empty($_SESSION[$chaveTokenSessao])) {
+    $_SESSION[$chaveTokenSessao] = bin2hex(random_bytes(24));
 }
 
 $historico = [];
@@ -78,7 +85,7 @@ require '../../layout/header.php';
     <div class="p-4 bg-white border rounded-2 shadow-sm">
         <div class="d-flex flex-wrap justify-content-between align-items-center gap-3">
             <div>
-                <span class="badge text-bg-primary mb-2">Comercial</span>
+                <span class="badge text-bg-<?= $integracaoOutros ? 'success' : 'primary' ?> mb-2"><?= htmlspecialchars($grupoCielo) ?></span>
                 <h1 class="h4 fw-bold mb-1">Cielo API</h1>
                 <p class="text-muted mb-0">Captura automatica dos extratos CIELO03 e CIELO16 para recebimentos.</p>
             </div>
@@ -89,7 +96,7 @@ require '../../layout/header.php';
 
 <?php if (!$regraImportacao): ?>
     <div class="alert alert-warning shadow-sm">
-        A integracao Cielo Comercial nao esta cadastrada para esta empresa.
+        A integracao Cielo <?= htmlspecialchars($grupoCielo) ?> nao esta cadastrada para esta empresa.
     </div>
 <?php else: ?>
     <?php if ($mensagem !== null): ?>
@@ -111,7 +118,7 @@ require '../../layout/header.php';
                         </div>
                     <?php else: ?>
                         <form method="POST" class="row g-3 align-items-end">
-                            <input type="hidden" name="token" value="<?= htmlspecialchars($_SESSION['cielo_sync_token']) ?>">
+                            <input type="hidden" name="token" value="<?= htmlspecialchars($_SESSION[$chaveTokenSessao]) ?>">
                             <div class="col-md-4">
                                 <label for="data_inicial" class="form-label">Data inicial</label>
                                 <input type="date" id="data_inicial" name="data_inicial" class="form-control"
@@ -123,7 +130,7 @@ require '../../layout/header.php';
                                        value="<?= htmlspecialchars($dataFinal) ?>" required>
                             </div>
                             <div class="col-md-4">
-                                <button type="submit" class="btn btn-primary w-100">Sincronizar agora</button>
+                                <button type="submit" class="btn btn-<?= $integracaoOutros ? 'success' : 'primary' ?> w-100">Sincronizar agora</button>
                             </div>
                         </form>
                     <?php endif; ?>
@@ -140,7 +147,7 @@ require '../../layout/header.php';
                         <dt class="col-5">Fonte</dt>
                         <dd class="col-7">Cielo API</dd>
                         <dt class="col-5">Grupo</dt>
-                        <dd class="col-7">Comercial</dd>
+                        <dd class="col-7"><?= htmlspecialchars($grupoCielo) ?></dd>
                         <dt class="col-5">Debito</dt>
                         <dd class="col-7">CM <?= (int)$regraImportacao['cm_debito'] ?></dd>
                         <dt class="col-5">Credito</dt>

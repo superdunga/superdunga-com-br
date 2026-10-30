@@ -131,6 +131,7 @@ function regrasImportacaoFallbackArmazem(): array
             'cm_pix' => null,
             'botao' => 'btn-success',
         ],
+        regraImportacaoCieloOutrosArmazem(),
         [
             'id' => 0,
             'empresa_id' => 1,
@@ -180,6 +181,25 @@ function regraImportacaoCieloComercialArmazem(): array
         'cm_credito' => 2,
         'cm_pix' => 12,
         'botao' => 'btn-primary',
+    ];
+}
+
+function regraImportacaoCieloOutrosArmazem(): array
+{
+    return [
+        'id' => 0,
+        'empresa_id' => 1,
+        'nome' => 'Cielo API',
+        'descricao' => 'Sincronizacao via API - Debito CMCONTADOR 6 | Credito CMCONTADOR 14 | PIX CMCONTADOR 7',
+        'grupo' => 'Outros',
+        'tipo' => 'cielo_api_outros',
+        'origem' => 'CIELO_API_OUTROS',
+        'arquivo_php' => 'sincronizar_cielo_outros.php',
+        'estabelecimento' => '3003946813',
+        'cm_debito' => 6,
+        'cm_credito' => 14,
+        'cm_pix' => 7,
+        'botao' => 'btn-success',
     ];
 }
 
@@ -268,7 +288,7 @@ function descricaoRegraImportacao(array $regra): string
             . ' | PIX CMCONTADOR ' . (int)$regra['cm_pix'];
     }
 
-    if ($tipo === 'cielo_api_comercial') {
+    if (in_array($tipo, ['cielo_api_comercial', 'cielo_api_outros'], true)) {
         return 'Sincronizacao via API - Debito CMCONTADOR ' . (int)$regra['cm_debito']
             . ' | Credito CMCONTADOR ' . (int)$regra['cm_credito']
             . ' | PIX CMCONTADOR ' . (int)$regra['cm_pix'];
