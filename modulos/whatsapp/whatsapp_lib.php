@@ -2703,7 +2703,7 @@ function whatsappMensagemApresentacaoCaixa(PDO $pdo, ?DateTime $base = null, int
     $msg .= "Vendas em Dinheiro: R$ " . number_format((float)($vendas['vendas_dinheiro'] ?? 0), 2, ',', '.') . "\n";
     $msg .= "Vendas em Cartoes: R$ " . number_format($vendasCartoes, 2, ',', '.') . "\n";
     $msg .= "Vendas em Clientes: R$ " . number_format((float)($vendas['vendas_clientes'] ?? 0), 2, ',', '.') . "\n\n";
-    $msg .= "Valor dos Cartoes: " . ($temRecebiveisCartoes
+    $msg .= "Importacao dos Cartoes: " . ($temRecebiveisCartoes
         ? 'R$ ' . number_format($valorCartoes, 2, ',', '.')
         : '*ZERADO*') . "\n";
     if ($temRecebiveisCartoes) {
