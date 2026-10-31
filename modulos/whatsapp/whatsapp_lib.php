@@ -482,6 +482,45 @@ function whatsappEnsureTables(PDO $pdo): void
     } catch (Throwable $e) {
         // Instalacoes antigas podem ainda nao ter o controle de modulos criado.
     }
+
+    try {
+        $pdo->exec("
+            INSERT INTO whatsapp_rotinas
+                (empresa_id, codigo, nome, descricao, mensagem_id, origem_mensagem, gerador_sistema, ativo, evitar_duplicidade_diaria, periodicidade)
+            SELECT
+                empresa_id,
+                'caixa_dia_anterior',
+                'Caixa do Dia Anterior',
+                'Mostra a mesma apresentacao do caixa para o dia anterior ao envio.',
+                NULL,
+                'SISTEMA',
+                'caixa_dia_anterior',
+                ativo,
+                evitar_duplicidade_diaria,
+                'MANUAL'
+            FROM whatsapp_rotinas
+            WHERE codigo = 'apresentacao_caixa'
+            ON DUPLICATE KEY UPDATE
+                nome = VALUES(nome),
+                descricao = VALUES(descricao),
+                mensagem_id = NULL,
+                origem_mensagem = 'SISTEMA',
+                gerador_sistema = 'caixa_dia_anterior'
+        ");
+
+        $pdo->exec("
+            INSERT IGNORE INTO whatsapp_rotina_destinatarios (rotina_id, destinatario_id)
+            SELECT destino.id, rd.destinatario_id
+            FROM whatsapp_rotinas origem
+            INNER JOIN whatsapp_rotinas destino
+                ON destino.empresa_id = origem.empresa_id
+               AND destino.codigo = 'caixa_dia_anterior'
+            INNER JOIN whatsapp_rotina_destinatarios rd ON rd.rotina_id = origem.id
+            WHERE origem.codigo = 'apresentacao_caixa'
+        ");
+    } catch (Throwable $e) {
+        // A rotina pode ser cadastrada manualmente em instalacoes sem os indices atuais.
+    }
 }
 
 function whatsappEnsureColumn(PDO $pdo, string $table, string $column, string $alterSql): void
@@ -594,6 +633,12 @@ function whatsappGeradoresSistema(): array
             'descricao' => 'Mostra a diferenca do dinheiro de todos os operadores do dia, das 07:00 ate 03:00.',
             'arquivo' => 'modulos/whatsapp/whatsapp_lib.php',
             'funcao' => 'whatsappMensagemApresentacaoCaixa',
+        ],
+        'caixa_dia_anterior' => [
+            'nome' => 'Caixa do Dia Anterior',
+            'descricao' => 'Mostra a mesma apresentacao do caixa para o dia anterior ao envio.',
+            'arquivo' => 'modulos/whatsapp/whatsapp_lib.php',
+            'funcao' => 'whatsappMensagemCaixaDiaAnterior',
         ],
         'conferencia_caixa_detalhada' => [
             'nome' => 'Conferencia detalhada do caixa',
@@ -1344,6 +1389,10 @@ function whatsappMensagemRotina(PDO $pdo, array $rotina): array
 
         if ($gerador === 'apresentacao_caixa' || $gerador === 'apresentacao_caixa_1') {
             return [whatsappMensagemApresentacaoCaixa($pdo, null, $empresaId), null];
+        }
+
+        if ($gerador === 'caixa_dia_anterior') {
+            return [whatsappMensagemCaixaDiaAnterior($pdo, null, $empresaId), null];
         }
 
         if ($gerador === 'conferencia_caixa_detalhada') {
@@ -2717,6 +2766,14 @@ function whatsappMensagemApresentacaoCaixa(PDO $pdo, ?DateTime $base = null, int
 function whatsappMensagemApresentacaoCaixa1(PDO $pdo, ?DateTime $base = null, int $empresaId = 1): string
 {
     return whatsappMensagemApresentacaoCaixa($pdo, $base, $empresaId);
+}
+
+function whatsappMensagemCaixaDiaAnterior(PDO $pdo, ?DateTime $base = null, int $empresaId = 1): string
+{
+    $referencia = $base ? clone $base : new DateTime('now');
+    $referencia->setTime(12, 0, 0)->modify('-1 day');
+
+    return whatsappMensagemApresentacaoCaixa($pdo, $referencia, $empresaId);
 }
 
 function whatsappMensagemConferenciaCaixaDetalhada(PDO $pdo, ?DateTime $base = null, int $empresaId = 1): string
