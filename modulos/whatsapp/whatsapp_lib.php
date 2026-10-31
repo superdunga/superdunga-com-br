@@ -2690,8 +2690,10 @@ function whatsappMensagemApresentacaoCaixa(PDO $pdo, ?DateTime $base = null, int
         return $msg;
     }
 
+    $diferencaDinheiroTotal = 0.0;
     foreach ($caixas as $caixa) {
         $diferenca = (float)$caixa['diferenca'];
+        $diferencaDinheiroTotal += $diferenca;
         $msg .= "Operador: " . $caixa['operador'] . "\n";
         $msg .= "Valor da Diferenca no dinheiro: R$ " . number_format($diferenca, 2, ',', '.') . "\n";
         $msg .= "Valor da Sangria de Fechamento: R$ " . number_format((float)($caixa['valor_fechamento'] ?? 0), 2, ',', '.') . "\n\n";
@@ -2699,11 +2701,12 @@ function whatsappMensagemApresentacaoCaixa(PDO $pdo, ?DateTime $base = null, int
 
     $msg .= "Vendas em Dinheiro: R$ " . number_format((float)($vendas['vendas_dinheiro'] ?? 0), 2, ',', '.') . "\n";
     $msg .= "Vendas em Cartoes: R$ " . number_format($vendasCartoes, 2, ',', '.') . "\n";
+    $msg .= "Vendas em Clientes: R$ " . number_format((float)($vendas['vendas_clientes'] ?? 0), 2, ',', '.') . "\n\n";
     $msg .= "Valor dos Cartoes: " . ((int)($recebiveisCartoes['quantidade'] ?? 0) > 0
         ? 'R$ ' . number_format($valorCartoes, 2, ',', '.')
         : '*ZERADO*') . "\n";
-    $msg .= "Diferenca nos Cartoes: R$ " . number_format($diferencaCartoes, 2, ',', '.') . "\n";
-    $msg .= "Vendas em Clientes: R$ " . number_format((float)($vendas['vendas_clientes'] ?? 0), 2, ',', '.') . "\n";
+    $msg .= "Diferenca nos Cartoes: R$ " . number_format($diferencaCartoes, 2, ',', '.') . "\n\n";
+    $msg .= "Diferenca no *DINHEIRO* do caixa: R$ " . number_format($diferencaDinheiroTotal + $diferencaCartoes, 2, ',', '.') . "\n";
 
     return trim($msg);
 }
