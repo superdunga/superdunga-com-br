@@ -165,6 +165,17 @@ function regrasImportacaoFallbackArmazem(): array
     ];
 }
 
+function regraImportacaoFallbackPorOrigem(string $origem): array
+{
+    foreach (regrasImportacaoFallbackArmazem() as $regra) {
+        if (($regra['origem'] ?? '') === $origem) {
+            return $regra;
+        }
+    }
+
+    throw new RuntimeException('Regra de importacao nao encontrada: ' . $origem . '.');
+}
+
 function regraImportacaoCieloComercialArmazem(): array
 {
     return [

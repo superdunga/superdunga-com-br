@@ -8,7 +8,7 @@ ini_set('display_errors', 1);
 error_reporting(E_ALL);
 
 $empresa_id = (int)$_SESSION['empresa_id'];
-$fallback = regrasImportacaoFallbackArmazem()[3];
+$fallback = regraImportacaoFallbackPorOrigem('SIPAG_PIX_OUTROS');
 $regraImportacao = buscarRegraImportacao($pdo_master, $empresa_id, 'sipag_pix', $fallback);
 
 if (!$regraImportacao) {

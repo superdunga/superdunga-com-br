@@ -8,7 +8,7 @@ ini_set('display_errors', 1);
 error_reporting(E_ALL);
 
 $empresa_id = (int)$_SESSION['empresa_id'];
-$fallback = regrasImportacaoFallbackArmazem()[4];
+$fallback = regraImportacaoFallbackPorOrigem('PAGSEGURO_PIX');
 $regraImportacao = buscarRegraImportacao($pdo_master, $empresa_id, 'pagseguro_pix', $fallback);
 
 if (!$regraImportacao) {
