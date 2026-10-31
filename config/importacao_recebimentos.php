@@ -115,7 +115,6 @@ function regrasImportacaoFallbackArmazem(): array
             'cm_pix' => 12,
             'botao' => 'btn-primary',
         ],
-        regraImportacaoCieloComercialArmazem(),
         [
             'id' => 0,
             'empresa_id' => 1,
@@ -131,7 +130,6 @@ function regrasImportacaoFallbackArmazem(): array
             'cm_pix' => null,
             'botao' => 'btn-success',
         ],
-        regraImportacaoCieloOutrosArmazem(),
         [
             'id' => 0,
             'empresa_id' => 1,
@@ -162,6 +160,8 @@ function regrasImportacaoFallbackArmazem(): array
             'cm_pix' => 7,
             'botao' => 'btn-success',
         ],
+        regraImportacaoCieloComercialArmazem(),
+        regraImportacaoCieloOutrosArmazem(),
     ];
 }
 
