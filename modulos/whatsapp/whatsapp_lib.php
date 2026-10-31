@@ -2681,6 +2681,7 @@ function whatsappMensagemApresentacaoCaixa(PDO $pdo, ?DateTime $base = null, int
     $vendasCartoes = (float)($vendas['vendas_cartoes'] ?? 0);
     $valorCartoes = (float)($recebiveisCartoes['valor_cartoes'] ?? 0);
     $diferencaCartoes = $vendasCartoes - $valorCartoes;
+    $temRecebiveisCartoes = (int)($recebiveisCartoes['quantidade'] ?? 0) > 0;
 
     $msg = "*Apresentacao do Caixa*\n\n";
     $msg .= "Data: " . $base->format('d/m/Y') . "\n";
@@ -2702,11 +2703,13 @@ function whatsappMensagemApresentacaoCaixa(PDO $pdo, ?DateTime $base = null, int
     $msg .= "Vendas em Dinheiro: R$ " . number_format((float)($vendas['vendas_dinheiro'] ?? 0), 2, ',', '.') . "\n";
     $msg .= "Vendas em Cartoes: R$ " . number_format($vendasCartoes, 2, ',', '.') . "\n";
     $msg .= "Vendas em Clientes: R$ " . number_format((float)($vendas['vendas_clientes'] ?? 0), 2, ',', '.') . "\n\n";
-    $msg .= "Valor dos Cartoes: " . ((int)($recebiveisCartoes['quantidade'] ?? 0) > 0
+    $msg .= "Valor dos Cartoes: " . ($temRecebiveisCartoes
         ? 'R$ ' . number_format($valorCartoes, 2, ',', '.')
         : '*ZERADO*') . "\n";
-    $msg .= "Diferenca nos Cartoes: R$ " . number_format($diferencaCartoes, 2, ',', '.') . "\n\n";
-    $msg .= "Diferenca no *DINHEIRO* do caixa: R$ " . number_format($diferencaDinheiroTotal + $diferencaCartoes, 2, ',', '.') . "\n";
+    if ($temRecebiveisCartoes) {
+        $msg .= "Diferenca nos Cartoes: R$ " . number_format($diferencaCartoes, 2, ',', '.') . "\n\n";
+        $msg .= "Diferenca no *DINHEIRO* do caixa: R$ " . number_format($diferencaDinheiroTotal + $diferencaCartoes, 2, ',', '.') . "\n";
+    }
 
     return trim($msg);
 }
