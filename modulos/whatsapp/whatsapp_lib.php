@@ -2666,6 +2666,22 @@ function whatsappMensagemApresentacaoCaixa(PDO $pdo, ?DateTime $base = null, int
     $stmt->execute([$empresaId, $inicio, $fim]);
     $vendas = $stmt->fetch(PDO::FETCH_ASSOC) ?: [];
 
+    $stmt = $pdo->prepare("
+        SELECT
+            COUNT(*) AS quantidade,
+            COALESCE(SUM(valor_bruto), 0) AS valor_cartoes
+        FROM armazem_conciliacao_recebimentos
+        WHERE empresa_id = ?
+          AND data_venda BETWEEN ? AND ?
+          AND CMCONTADOR NOT IN (1, 9)
+    ");
+    $stmt->execute([$empresaId, $inicio, $fim]);
+    $recebiveisCartoes = $stmt->fetch(PDO::FETCH_ASSOC) ?: [];
+
+    $vendasCartoes = (float)($vendas['vendas_cartoes'] ?? 0);
+    $valorCartoes = (float)($recebiveisCartoes['valor_cartoes'] ?? 0);
+    $diferencaCartoes = $vendasCartoes - $valorCartoes;
+
     $msg = "*Apresentacao do Caixa*\n\n";
     $msg .= "Data: " . $base->format('d/m/Y') . "\n";
 
@@ -2682,7 +2698,11 @@ function whatsappMensagemApresentacaoCaixa(PDO $pdo, ?DateTime $base = null, int
     }
 
     $msg .= "Vendas em Dinheiro: R$ " . number_format((float)($vendas['vendas_dinheiro'] ?? 0), 2, ',', '.') . "\n";
-    $msg .= "Vendas em Cartoes: R$ " . number_format((float)($vendas['vendas_cartoes'] ?? 0), 2, ',', '.') . "\n";
+    $msg .= "Vendas em Cartoes: R$ " . number_format($vendasCartoes, 2, ',', '.') . "\n";
+    $msg .= "Valor dos Cartoes: " . ((int)($recebiveisCartoes['quantidade'] ?? 0) > 0
+        ? 'R$ ' . number_format($valorCartoes, 2, ',', '.')
+        : '*ZERADO*') . "\n";
+    $msg .= "Diferenca nos Cartoes: R$ " . number_format($diferencaCartoes, 2, ',', '.') . "\n";
     $msg .= "Vendas em Clientes: R$ " . number_format((float)($vendas['vendas_clientes'] ?? 0), 2, ',', '.') . "\n";
 
     return trim($msg);
