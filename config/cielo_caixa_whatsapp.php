@@ -85,6 +85,11 @@ function cieloCaixaSincronizarConta(PDO $pdo, int $empresaId, string $tipo, arra
     return cieloSincronizarRecebimentos($pdo, $empresaId, $regra, $config, $data, $data);
 }
 
+function cieloCaixaPrazoPixEncerrado(DateTimeImmutable $agora): bool
+{
+    return $agora->format('H:i:s') >= '10:00:00';
+}
+
 function cieloCaixaExecutarMonitor(PDO $pdo, ?DateTimeImmutable $agora = null): array
 {
     date_default_timezone_set('America/Sao_Paulo');
@@ -147,8 +152,9 @@ function cieloCaixaExecutarMonitor(PDO $pdo, ?DateTimeImmutable $agora = null): 
         if ($exigirEthicos === null || $exigirVrs === null) {
             $arquivosEthicos = cieloCaixaConsultarArquivos($configEthicos, $regraEthicos, $dataProcessamento);
             $arquivosVrs = cieloCaixaConsultarArquivos($configVrs, $regraVrs, $dataProcessamento);
+            $prazoPixEncerrado = cieloCaixaPrazoPixEncerrado($agora);
 
-            if (!$arquivosEthicos['16_disponivel'] || !$arquivosVrs['16_disponivel']) {
+            if ((!$arquivosEthicos['16_disponivel'] || !$arquivosVrs['16_disponivel']) && !$prazoPixEncerrado) {
                 cieloCaixaAtualizarControle($pdo, (int)$controle['id'], [
                     'status' => 'AGUARDANDO_PIX',
                     'detalhes' => 'Aguardando CIELO16 das duas contas.',
@@ -168,9 +174,15 @@ function cieloCaixaExecutarMonitor(PDO $pdo, ?DateTimeImmutable $agora = null): 
                     'exigir_ethicos' => 'N',
                     'exigir_vrs' => 'N',
                     'status' => 'SEM_PIX',
-                    'detalhes' => 'Nenhuma das contas Cielo possui PIX no dia.',
+                    'detalhes' => $prazoPixEncerrado
+                        ? 'Prazo de verificacao encerrado as 10:00 sem PIX nas contas Cielo.'
+                        : 'Nenhuma das contas Cielo possui PIX no dia.',
                 ]);
-                return ['status' => 'SEM_PIX', 'data_caixa' => $dataCaixa];
+                return [
+                    'status' => 'SEM_PIX',
+                    'data_caixa' => $dataCaixa,
+                    'motivo' => $prazoPixEncerrado ? 'LIMITE_10H' : 'ARQUIVOS_SEM_PIX',
+                ];
             }
 
             cieloCaixaAtualizarControle($pdo, (int)$controle['id'], [
