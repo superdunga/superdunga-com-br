@@ -1,6 +1,7 @@
 <?php
 require __DIR__ . '/../../config/conexao.php';
 require __DIR__ . '/whatsapp_lib.php';
+require __DIR__ . '/../../config/cielo_caixa_whatsapp.php';
 require __DIR__ . '/../whatsapp_operacional/whatsapp_operacional_lib.php';
 
 header('Content-Type: application/json; charset=utf-8');
@@ -32,6 +33,7 @@ try {
     $pdo_master->prepare('UPDATE whatsapp_gerencial_config SET cron_ultimo_contato_em=NOW() WHERE agendamento_token=?')->execute([$tokenRecebido]);
 
     $resultado = whatsappExecutarAgendamentos($pdo_master);
+    $resultadoCaixaCielo = cieloCaixaExecutarMonitor($pdo_master);
     $resultadoOperacional = whatsappOperacionalExecutarAutomacao($pdo_master);
     $confirmacoesOperacionais = whatsappOperacionalConsultarConfirmacoes($pdo_master);
     $confirmacoesGerenciais = whatsappAtualizarConfirmacoesGerenciais($pdo_master);
@@ -41,6 +43,7 @@ try {
         'executadas' => count(array_filter($resultado, static function ($item) { return $item['status'] !== 'IGNORADO_ATRASO'; })),
         'ignoradas_atraso' => count(array_filter($resultado, static function ($item) { return $item['status'] === 'IGNORADO_ATRASO'; })),
         'resultado' => $resultado,
+        'caixa_dia_anterior_cielo' => $resultadoCaixaCielo,
         'fechamentos_operacionais' => $resultadoOperacional,
         'confirmacoes_operacionais' => $confirmacoesOperacionais,
         'confirmacoes_gerenciais' => $confirmacoesGerenciais,
