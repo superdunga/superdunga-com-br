@@ -20,15 +20,9 @@ param(
     [switch]$IgnoreInvalidCertificate
 )
 
-Add-Type -AssemblyName System.Net
-
 $ErrorActionPreference = "Stop"
-$credential = New-Object System.Net.NetworkCredential($Username, $Password)
 $localBase = (Get-Location).Path
-
-if ($IgnoreInvalidCertificate) {
-    [System.Net.ServicePointManager]::ServerCertificateValidationCallback = { $true }
-}
+$curl = (Get-Command curl.exe -ErrorAction Stop).Source
 
 function Send-FtpFile {
     param(
@@ -43,29 +37,22 @@ function Send-FtpFile {
     $remotePath = ($RelativePath -replace '\\', '/')
     $remoteUri = "ftp://$Server`:$Port$RemoteBase/$remotePath"
 
-    $request = [System.Net.FtpWebRequest]::Create($remoteUri)
-    $request.Credentials = $credential
-    $request.Method = [System.Net.WebRequestMethods+Ftp]::UploadFile
-    $request.UsePassive = $true
-    $request.UseBinary = $true
-    $request.EnableSsl = $true
-
-    $bytes = [System.IO.File]::ReadAllBytes($localPath)
-    $request.ContentLength = $bytes.Length
-
-    $stream = $request.GetRequestStream()
-    try {
-        $stream.Write($bytes, 0, $bytes.Length)
-    } finally {
-        $stream.Close()
+    $curlArgs = @(
+        '--silent', '--show-error', '--fail', '--ssl-reqd', '--ftp-pasv',
+        '--user', "$Username`:$Password",
+        '--upload-file', $localPath,
+        $remoteUri
+    )
+    if ($IgnoreInvalidCertificate) {
+        $curlArgs = @('--insecure') + $curlArgs
     }
 
-    $response = $request.GetResponse()
-    try {
-        Write-Host "Enviado: $RelativePath - $($response.StatusDescription.Trim())"
-    } finally {
-        $response.Close()
+    & $curl @curlArgs
+    if ($LASTEXITCODE -ne 0) {
+        throw "Falha ao enviar por FTPS: $RelativePath (curl $LASTEXITCODE)."
     }
+
+    Write-Host "Enviado: $RelativePath"
 }
 
 foreach ($file in $Files) {

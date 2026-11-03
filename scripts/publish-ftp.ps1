@@ -53,36 +53,28 @@ try {
         -RemoteBase '/superdunga.com.br' -Files $relativeFiles `
         -IgnoreInvalidCertificate
 
-    $credential = [System.Net.NetworkCredential]::new($settings.username, $settings.password)
-    $sha = [System.Security.Cryptography.SHA256]::Create()
-    try {
-        foreach ($file in $relativeFiles) {
-            $request = [System.Net.FtpWebRequest]::Create(
+    $curl = (Get-Command curl.exe -ErrorAction Stop).Source
+    foreach ($file in $relativeFiles) {
+        $temporario = [System.IO.Path]::GetTempFileName()
+        try {
+            & $curl `
+                --silent --show-error --fail --ssl-reqd --insecure --ftp-pasv `
+                --user "$($settings.username):$($settings.password)" `
+                --output $temporario `
                 "ftp://$($settings.ftpServer)/superdunga.com.br/$file"
-            )
-            $request.Credentials = $credential
-            $request.Method = [System.Net.WebRequestMethods+Ftp]::DownloadFile
-            $request.UsePassive = $true
-            $request.EnableSsl = $true
-            $response = $request.GetResponse()
-            $stream = $response.GetResponseStream()
-            $memory = [System.IO.MemoryStream]::new()
-            try {
-                $stream.CopyTo($memory)
-                $remoteHash = [Convert]::ToHexString($sha.ComputeHash($memory.ToArray()))
-            } finally {
-                $memory.Dispose()
-                $stream.Dispose()
-                $response.Dispose()
+            if ($LASTEXITCODE -ne 0) {
+                throw "Falha ao baixar arquivo publicado para verificacao: $file (curl $LASTEXITCODE)."
             }
+
+            $remoteHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $temporario).Hash
             $localHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $file).Hash
             if ($remoteHash -ne $localHash) {
                 throw "Verificacao FTP falhou: $file"
             }
             Write-Host "Verificado no FTP: $file"
+        } finally {
+            [System.IO.File]::Delete($temporario)
         }
-    } finally {
-        $sha.Dispose()
     }
 } finally {
     Pop-Location
