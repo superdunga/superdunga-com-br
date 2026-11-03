@@ -50,7 +50,8 @@ try {
     & (Join-Path $root 'upload_ftp.ps1') `
         -Server $settings.ftpServer -Port 21 `
         -Username $settings.username -Password $settings.password `
-        -RemoteBase '/superdunga.com.br' -Files $relativeFiles
+        -RemoteBase '/superdunga.com.br' -Files $relativeFiles `
+        -IgnoreInvalidCertificate
 
     $credential = [System.Net.NetworkCredential]::new($settings.username, $settings.password)
     $sha = [System.Security.Cryptography.SHA256]::Create()
@@ -62,6 +63,7 @@ try {
             $request.Credentials = $credential
             $request.Method = [System.Net.WebRequestMethods+Ftp]::DownloadFile
             $request.UsePassive = $true
+            $request.EnableSsl = $true
             $response = $request.GetResponse()
             $stream = $response.GetResponseStream()
             $memory = [System.IO.MemoryStream]::new()
