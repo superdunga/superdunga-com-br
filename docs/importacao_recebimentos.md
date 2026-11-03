@@ -21,7 +21,10 @@ regra geral D+1 ou D+30.
   data da venda, sem hora e minuto.
 - PagSeguro PIX: o layout nao fornece previsao separada; usa a data da venda,
   sem hora e minuto.
-- TON Comercial: o layout nao fornece previsao separada; CM 2 e 3 usam D+1 e
+- TON Comercial: aceita o layout historico de vendas e o layout atual de
+  cobrancas. O layout atual usa o identificador da cobranca como chave unica,
+  a data de captura como data da venda, o valor bruto atualizado e o valor
+  liquido. Nenhum dos layouts fornece previsao separada; CM 2 e 3 usam D+1 e
   CM 12 usa a data da venda.
 - Granito POS Comercial e Outros: o arquivo de transacoes nao fornece previsao;
   CM 2 e 14 usam D+30 e CM 3 e 6 usam D+1.

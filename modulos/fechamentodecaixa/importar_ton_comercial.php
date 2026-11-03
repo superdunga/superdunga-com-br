@@ -34,97 +34,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['arquivo'])) {
         }
 
         $linhas = tonLerXlsx($arquivo);
-        if (count($linhas) < 2) {
-            throw new RuntimeException('O arquivo TON nao possui vendas para importar.');
-        }
-
-        $cabecalhosEsperados = [
-            'Id da transação', 'Data da transação', 'Valor', 'Taxa', 'Desconto',
-            'Valor recebido', 'Status', 'Nome do titular', 'Bandeira',
-            'Método de pagamento', 'Parcelas', 'Cartão(últimos 4 dígitos)',
-            'Método de captura', 'Tipo de cartão', 'Nº de série',
-        ];
-        $cabecalhos = array_map('trim', array_slice($linhas[0], 0, count($cabecalhosEsperados)));
-        if ($cabecalhos !== $cabecalhosEsperados) {
-            throw new RuntimeException('Importacao bloqueada: as colunas nao correspondem ao arquivo de vendas TON esperado.');
-        }
-
-        $terminaisPermitidos = preg_split('/\s*[,;]\s*/', (string)($regraImportacao['estabelecimento'] ?? ''), -1, PREG_SPLIT_NO_EMPTY);
-        $registros = [];
-        $ignoradosStatus = 0;
-
-        foreach (array_slice($linhas, 1) as $indice => $linha) {
-            $numeroLinha = $indice + 2;
-            $linha = array_pad($linha, count($cabecalhosEsperados), '');
-            if (count(array_filter($linha, function ($valor) { return trim((string)$valor) !== ''; })) === 0) {
-                continue;
-            }
-
-            $idTransacao = trim($linha[0]);
-            $dataVenda = tonDataHora($linha[1]);
-            $valorBruto = tonValor($linha[2]);
-            $valorDesconto = tonValor($linha[4]);
-            $valorLiquido = tonValor($linha[5]);
-            $status = trim($linha[6]);
-            $pagador = trim($linha[7]);
-            $bandeira = trim($linha[8]);
-            $metodo = trim($linha[9]);
-            $totalParcelas = max(1, (int)$linha[10]);
-            $finalCartao = trim($linha[11]);
-            $tipoCartao = trim($linha[13]);
-            $terminal = trim($linha[14]);
-
-            if (strcasecmp($status, 'Paga') !== 0) {
-                $ignoradosStatus++;
-                continue;
-            }
-            if ($idTransacao === '' || $dataVenda === null || $valorBruto <= 0) {
-                throw new RuntimeException("Linha {$numeroLinha}: identificador, data ou valor da venda invalido.");
-            }
-            if (abs(($valorBruto - $valorDesconto) - $valorLiquido) > 0.01) {
-                throw new RuntimeException("Linha {$numeroLinha}: valor recebido difere do valor menos o desconto.");
-            }
-            if ($terminaisPermitidos && !in_array($terminal, $terminaisPermitidos, true)) {
-                throw new RuntimeException("Linha {$numeroLinha}: terminal TON nao pertence a esta empresa.");
-            }
-
-            $classificacao = tonClassificarPagamento($metodo, $regraImportacao);
-            if ($classificacao['cm'] <= 0) {
-                throw new RuntimeException("Linha {$numeroLinha}: CM nao configurado para {$metodo}.");
-            }
-            $dataPrevista = substr($dataVenda, 0, 10);
-            if (in_array($classificacao['cm'], [2, 3], true)) {
-                $dataPrevista = date('Y-m-d', strtotime($dataPrevista . ' +1 day'));
-            }
-
-            $identificador = 'TON-' . $idTransacao;
-            if (isset($registros[$identificador])) {
-                throw new RuntimeException("Linha {$numeroLinha}: ID da transacao repetido dentro do arquivo.");
-            }
-
-            $descricaoPartes = array_filter(['TON', $metodo, $tipoCartao, $bandeira, $finalCartao !== '' ? 'Final ' . $finalCartao : '']);
-            $registros[$identificador] = [
-                'id_transacao' => $idTransacao,
-                'data_venda' => $dataVenda,
-                'data_prevista' => $dataPrevista,
-                'valor_bruto' => $valorBruto,
-                'valor_desconto' => $valorDesconto,
-                'valor_liquido' => $valorLiquido,
-                'identificador' => $identificador,
-                'descricao' => implode(' - ', $descricaoPartes),
-                'pagador' => $pagador !== '' ? $pagador : 'TON',
-                'total_parcelas' => $totalParcelas,
-                'status' => $status,
-                'cm' => $classificacao['cm'],
-                'tipo_operacao' => $classificacao['tipo'],
-                'bandeira' => $bandeira,
-                'terminal' => $terminal,
-            ];
-        }
-
-        if (!$registros) {
-            throw new RuntimeException('Nenhuma venda paga foi encontrada no arquivo TON.');
-        }
+        $preparacao = tonPrepararVendas($linhas, $regraImportacao);
+        $registros = $preparacao['registros'];
+        $ignoradosStatus = (int)$preparacao['ignorados_status'];
 
         $pdo_master->beginTransaction();
         $check = $pdo_master->prepare("
@@ -170,7 +82,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['arquivo'])) {
                 $registro['cm'],
                 $registro['tipo_operacao'],
                 $registro['bandeira'],
-                $registro['id_transacao'],
+                $registro['nsu_transacao'],
                 $registro['terminal'],
                 $registro['id_transacao'],
             ]);
@@ -178,7 +90,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['arquivo'])) {
         }
         $pdo_master->commit();
 
-        $mensagem = "Importacao TON concluida. Registros importados: {$importados}. Duplicados ignorados: {$duplicados}. Status nao pagos ignorados: {$ignoradosStatus}.";
+        $mensagem = "Importacao TON concluida. Registros importados: {$importados}. Duplicados ignorados: {$duplicados}. Status nao aprovados/pagos ignorados: {$ignoradosStatus}.";
     } catch (Throwable $e) {
         if ($pdo_master->inTransaction()) {
             $pdo_master->rollBack();
