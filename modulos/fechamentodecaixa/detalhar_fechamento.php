@@ -373,6 +373,29 @@ foreach ($vendas as $vendaTotal) {
     $total_venda += (float)($vendaTotal['valor'] ?? 0);
 }
 
+$resumoRecebimentosPorCm = [];
+$quantidadeRecebimentosResumo = 0;
+$totalRecebimentosResumo = 0.0;
+foreach ($recebiveisPorVenda as $recebiveisVenda) {
+    foreach ($recebiveisVenda as $recebivelResumo) {
+        $cm = (string)($recebivelResumo['CMCONTADOR'] ?? '');
+        $valorRecebimento = (float)($recebivelResumo['VLRPARCELA'] ?? 0);
+
+        if (!isset($resumoRecebimentosPorCm[$cm])) {
+            $resumoRecebimentosPorCm[$cm] = [
+                'quantidade' => 0,
+                'valor' => 0.0,
+            ];
+        }
+
+        $resumoRecebimentosPorCm[$cm]['quantidade']++;
+        $resumoRecebimentosPorCm[$cm]['valor'] += $valorRecebimento;
+        $quantidadeRecebimentosResumo++;
+        $totalRecebimentosResumo += $valorRecebimento;
+    }
+}
+uksort($resumoRecebimentosPorCm, 'strnatcmp');
+
 $total_venda_relatorio = 0;
 foreach ($vendasRelatorio as $vendaTotalRelatorio) {
     $total_venda_relatorio += (float)($vendaTotalRelatorio['valor'] ?? 0);
@@ -918,6 +941,41 @@ while ($p = $stmt->fetch(PDO::FETCH_ASSOC)) {
     <td>R$ <?php echo number_format($total_prazo, 2, ',', '.'); ?></td>
 </tr>
 
+            </tbody>
+        </table>
+
+        <!-- =========================
+             RESUMO POR CM
+        ========================== -->
+        <h6 class="mt-4">Resumo de recebimentos por CM</h6>
+
+        <table class="table table-sm table-bordered">
+            <thead class="table-dark">
+                <tr>
+                    <th>CM</th>
+                    <th class="text-end">Quantidade</th>
+                    <th class="text-end">Valor</th>
+                </tr>
+            </thead>
+            <tbody>
+                <?php if (empty($resumoRecebimentosPorCm)): ?>
+                    <tr>
+                        <td colspan="3" class="text-center text-muted">Nenhum recebimento a prazo encontrado.</td>
+                    </tr>
+                <?php else: ?>
+                    <?php foreach ($resumoRecebimentosPorCm as $cm => $resumoCm): ?>
+                        <tr>
+                            <td><?= htmlspecialchars($cm !== '' ? $cm : 'Sem CM') ?></td>
+                            <td class="text-end"><?= number_format((int)$resumoCm['quantidade'], 0, ',', '.') ?></td>
+                            <td class="text-end"><?= moedaDetalheCaixa($resumoCm['valor']) ?></td>
+                        </tr>
+                    <?php endforeach; ?>
+                <?php endif; ?>
+                <tr class="table-secondary fw-bold">
+                    <td>Total</td>
+                    <td class="text-end"><?= number_format($quantidadeRecebimentosResumo, 0, ',', '.') ?></td>
+                    <td class="text-end"><?= moedaDetalheCaixa($totalRecebimentosResumo) ?></td>
+                </tr>
             </tbody>
         </table>
 
