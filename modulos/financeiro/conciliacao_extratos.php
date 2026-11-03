@@ -4370,6 +4370,38 @@ function validarLancamentoBnc001Extrato() {
 
     return confirm('Lancar os extratos selecionados no BNC001 e conciliar automaticamente?');
 }
+
+function atualizarResumoRecSelecionados() {
+    var resumo = document.getElementById('resumo-rec-selecionados');
+    var quantidade = document.getElementById('resumo-rec-quantidade');
+    var total = document.getElementById('resumo-rec-total');
+    if (!resumo || !quantidade || !total) {
+        return;
+    }
+
+    var selecionados = document.querySelectorAll('input[name="extratos_recebiveis[]"]:checked');
+    var valorTotal = 0;
+    Array.prototype.forEach.call(selecionados, function (checkbox) {
+        valorTotal += Number(checkbox.getAttribute('data-valor') || 0);
+    });
+
+    resumo.classList.toggle('d-none', selecionados.length === 0);
+    quantidade.textContent = selecionados.length === 1
+        ? '1 lancamento'
+        : selecionados.length.toLocaleString('pt-BR') + ' lancamentos';
+    total.textContent = valorTotal.toLocaleString('pt-BR', {
+        style: 'currency',
+        currency: 'BRL'
+    });
+}
+
+document.addEventListener('change', function (event) {
+    if (event.target.matches('input[name="extratos_recebiveis[]"]')) {
+        atualizarResumoRecSelecionados();
+    }
+});
+document.addEventListener('DOMContentLoaded', atualizarResumoRecSelecionados);
+window.addEventListener('pageshow', atualizarResumoRecSelecionados);
 </script>
 
 <section class="mb-4">
@@ -4441,6 +4473,18 @@ function validarLancamentoBnc001Extrato() {
 <section class="mb-4 comparacao-extratos-layout">
     <div class="row g-3">
         <div class="col-lg-7">
+            <div id="resumo-rec-selecionados" class="d-none bg-white border rounded-2 shadow-sm p-3 mb-3" aria-live="polite">
+                <div class="d-flex justify-content-between align-items-center gap-3">
+                    <div>
+                        <div class="small text-muted">REC selecionados</div>
+                        <div id="resumo-rec-quantidade" class="fw-semibold">0 lancamentos</div>
+                    </div>
+                    <div class="text-end">
+                        <div class="small text-muted">Total marcado</div>
+                        <div id="resumo-rec-total" class="h5 fw-bold text-success mb-0">R$ 0,00</div>
+                    </div>
+                </div>
+            </div>
             <div class="bg-white border rounded-2 shadow-sm overflow-hidden">
                 <div class="p-3 border-bottom bg-light">
                     <form method="POST" id="form-gerar-recebiveis" class="d-none">
@@ -4552,7 +4596,7 @@ function validarLancamentoBnc001Extrato() {
                                 <tr>
                                     <td class="text-center">
                                         <?php if (($item['conciliado'] ?? 'N') === 'N' && ($item['tipo'] ?? '') === 'C' && empty($item['recebimento_id'])): ?>
-                                            <input type="checkbox" name="extratos_recebiveis[]" form="form-gerar-recebiveis" value="<?= (int)$item['id'] ?>" title="Gerar recebivel">
+                                            <input type="checkbox" name="extratos_recebiveis[]" form="form-gerar-recebiveis" value="<?= (int)$item['id'] ?>" data-valor="<?= number_format((float)$item['valor'], 2, '.', '') ?>" title="Gerar recebivel">
                                         <?php endif; ?>
                                     </td>
                                     <td class="text-center">
