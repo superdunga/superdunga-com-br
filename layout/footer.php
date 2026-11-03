@@ -36,7 +36,22 @@ $bootstrapJsUrl = ($appBaseUrlFooter ?: '') . '/assets/bootstrap/bootstrap.bundl
         }
     }
 
+    function restaurarFormularios() {
+        document.querySelectorAll('form[data-sd-submitting="1"]').forEach(function (form) {
+            delete form.dataset.sdSubmitting;
+            form.removeAttribute('aria-busy');
+        });
+
+        document.querySelectorAll('[data-sd-texto-original]').forEach(function (submitter) {
+            submitter.textContent = submitter.dataset.sdTextoOriginal;
+            submitter.removeAttribute('aria-disabled');
+            submitter.style.pointerEvents = '';
+            submitter.classList.remove('disabled');
+        });
+    }
+
     document.querySelectorAll('form').forEach(garantirToken);
+    window.addEventListener('pageshow', restaurarFormularios);
 
     document.addEventListener('submit', function (event) {
         var form = event.target;
