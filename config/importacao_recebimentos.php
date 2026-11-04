@@ -240,6 +240,69 @@ function listarRegrasImportacaoRecebimentos(PDO $pdo, int $empresaId): array
     return $empresaId === 1 ? regrasImportacaoFallbackArmazem() : [];
 }
 
+function normalizarAdquirenteOrigem(string $origem): string
+{
+    $origem = strtoupper(trim($origem));
+    if ($origem === '') {
+        return '';
+    }
+
+    $partes = explode('_', $origem, 2);
+    return trim($partes[0]);
+}
+
+function expressaoAdquirenteOrigemSql(string $coluna = 'origem'): string
+{
+    return "UPPER(SUBSTRING_INDEX(TRIM(COALESCE({$coluna}, '')), '_', 1))";
+}
+
+function listarAdquirentesRecebimentos(PDO $pdo, int $empresaId): array
+{
+    $adquirentes = [];
+
+    foreach (listarRegrasImportacaoRecebimentos($pdo, $empresaId) as $regra) {
+        $adquirente = normalizarAdquirenteOrigem((string)($regra['origem'] ?? ''));
+        if ($adquirente !== '') {
+            $adquirentes[$adquirente] = true;
+        }
+    }
+
+    $stmtOrigens = $pdo->prepare("
+        SELECT DISTINCT origem
+        FROM armazem_conciliacao_recebimentos
+        WHERE empresa_id = ?
+          AND TRIM(COALESCE(origem, '')) <> ''
+          AND UPPER(TRIM(origem)) <> 'EXTRATO_BANCARIO'
+    ");
+    $stmtOrigens->execute([$empresaId]);
+    foreach ($stmtOrigens->fetchAll(PDO::FETCH_COLUMN) as $origem) {
+        $adquirente = normalizarAdquirenteOrigem((string)$origem);
+        if ($adquirente !== '') {
+            $adquirentes[$adquirente] = true;
+        }
+    }
+
+    foreach (['fechamento_adquirente_agenda', 'fechamento_adquirente_taxas'] as $tabela) {
+        $stmtAdquirentes = $pdo->prepare("
+            SELECT DISTINCT UPPER(TRIM(adquirente))
+            FROM {$tabela}
+            WHERE empresa_id = ?
+              AND TRIM(COALESCE(adquirente, '')) <> ''
+        ");
+        $stmtAdquirentes->execute([$empresaId]);
+        foreach ($stmtAdquirentes->fetchAll(PDO::FETCH_COLUMN) as $adquirente) {
+            $adquirente = strtoupper(trim((string)$adquirente));
+            if ($adquirente !== '') {
+                $adquirentes[$adquirente] = true;
+            }
+        }
+    }
+
+    $lista = array_keys($adquirentes);
+    sort($lista, SORT_NATURAL | SORT_FLAG_CASE);
+    return $lista;
+}
+
 function buscarRegraImportacao(PDO $pdo, int $empresaId, string $tipoEsperado, array $fallback): ?array
 {
     garantirTabelaRegrasImportacao($pdo);

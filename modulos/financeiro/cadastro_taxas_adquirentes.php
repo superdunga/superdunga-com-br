@@ -12,6 +12,7 @@ if (!$ehMaster) {
 }
 
 garantirTabelaTaxasAdquirentes($pdo_master);
+garantirTabelaAgendaAdquirentes($pdo_master);
 
 $mensagensGet = [
     'taxa_salva' => 'Taxa salva com sucesso.',
@@ -125,7 +126,7 @@ $stmtTaxas = $pdo_master->prepare("
 $stmtTaxas->execute([$empresaId]);
 $taxas = $stmtTaxas->fetchAll(PDO::FETCH_ASSOC);
 
-$adquirentes = ['GRANITO', 'SIPAG', 'PAGSEGURO'];
+$adquirentes = listarAdquirentesRecebimentos($pdo_master, $empresaId);
 $grupos = ['COMERCIAL', 'OUTROS', 'GERAL'];
 $tipos = ['DEBITO', 'CREDITO', 'PIX'];
 
@@ -168,8 +169,11 @@ require '../../layout/header.php';
                 <div class="col-md-3">
                     <label class="form-label">Adquirente</label>
                     <select name="adquirente" class="form-select" required>
+                        <?php if (!$adquirentes): ?>
+                            <option value="" selected disabled>Nenhuma adquirente identificada</option>
+                        <?php endif; ?>
                         <?php foreach ($adquirentes as $adquirente): ?>
-                            <option value="<?= $adquirente ?>" <?= (($taxaEditar['adquirente'] ?? '') === $adquirente) ? 'selected' : '' ?>><?= $adquirente ?></option>
+                            <option value="<?= htmlspecialchars($adquirente, ENT_QUOTES, 'UTF-8') ?>" <?= (($taxaEditar['adquirente'] ?? '') === $adquirente) ? 'selected' : '' ?>><?= htmlspecialchars($adquirente, ENT_QUOTES, 'UTF-8') ?></option>
                         <?php endforeach; ?>
                     </select>
                 </div>

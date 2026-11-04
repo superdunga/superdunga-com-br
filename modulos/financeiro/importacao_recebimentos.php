@@ -40,14 +40,7 @@ garantirTabelaHistoricosExtratoRecebimentos($pdo_master);
 
 function origemAdquirenteSql(): string
 {
-    return "
-        CASE
-            WHEN origem LIKE 'GRANITO%' THEN 'GRANITO'
-            WHEN origem LIKE 'SIPAG%' THEN 'SIPAG'
-            WHEN origem LIKE 'PAGSEGURO%' THEN 'PAGSEGURO'
-            ELSE origem
-        END
-    ";
+    return expressaoAdquirenteOrigemSql('origem');
 }
 
 function origemGrupoSql(): string
@@ -105,7 +98,7 @@ function redirecionarImportacaoRecebimentos(array $extras = []): void
     exit;
 }
 
-$adquirentes = ['GRANITO', 'SIPAG', 'PAGSEGURO'];
+$adquirentes = listarAdquirentesRecebimentos($pdo_master, $empresaId);
 $grupos = ['COMERCIAL', 'OUTROS', 'GERAL'];
 $tipos = ['DEBITO', 'CREDITO', 'PIX'];
 
@@ -353,7 +346,7 @@ $stmtContasExtrato = $pdo_master->prepare("
     SELECT CBCONTADOR, TRIM(COALESCE(NULLIF(TITULAR, ''), NULLIF(DESCABREV, ''), CONCAT('Conta ', CBCONTADOR))) AS nome
     FROM armazem_bnc002
     WHERE EMPRESA = ?
-      AND CLASSIFICACAO IN (1, 2)
+      AND TRIM(COALESCE(CONTACONTABIL, '')) = '01.01'
     ORDER BY nome, CBCONTADOR
 ");
 $stmtContasExtrato->execute([$empresaId]);

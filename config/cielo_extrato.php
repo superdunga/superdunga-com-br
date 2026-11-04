@@ -300,6 +300,76 @@ function cieloIdentificador(string $base): string
     return 'CIELO_' . substr(hash('sha256', $base), 0, 58);
 }
 
+function cieloBandeiras(): array
+{
+    return [
+        '001' => 'Visa',
+        '002' => 'Mastercard',
+        '003' => 'Amex',
+        '004' => 'TicketLog',
+        '006' => 'Sorocred',
+        '007' => 'Elo',
+        '009' => 'Diners',
+        '011' => 'Agiplan',
+        '015' => 'Banescard',
+        '023' => 'Cabal',
+        '027' => 'China UnionPay',
+        '029' => 'Credsystem',
+        '035' => 'Explanada',
+        '038' => 'Good Card',
+        '040' => 'Hipercard',
+        '057' => 'Verdecard',
+        '060' => 'JCB',
+        '064' => 'Credz',
+        '069' => 'Avista',
+        '072' => 'Hiper',
+        '075' => 'Ourocard',
+        '888' => 'PIX',
+    ];
+}
+
+function cieloNomeBandeira(string $codigo): string
+{
+    return cieloBandeiras()[trim($codigo)] ?? 'NAO IDENTIFICADA';
+}
+
+function cieloCorrigirBandeirasImportadas(PDO $pdo, int $empresaId): int
+{
+    $atualizados = 0;
+    $stmt = $pdo->prepare("
+        UPDATE armazem_conciliacao_recebimentos
+        SET bandeira = ?,
+            descricao = REPLACE(descricao, ?, ?)
+        WHERE empresa_id = ?
+          AND origem LIKE 'CIELO%'
+          AND UPPER(TRIM(bandeira)) IN (?, ?)
+    ");
+
+    foreach (cieloBandeiras() as $codigo => $nome) {
+        $stmt->execute([
+            $nome,
+            'BANDEIRA ' . $codigo,
+            'BANDEIRA ' . strtoupper($nome),
+            $empresaId,
+            'CIELO ' . $codigo,
+            $codigo,
+        ]);
+        $atualizados += $stmt->rowCount();
+    }
+
+    $stmtDescricao = $pdo->prepare("
+        UPDATE armazem_conciliacao_recebimentos
+        SET descricao = REPLACE(descricao, ' - BANDEIRA ', ' - ')
+        WHERE empresa_id = ?
+          AND origem LIKE 'CIELO%'
+          AND descricao LIKE '% - BANDEIRA %'
+    ");
+    $stmtDescricao->execute([$empresaId]);
+    $atualizados += $stmtDescricao->rowCount();
+
+    return $atualizados;
+}
+
 function cieloRegistroVenda(string $linha, array $regra, array $cabecalho): ?array
 {
     if (strlen($linha) < 637 || substr($linha, 0, 1) !== 'E') {
@@ -342,10 +412,14 @@ function cieloRegistroVenda(string $linha, array $regra, array $cabecalho): ?arr
 
     $parcela = max(1, (int)cieloCampo($linha, 18, 2));
     $totalParcelas = max(1, (int)cieloCampo($linha, 20, 2));
-    $bandeira = cieloCampo($linha, 493, 3);
-    if ($bandeira === '') {
-        $bandeira = cieloCampo($linha, 12, 3);
+    $codigoBandeira = cieloCampo($linha, 493, 3);
+    if ($codigoBandeira === '') {
+        $codigoBandeira = cieloCampo($linha, 12, 3);
     }
+    $bandeira = cieloNomeBandeira($codigoBandeira);
+    $descricaoBandeira = $bandeira === 'NAO IDENTIFICADA'
+        ? $bandeira . ' (CODIGO ' . $codigoBandeira . ')'
+        : $bandeira;
     $nsu = cieloCampo($linha, 176, 6);
     $autorizacao = cieloCampo($linha, 22, 6);
     $terminal = cieloCampo($linha, 544, 8);
@@ -365,14 +439,14 @@ function cieloRegistroVenda(string $linha, array $regra, array $cabecalho): ?arr
         'valor_desconto' => round(max(0, $valorBruto - $valorLiquido), 2),
         'valor_liquido' => round($valorLiquido, 2),
         'identificador' => $identificador,
-        'descricao' => 'CIELO - ' . $modalidade . ' - BANDEIRA ' . $bandeira,
+        'descricao' => 'CIELO - ' . $modalidade . ' - ' . strtoupper($descricaoBandeira),
         'pagador' => 'CIELO',
         'parcela' => $parcela,
         'total_parcelas' => $totalParcelas,
         'status' => 'APROVADA',
         'cm' => $cm,
         'tipo_operacao' => $tipoOperacao,
-        'bandeira' => substr('CIELO ' . $bandeira, 0, 20),
+        'bandeira' => substr($bandeira, 0, 20),
         'nsu' => $nsu,
         'autorizacao' => $autorizacao,
         'terminal' => $terminal,
@@ -549,6 +623,7 @@ function cieloSincronizarRecebimentos(
 ): array {
     cieloValidarPeriodo($dataInicial, $dataFinal);
     garantirTabelasCielo($pdo);
+    cieloCorrigirBandeirasImportadas($pdo, $empresaId);
 
     $stmtInicio = $pdo->prepare("
         INSERT INTO fechamento_cielo_sincronizacoes (
