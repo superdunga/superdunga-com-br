@@ -561,6 +561,79 @@ $transacoes = array_values(array_filter($transacoes, function ($transacao) use (
     }
 }));
 
+if (($_GET['exportar'] ?? '') === 'csv') {
+    $nomeArquivo = 'recebimentos_filtrados_' . date('Ymd_His') . '.csv';
+
+    header('Content-Type: text/csv; charset=UTF-8');
+    header('Content-Disposition: attachment; filename="' . $nomeArquivo . '"');
+    header('Cache-Control: no-store, no-cache, must-revalidate');
+
+    $saida = fopen('php://output', 'w');
+    fwrite($saida, "\xEF\xBB\xBF");
+    fputcsv($saida, [
+        'Venc./Pagto.',
+        'Data',
+        'Transacao',
+        'Conciliada',
+        'CR',
+        'Adquirente',
+        'Grupo',
+        'Tipo',
+        'Bandeira',
+        'Parcelas',
+        'Bruto',
+        'Taxa aplicada R$',
+        'Taxa acordada R$',
+        'Aplicada %',
+        'Acordada %',
+        'Diferenca %',
+        'Diferenca R$',
+        'Situacao',
+    ], ';');
+
+    foreach ($transacoes as $transacaoCsv) {
+        $situacaoCsv = situacaoTaxaRelatorio($transacaoCsv, $taxasAtivas);
+        $taxaAplicadaCsv = (float)$situacaoCsv['taxa_media'];
+        $taxaAcordadaCsv = $situacaoCsv['esperada'] ? (float)$situacaoCsv['esperada']['taxa_percentual'] : null;
+        $taxaDemonstradaCsv = relatorioDemonstraTaxa($transacaoCsv);
+        $valorTaxaAcordadaCsv = $taxaAcordadaCsv !== null
+            ? ((float)$transacaoCsv['total_bruto']) * ($taxaAcordadaCsv / 100)
+            : null;
+        $difPercentualCsv = ($taxaAcordadaCsv !== null && $taxaDemonstradaCsv)
+            ? $taxaAplicadaCsv - $taxaAcordadaCsv
+            : null;
+        $difValorCsv = $difPercentualCsv !== null
+            ? ((float)$transacaoCsv['total_bruto']) * ($difPercentualCsv / 100)
+            : null;
+        $dataPagamentoCsv = $transacaoCsv['data_recebimento']
+            ?: ($transacaoCsv['data_prevista'] ?: $transacaoCsv['data_venda']);
+
+        fputcsv($saida, [
+            $dataPagamentoCsv ? date('d/m/Y', strtotime($dataPagamentoCsv)) : '',
+            $transacaoCsv['data_venda'] ? date('d/m/Y H:i', strtotime($transacaoCsv['data_venda'])) : '',
+            numeroTransacaoRecebimento($transacaoCsv),
+            !empty($transacaoCsv['cr_conciliado']) ? 'Sim' : 'Nao',
+            !empty($transacaoCsv['cr_conciliado']) ? (int)$transacaoCsv['cr_conciliado'] : '',
+            $transacaoCsv['adquirente'],
+            $transacaoCsv['grupo'],
+            rotuloTipoOperacao((string)$transacaoCsv['tipo_operacao']),
+            $transacaoCsv['bandeira'],
+            (int)$transacaoCsv['parcelas'],
+            number_format((float)$transacaoCsv['total_bruto'], 2, ',', ''),
+            $taxaDemonstradaCsv ? number_format((float)$transacaoCsv['total_taxa'], 2, ',', '') : '',
+            $valorTaxaAcordadaCsv !== null ? number_format($valorTaxaAcordadaCsv, 2, ',', '') : '',
+            $taxaDemonstradaCsv ? number_format($taxaAplicadaCsv, 4, ',', '') : '',
+            $taxaAcordadaCsv !== null ? number_format($taxaAcordadaCsv, 4, ',', '') : '',
+            $difPercentualCsv !== null ? number_format($difPercentualCsv, 4, ',', '') : '',
+            $difValorCsv !== null ? number_format($difValorCsv, 2, ',', '') : '',
+            $situacaoCsv['texto'],
+        ], ';');
+    }
+
+    fclose($saida);
+    exit;
+}
+
 $totaisTransacoes = [
     'qtd' => count($transacoes),
     'bruto' => 0.0,
@@ -850,8 +923,9 @@ require '../../layout/header.php';
                         <option value="sem_taxa_demonstrada" <?= $filtroSituacao === 'sem_taxa_demonstrada' ? 'selected' : '' ?>>Sem taxa demonstrada</option>
                     </select>
                 </div>
-                <div class="col-md-2">
-                    <button class="btn btn-primary w-100">Filtrar</button>
+                <div class="col-md-4 d-flex gap-2">
+                    <button class="btn btn-primary flex-grow-1">Filtrar</button>
+                    <button type="submit" name="exportar" value="csv" class="btn btn-outline-success flex-grow-1">Exportar CSV</button>
                 </div>
             </form>
         </div>
