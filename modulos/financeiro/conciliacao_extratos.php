@@ -383,6 +383,29 @@ function queryConciliacaoExtratos(array $extra = []): string
     return http_build_query($params);
 }
 
+function termosFiltroHistoricoExtrato(string $filtro): array
+{
+    $termos = preg_split('/\s*,\s*/u', trim($filtro));
+    $termos = array_filter(array_map('trim', $termos), function ($termo) {
+        return $termo !== '';
+    });
+
+    return array_values(array_unique($termos));
+}
+
+function condicaoFiltroHistoricoExtrato(array $campos, array $termos, array &$params): string
+{
+    $condicoes = [];
+    foreach ($termos as $termo) {
+        foreach ($campos as $campo) {
+            $condicoes[] = $campo . ' LIKE ?';
+            $params[] = '%' . $termo . '%';
+        }
+    }
+
+    return $condicoes ? '(' . implode(' OR ', $condicoes) . ')' : '';
+}
+
 function empresasParaRegraExtrato(PDO $pdo): array
 {
     return $pdo->query("
@@ -1622,6 +1645,7 @@ $dataIni = trim($_GET['data_ini'] ?? date('Y-01-01'));
 $dataFim = trim($_GET['data_fim'] ?? date('Y-m-d'));
 $dcFiltro = strtoupper(trim((string)($_GET['dc'] ?? '')));
 $historicoFiltro = trim((string)($_GET['historico'] ?? ''));
+$termosHistoricoFiltro = termosFiltroHistoricoExtrato($historicoFiltro);
 $situacaoFiltro = trim((string)($_GET['situacao'] ?? 'pendentes'));
 $valorDeFiltro = trim((string)($_GET['valor_de'] ?? ''));
 $valorAteFiltro = trim((string)($_GET['valor_ate'] ?? ''));
@@ -2243,10 +2267,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['acao'] ?? '') === 'concili
             $whereAutoExtratoFiltros .= ' AND e.tipo = ?';
             $paramsAutoExtratoFiltros[] = $dcFiltro;
         }
-        if ($historicoFiltro !== '') {
-            $whereAutoHistoricoFiltro .= ' AND (e.historico_extrato LIKE ? OR b.HISTMOV LIKE ?)';
-            $paramsAutoHistoricoFiltro[] = '%' . $historicoFiltro . '%';
-            $paramsAutoHistoricoFiltro[] = '%' . $historicoFiltro . '%';
+        if ($termosHistoricoFiltro) {
+            $whereAutoHistoricoFiltro .= ' AND ' . condicaoFiltroHistoricoExtrato(
+                ['e.historico_extrato', 'b.HISTMOV'],
+                $termosHistoricoFiltro,
+                $paramsAutoHistoricoFiltro
+            );
         }
 
         $stmtAuto = $pdo_master->prepare("
@@ -2374,10 +2400,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['acao'] ?? '') === 'concili
             $whereAutoExtratoFiltros .= ' AND e.tipo = ?';
             $paramsAutoExtratoFiltros[] = $dcFiltro;
         }
-        if ($historicoFiltro !== '') {
-            $whereAutoHistoricoFiltro .= ' AND (e.historico_extrato LIKE ? OR b.HISTMOV LIKE ?)';
-            $paramsAutoHistoricoFiltro[] = '%' . $historicoFiltro . '%';
-            $paramsAutoHistoricoFiltro[] = '%' . $historicoFiltro . '%';
+        if ($termosHistoricoFiltro) {
+            $whereAutoHistoricoFiltro .= ' AND ' . condicaoFiltroHistoricoExtrato(
+                ['e.historico_extrato', 'b.HISTMOV'],
+                $termosHistoricoFiltro,
+                $paramsAutoHistoricoFiltro
+            );
         }
 
         $stmtAutoPrioritario = $pdo_master->prepare("
@@ -2505,10 +2533,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['acao'] ?? '') === 'concili
             $whereAutoExtratoFiltros .= ' AND e.tipo = ?';
             $paramsAutoExtratoFiltros[] = $dcFiltro;
         }
-        if ($historicoFiltro !== '') {
-            $whereAutoHistoricoFiltro .= ' AND (e.historico_extrato LIKE ? OR b.HISTMOV LIKE ?)';
-            $paramsAutoHistoricoFiltro[] = '%' . $historicoFiltro . '%';
-            $paramsAutoHistoricoFiltro[] = '%' . $historicoFiltro . '%';
+        if ($termosHistoricoFiltro) {
+            $whereAutoHistoricoFiltro .= ' AND ' . condicaoFiltroHistoricoExtrato(
+                ['e.historico_extrato', 'b.HISTMOV'],
+                $termosHistoricoFiltro,
+                $paramsAutoHistoricoFiltro
+            );
         }
 
         $stmtAutoFila = $pdo_master->prepare("
@@ -3008,9 +3038,8 @@ if ($dcFiltro !== '') {
     $whereExtrato[] = 'e.tipo = ?';
     $paramsExtrato[] = $dcFiltro;
 }
-if ($historicoFiltro !== '') {
-    $whereExtrato[] = 'e.historico LIKE ?';
-    $paramsExtrato[] = '%' . $historicoFiltro . '%';
+if ($termosHistoricoFiltro) {
+    $whereExtrato[] = condicaoFiltroHistoricoExtrato(['e.historico'], $termosHistoricoFiltro, $paramsExtrato);
 }
 if ($valorDe !== null) {
     $whereExtrato[] = 'ABS(e.valor) >= ?';
@@ -3234,9 +3263,8 @@ if ($dcFiltro !== '') {
     $whereBnc[] = 'b.TIPOMOV = ?';
     $paramsBnc[] = $dcFiltro;
 }
-if ($historicoFiltro !== '') {
-    $whereBnc[] = 'b.HISTMOV LIKE ?';
-    $paramsBnc[] = '%' . $historicoFiltro . '%';
+if ($termosHistoricoFiltro) {
+    $whereBnc[] = condicaoFiltroHistoricoExtrato(['b.HISTMOV'], $termosHistoricoFiltro, $paramsBnc);
 }
 if ($valorDe !== null) {
     $whereBnc[] = 'ABS(b.VALORMOV) >= ?';
@@ -3315,13 +3343,17 @@ if ($situacaoFiltro !== 'conciliados' && $cbcontador > 0 && $dataIni !== '' && $
         $whereSugestoesExtratoFiltros .= ' AND e.tipo = ?';
         $paramsSugestoesExtratoFiltros[] = $dcFiltro;
     }
-    if ($historicoFiltro !== '') {
-        $whereSugestoesFiltros .= ' AND (e.historico LIKE ? OR b.HISTMOV LIKE ?)';
-        $paramsSugestoesFiltros[] = '%' . $historicoFiltro . '%';
-        $paramsSugestoesFiltros[] = '%' . $historicoFiltro . '%';
-        $whereSugestoesAutoFiltroHistorico .= ' AND (e.historico_extrato LIKE ? OR b.HISTMOV LIKE ?)';
-        $paramsSugestoesAutoFiltroHistorico[] = '%' . $historicoFiltro . '%';
-        $paramsSugestoesAutoFiltroHistorico[] = '%' . $historicoFiltro . '%';
+    if ($termosHistoricoFiltro) {
+        $whereSugestoesFiltros .= ' AND ' . condicaoFiltroHistoricoExtrato(
+            ['e.historico', 'b.HISTMOV'],
+            $termosHistoricoFiltro,
+            $paramsSugestoesFiltros
+        );
+        $whereSugestoesAutoFiltroHistorico .= ' AND ' . condicaoFiltroHistoricoExtrato(
+            ['e.historico_extrato', 'b.HISTMOV'],
+            $termosHistoricoFiltro,
+            $paramsSugestoesAutoFiltroHistorico
+        );
     }
 
     $stmtSug = $pdo_master->prepare("
@@ -4436,7 +4468,8 @@ window.addEventListener('pageshow', atualizarResumoRecSelecionados);
             </div>
             <div class="col-lg-3">
                 <label class="form-label">Historico</label>
-                <input type="text" name="historico" class="form-control" value="<?= htmlspecialchars($historicoFiltro) ?>" placeholder="Buscar no historico">
+                <input type="text" name="historico" class="form-control" value="<?= htmlspecialchars($historicoFiltro) ?>" placeholder="Ex.: MAESTRO, ELECTRON, DEB OUTRAS BANDEIRAS">
+                <div class="form-text">Separe alternativas por virgula.</div>
             </div>
             <div class="col-md-3 col-lg-2">
                 <label class="form-label">Situacao</label>
