@@ -218,6 +218,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['arquivo'])) {
                     $descricao = $registro['descricao'];
                     $valor_float = $registro['valor'];
                     $dataObj = DateTime::createFromFormat('!d/m/Y', $data);
+                    $dataObj->setTime(12, 0, 0);
                     $data_formatada = $dataObj->format('Y-m-d H:i:s');
                     $data_prevista = substr($data_formatada, 0, 10);
                     $identificador = $codigo;
