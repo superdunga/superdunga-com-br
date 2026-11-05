@@ -22,6 +22,16 @@ function cieloCaixaGarantirControle(PDO $pdo): void
             UNIQUE KEY uq_whatsapp_caixa_cielo_dia (empresa_id, data_caixa)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
     ");
+
+    // O Caixa do Dia Anterior e disparado pelo monitor Cielo, nunca por horario fixo.
+    $pdo->exec("
+        UPDATE whatsapp_rotina_agendamentos a
+        INNER JOIN whatsapp_rotinas r ON r.id = a.rotina_id
+        SET a.ativo = 'N', a.proxima_execucao = NULL
+        WHERE r.empresa_id = 1
+          AND r.codigo = 'caixa_dia_anterior'
+          AND a.ativo = 'S'
+    ");
 }
 
 function cieloCaixaConsultarArquivos(array $config, array $regra, string $dataProcessamento): array

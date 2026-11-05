@@ -1450,7 +1450,7 @@ function whatsappExecutarAgendamentos(PDO $pdo): array
     $resultado = [];
     foreach ($rotinas as $rotina) {
         if (whatsappAgendamentoAtrasado((string)$rotina['agendamento_previsto_em'])) {
-            $pdo->prepare("INSERT IGNORE INTO whatsapp_agendamentos_ignorados (agendamento_id,empresa_id,previsto_em,motivo) VALUES (?,?,?,'Atraso superior a 15 minutos')")
+            $pdo->prepare("INSERT IGNORE INTO whatsapp_agendamentos_ignorados (agendamento_id,empresa_id,previsto_em,motivo) VALUES (?,?,?,'Agendamento de dia anterior')")
                 ->execute([(int)$rotina['agendamento_id'],(int)$rotina['empresa_id'],$rotina['agendamento_previsto_em']]);
             whatsappAtualizarProximaAgendamento($pdo, (int)$rotina['agendamento_id']);
             $resultado[] = ['rotina'=>$rotina['codigo'],'agendamento_id'=>(int)$rotina['agendamento_id'],'status'=>'IGNORADO_ATRASO'];
@@ -1501,7 +1501,8 @@ function whatsappExecutarAgendamentos(PDO $pdo): array
 function whatsappAgendamentoAtrasado(string $previsto, ?DateTimeImmutable $agora = null): bool
 {
     $agora = $agora ?: new DateTimeImmutable('now');
-    return $agora->getTimestamp() - (new DateTimeImmutable($previsto))->getTimestamp() > 15 * 60;
+    $previstoEm = new DateTimeImmutable($previsto);
+    return $previstoEm->format('Y-m-d') < $agora->format('Y-m-d');
 }
 
 function whatsappStatusEntregaEvolution(array $mensagem): ?string
@@ -2649,11 +2650,13 @@ function whatsappCalcularPrevisaoFechamentoVendas(PDO $pdo, DateTime $base, int 
     ];
 }
 
-function whatsappMensagemApresentacaoCaixa(PDO $pdo, ?DateTime $base = null, int $empresaId = 1): string
+function whatsappMensagemApresentacaoCaixa(PDO $pdo, ?DateTimeInterface $base = null, int $empresaId = 1): string
 {
     date_default_timezone_set('America/Sao_Paulo');
 
-    $base = $base ?: new DateTime('now');
+    $base = $base
+        ? new DateTime($base->format('Y-m-d H:i:s'), $base->getTimezone())
+        : new DateTime('now');
     if ((int)$base->format('H') < 7) {
         $base = (clone $base)->modify('-1 day');
     }
@@ -2763,14 +2766,16 @@ function whatsappMensagemApresentacaoCaixa(PDO $pdo, ?DateTime $base = null, int
     return trim($msg);
 }
 
-function whatsappMensagemApresentacaoCaixa1(PDO $pdo, ?DateTime $base = null, int $empresaId = 1): string
+function whatsappMensagemApresentacaoCaixa1(PDO $pdo, ?DateTimeInterface $base = null, int $empresaId = 1): string
 {
     return whatsappMensagemApresentacaoCaixa($pdo, $base, $empresaId);
 }
 
-function whatsappMensagemCaixaDiaAnterior(PDO $pdo, ?DateTime $base = null, int $empresaId = 1): string
+function whatsappMensagemCaixaDiaAnterior(PDO $pdo, ?DateTimeInterface $base = null, int $empresaId = 1): string
 {
-    $referencia = $base ? clone $base : new DateTime('now');
+    $referencia = $base
+        ? new DateTime($base->format('Y-m-d H:i:s'), $base->getTimezone())
+        : new DateTime('now');
     $referencia->setTime(12, 0, 0)->modify('-1 day');
 
     return whatsappMensagemApresentacaoCaixa($pdo, $referencia, $empresaId);
