@@ -17,28 +17,46 @@ if (!$regraImportacao) {
     exit;
 }
 
-// =========================
-// FUNÇÃO
-// =========================
-function tratarValor($valor) {
+function pagseguroNormalizarCabecalho($valor) {
+    $valor = preg_replace('/^\xEF\xBB\xBF/', '', (string)$valor);
+    $valor = strtoupper(trim($valor));
+    $convertido = iconv('UTF-8', 'ASCII//TRANSLIT//IGNORE', $valor);
+    if ($convertido !== false) {
+        $valor = $convertido;
+    }
+    return preg_replace('/\s+/', ' ', $valor);
+}
+
+function pagseguroTratarValor($valor) {
     $valor = str_replace(['R$', ' ', '.'], '', $valor);
     $valor = str_replace(',', '.', $valor);
     return (float)$valor;
 }
 
-// =========================
-// PROCESSAMENTO
-// =========================
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['arquivo'])) {
+function pagseguroValorValido($valor) {
+    $valor = trim(str_replace('R$', '', (string)$valor));
+    $valor = str_replace(' ', '', $valor);
+    return preg_match('/^-?(?:\d+|\d{1,3}(?:\.\d{3})+)(?:,\d{1,2})?$/', $valor) === 1;
+}
 
+function pagseguroDataValida($data) {
+    $dataObj = DateTime::createFromFormat('!d/m/Y', trim((string)$data));
+    $erros = DateTime::getLastErrors();
+    return $dataObj !== false
+        && ($erros === false || ((int)$erros['warning_count'] === 0 && (int)$erros['error_count'] === 0))
+        && $dataObj->format('d/m/Y') === trim((string)$data);
+}
+
+function pagseguroCodigoValido($codigo) {
+    return preg_match('/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i', trim((string)$codigo)) === 1;
+}
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['arquivo'])) {
     $arquivo = $_FILES['arquivo']['tmp_name'];
     $nomeArquivo = $_FILES['arquivo']['name'];
 
-    // VALIDAR NOME DO ARQUIVO
-    if (stripos($nomeArquivo, 'pagseguro') === false && stripos($nomeArquivo, 'pagbank') === false) {
-        echo "<div class='alert alert-danger'>
-                Arquivo inválido - nome deve conter 'pagseguro' ou 'pagbank'
-              </div>";
+    if (strtolower(pathinfo($nomeArquivo, PATHINFO_EXTENSION)) !== 'csv') {
+        echo "<div class='alert alert-danger'>Arquivo inválido: selecione um arquivo CSV.</div>";
         require '../../layout/footer.php';
         exit;
     }
@@ -46,17 +64,98 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['arquivo'])) {
     if (!file_exists($arquivo)) {
         echo "<div class='alert alert-danger'>Arquivo não encontrado.</div>";
     } else {
-
         $handle = fopen($arquivo, 'r');
-
         if (!$handle) {
             echo "<div class='alert alert-danger'>Erro ao abrir arquivo.</div>";
         } else {
+            $cabecalhoEsperado = [
+                'CODIGO DA TRANSACAO',
+                'DATA',
+                'TIPO',
+                'DESCRICAO',
+                'VALOR',
+            ];
+            $cabecalho = fgetcsv($handle, 0, ';');
+            $cabecalhoNormalizado = is_array($cabecalho)
+                ? array_map('pagseguroNormalizarCabecalho', $cabecalho)
+                : [];
+            $errosArquivo = [];
+            $registros = [];
+            $linha = 1;
 
-            $linha = 0;
+            if ($cabecalhoNormalizado !== $cabecalhoEsperado) {
+                $errosArquivo[] = 'Cabeçalho incompatível. Esperado: ' . implode(';', $cabecalhoEsperado) . '.';
+            }
+
+            while (($dados = fgetcsv($handle, 0, ';')) !== false) {
+                $linha++;
+                if (count(array_filter($dados, static function ($valor) { return trim((string)$valor) !== ''; })) === 0) {
+                    continue;
+                }
+
+                if (count($dados) !== 5) {
+                    $errosArquivo[] = "Linha {$linha}: quantidade de colunas inválida; esperado 5.";
+                    continue;
+                }
+
+                $codigo = trim((string)$dados[0]);
+                $data = trim((string)$dados[1]);
+                $tipo = trim((string)$dados[2]);
+                $descricao = trim((string)$dados[3]);
+                $valor = trim((string)$dados[4]);
+                $errosLinha = [];
+
+                if (!pagseguroCodigoValido($codigo)) {
+                    $errosLinha[] = 'código da transação inválido';
+                }
+                if (!pagseguroDataValida($data)) {
+                    $errosLinha[] = 'data inválida';
+                }
+                if (!in_array(strtolower($tipo), ['pix recebido', 'pix enviado'], true)) {
+                    $errosLinha[] = 'tipo deve ser Pix recebido ou Pix enviado';
+                }
+                if ($descricao === '') {
+                    $errosLinha[] = 'descrição não informada';
+                }
+                if (!pagseguroValorValido($valor)) {
+                    $errosLinha[] = 'valor inválido';
+                }
+
+                if ($errosLinha) {
+                    $errosArquivo[] = "Linha {$linha}: " . implode(', ', $errosLinha) . '.';
+                    continue;
+                }
+
+                $registros[] = [
+                    'codigo' => $codigo,
+                    'data' => $data,
+                    'tipo' => strtolower($tipo),
+                    'descricao' => $descricao,
+                    'valor' => pagseguroTratarValor($valor),
+                ];
+            }
+
+            fclose($handle);
+
+            if (!$registros && !$errosArquivo) {
+                $errosArquivo[] = 'O arquivo não possui registros.';
+            }
+
+            if ($errosArquivo) {
+                echo "<div class='alert alert-danger'><strong>Arquivo não importado.</strong><ul class='mb-0 mt-2'>";
+                foreach ($errosArquivo as $erroArquivo) {
+                    echo '<li>' . htmlspecialchars($erroArquivo) . '</li>';
+                }
+                echo '</ul></div>';
+                require '../../layout/footer.php';
+                exit;
+            }
+
             $importados = 0;
             $atualizados = 0;
             $ambiguos = 0;
+            $duplicados = 0;
+            $ignorados = 0;
 
             $checkIdentificador = $pdo_master->prepare("
                 SELECT id
@@ -97,117 +196,89 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['arquivo'])) {
                   AND empresa_id = ?
                   AND origem = 'EXTRATO_BANCARIO'
             ");
+            $inserirRecebivel = $pdo_master->prepare("
+                INSERT IGNORE INTO armazem_conciliacao_recebimentos (
+                    empresa_id, origem, data_venda, data_prevista, valor_bruto,
+                    valor_desconto, valor_liquido, identificador, descricao, pagador,
+                    parcela, total_parcelas, status, arquivo_origem, CMCONTADOR,
+                    tipo_operacao, nsu_transacao, numero_estabelecimento
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ");
 
-            while (($dados = fgetcsv($handle, 0, ';')) !== false) {
+            try {
+                $pdo_master->beginTransaction();
+                foreach ($registros as $registro) {
+                    if ($registro['tipo'] !== 'pix recebido' || $registro['valor'] <= 0) {
+                        $ignorados++;
+                        continue;
+                    }
 
-                $linha++;
+                    $codigo = $registro['codigo'];
+                    $data = $registro['data'];
+                    $descricao = $registro['descricao'];
+                    $valor_float = $registro['valor'];
+                    $dataObj = DateTime::createFromFormat('!d/m/Y', $data);
+                    $data_formatada = $dataObj->format('Y-m-d H:i:s');
+                    $data_prevista = substr($data_formatada, 0, 10);
+                    $identificador = $codigo;
 
-                if ($linha == 1) continue;
-                if (count(array_filter($dados)) == 0) continue;
-                if (count($dados) < 5) continue;
+                    $checkIdentificador->execute([$empresa_id, $identificador]);
+                    if ($checkIdentificador->fetchColumn()) {
+                        $duplicados++;
+                        continue;
+                    }
 
-                $codigo    = trim($dados[0] ?? '');
-                $data      = trim($dados[1] ?? '');
-                $tipo      = trim($dados[2] ?? '');
-                $descricao = trim($dados[3] ?? '');
-                $valor     = trim($dados[4] ?? '');
+                    $dataComparacao = $dataObj->format('Y-m-d');
+                    $checkExtratoExistente->execute([$empresa_id, $dataComparacao, $valor_float, $descricao]);
+                    $recebiveisExtrato = $checkExtratoExistente->fetchAll(PDO::FETCH_COLUMN);
+                    if (count($recebiveisExtrato) > 1) {
+                        $ambiguos++;
+                        continue;
+                    }
+                    if (count($recebiveisExtrato) === 1) {
+                        $atualizarRecebivelExtrato->execute([
+                            $regraImportacao['origem'],
+                            $data_formatada,
+                            $data_prevista,
+                            $valor_float,
+                            $valor_float,
+                            $identificador,
+                            $descricao,
+                            $nomeArquivo,
+                            (int)$regraImportacao['cm_pix'],
+                            $codigo,
+                            (int)$recebiveisExtrato[0],
+                            $empresa_id,
+                        ]);
+                        $atualizados += $atualizarRecebivelExtrato->rowCount();
+                        continue;
+                    }
 
-                // FILTRO
-                if (strtolower($tipo) !== 'pix recebido') continue;
-
-                $valor_float = tratarValor($valor);
-                if ($valor_float <= 0) continue;
-
-                $data_formatada = date('Y-m-d H:i:s', strtotime(str_replace('/', '-', $data)));
-                $data_prevista = substr($data_formatada, 0, 10);
-
-                $identificador = $codigo;
-
-                // DUPLICIDADE
-                $checkIdentificador->execute([$empresa_id, $identificador]);
-                if ($checkIdentificador->fetchColumn()) continue;
-
-                $dataComparacao = date('Y-m-d', strtotime($data_formatada));
-                $checkExtratoExistente->execute([$empresa_id, $dataComparacao, $valor_float, $descricao]);
-                $recebiveisExtrato = $checkExtratoExistente->fetchAll(PDO::FETCH_COLUMN);
-                if (count($recebiveisExtrato) > 1) {
-                    $ambiguos++;
-                    continue;
-                }
-                if (count($recebiveisExtrato) === 1) {
-                    $atualizarRecebivelExtrato->execute([
-                        $regraImportacao['origem'],
-                        $data_formatada,
-                        $data_prevista,
-                        $valor_float,
-                        $valor_float,
-                        $identificador,
-                        $descricao,
-                        $nomeArquivo,
-                        (int)$regraImportacao['cm_pix'],
-                        $codigo,
-                        (int)$recebiveisExtrato[0],
-                        $empresa_id,
+                    $inserirRecebivel->execute([
+                        $empresa_id, $regraImportacao['origem'], $data_formatada, $data_prevista,
+                        $valor_float, 0, $valor_float, $identificador, 'PAGSEGURO PIX',
+                        $descricao, 1, 1, 'LIQUIDADA', $nomeArquivo,
+                        (int)$regraImportacao['cm_pix'], 'P', $codigo, ''
                     ]);
-                    $atualizados += $atualizarRecebivelExtrato->rowCount();
-                    continue;
+                    if ($inserirRecebivel->rowCount() > 0) {
+                        $importados++;
+                    } else {
+                        $duplicados++;
+                    }
                 }
-
-                // INSERT 100% ALINHADO
-                $stmt = $pdo_master->prepare("
-                    INSERT INTO armazem_conciliacao_recebimentos (
-                        empresa_id,
-                        origem,
-                        data_venda,
-                        data_prevista,
-                        valor_bruto,
-                        valor_desconto,
-                        valor_liquido,
-                        identificador,
-                        descricao,
-                        pagador,
-                        parcela,
-                        total_parcelas,
-                        status,
-                        arquivo_origem,
-                        CMCONTADOR,
-                        tipo_operacao,
-                        nsu_transacao,
-                        numero_estabelecimento
-                    ) VALUES (
-                        ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
-                    )
-                ");
-
-                $stmt->execute([
-                    $empresa_id,
-                    $regraImportacao['origem'], // origem
-                    $data_formatada,     // data_venda
-                    $data_prevista,      // data_prevista
-                    $valor_float,        // valor_bruto
-                    0,                   // valor_desconto
-                    $valor_float,        // valor_liquido
-                    $identificador,      // identificador
-                    'PAGSEGURO PIX',     // descricao
-                    $descricao,          // pagador
-                    1,                   // parcela
-                    1,                   // total_parcelas
-                    'LIQUIDADA',         // status
-                    $nomeArquivo,        // arquivo_origem
-                    (int)$regraImportacao['cm_pix'], // CMCONTADOR
-                    'P',                 // tipo_operacao
-                    $codigo,             // nsu_transacao
-                    ''                   // numero_estabelecimento
-                ]);
-
-                $importados++;
+                $pdo_master->commit();
+            } catch (Throwable $e) {
+                if ($pdo_master->inTransaction()) {
+                    $pdo_master->rollBack();
+                }
+                throw $e;
             }
-
-            fclose($handle);
 
             echo "<div class='alert alert-success'>
                     Importação concluída! Registros importados: <strong>{$importados}</strong>.
                     Recebíveis do extrato atualizados: <strong>{$atualizados}</strong>.
+                    Duplicados ignorados: <strong>{$duplicados}</strong>.
+                    Saídas ignoradas: <strong>{$ignorados}</strong>.
                   </div>";
             if ($ambiguos > 0) {
                 echo "<div class='alert alert-warning'>
