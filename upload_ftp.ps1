@@ -38,7 +38,7 @@ function Send-FtpFile {
     $remoteUri = "ftp://$Server`:$Port$RemoteBase/$remotePath"
 
     $curlArgs = @(
-        '--silent', '--show-error', '--fail', '--ssl-reqd', '--ftp-pasv',
+        '--silent', '--show-error', '--fail', '--ssl-reqd', '--ftp-pasv', '--ftp-create-dirs',
         '--user', "$Username`:$Password",
         '--upload-file', $localPath,
         $remoteUri

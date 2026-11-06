@@ -5,6 +5,10 @@ require __DIR__ . '/../../config/cielo_caixa_whatsapp.php';
 require __DIR__ . '/../whatsapp_operacional/whatsapp_operacional_lib.php';
 
 header('Content-Type: application/json; charset=utf-8');
+header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
+header('Pragma: no-cache');
+header('Expires: Thu, 01 Jan 1970 00:00:00 GMT');
+header('X-LiteSpeed-Cache-Control: no-cache');
 date_default_timezone_set('America/Sao_Paulo');
 
 try {

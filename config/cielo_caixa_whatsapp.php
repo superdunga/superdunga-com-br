@@ -247,7 +247,8 @@ function cieloCaixaExecutarMonitor(PDO $pdo, ?DateTimeImmutable $agora = null): 
             return ['status' => 'ENVIADO', 'data_caixa' => $dataCaixa, 'ja_enviado' => true];
         }
 
-        $baseMensagem = DateTime::createFromImmutable($agora->setTime(12, 0));
+        $agoraMeioDia = $agora->setTime(12, 0);
+        $baseMensagem = new DateTime($agoraMeioDia->format('Y-m-d H:i:s'), $agoraMeioDia->getTimezone());
         $mensagem = whatsappMensagemCaixaDiaAnterior($pdo, $baseMensagem, $empresaId);
         $envio = whatsappEnviarRotina($pdo, $rotina, $mensagem, null, null);
         if ((int)($envio['ok'] ?? 0) <= 0 || (int)($envio['falha'] ?? 0) > 0) {
