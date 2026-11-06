@@ -66,6 +66,21 @@ function garantirTabelaRegrasImportacao(PDO $pdo): void
     ");
     $stmtPagBank->execute();
 
+    $stmtAlelo = $pdo->prepare("
+        INSERT INTO fechamento_importacao_regras (
+            empresa_id, nome, grupo, tipo, origem, arquivo_php, estabelecimento,
+            cm_debito, cm_credito, cm_pix, ativo, ordem
+        )
+        SELECT 1, 'ALELO', 'Comercial', 'alelo_edi_comercial', 'ALELO_EDI_COMERCIAL',
+               'sincronizar_alelo_comercial.php', '6000317874',
+               3, NULL, NULL, 'S', 60
+        WHERE NOT EXISTS (
+            SELECT 1 FROM fechamento_importacao_regras
+            WHERE empresa_id = 1 AND tipo = 'alelo_edi_comercial' AND grupo = 'Comercial'
+        )
+    ");
+    $stmtAlelo->execute();
+
     $stmt = $pdo->prepare("
         SELECT COUNT(*)
         FROM information_schema.statistics
@@ -161,6 +176,7 @@ function regrasImportacaoFallbackArmazem(): array
             'botao' => 'btn-success',
         ],
         regraImportacaoCieloComercialArmazem(),
+        regraImportacaoAleloComercialArmazem(),
         regraImportacaoCieloOutrosArmazem(),
     ];
 }
@@ -214,6 +230,25 @@ function regraImportacaoCieloOutrosArmazem(): array
     ];
 }
 
+function regraImportacaoAleloComercialArmazem(): array
+{
+    return [
+        'id' => 0,
+        'empresa_id' => 1,
+        'nome' => 'ALELO',
+        'descricao' => 'Sincronizacao EDI via SFTP - CMCONTADOR 3',
+        'grupo' => 'Comercial',
+        'tipo' => 'alelo_edi_comercial',
+        'origem' => 'ALELO_EDI_COMERCIAL',
+        'arquivo_php' => 'sincronizar_alelo_comercial.php',
+        'estabelecimento' => '6000317874',
+        'cm_debito' => 3,
+        'cm_credito' => null,
+        'cm_pix' => null,
+        'botao' => 'btn-primary',
+    ];
+}
+
 function listarRegrasImportacaoRecebimentos(PDO $pdo, int $empresaId): array
 {
     garantirTabelaRegrasImportacao($pdo);
@@ -222,11 +257,41 @@ function listarRegrasImportacaoRecebimentos(PDO $pdo, int $empresaId): array
         SELECT *
         FROM fechamento_importacao_regras
         WHERE empresa_id = ?
-          AND ativo = 'S'
         ORDER BY grupo, ordem, nome
     ");
     $stmt->execute([$empresaId]);
-    $regras = $stmt->fetchAll(PDO::FETCH_ASSOC);
+    $regrasCadastradas = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+    if ($empresaId === 1) {
+        $porOrigem = [];
+        foreach ($regrasCadastradas as $regra) {
+            $porOrigem[(string)$regra['origem']] = $regra;
+        }
+
+        $regras = [];
+        $origensFallback = [];
+        foreach (regrasImportacaoFallbackArmazem() as $fallback) {
+            $origem = (string)$fallback['origem'];
+            $origensFallback[$origem] = true;
+            if (isset($porOrigem[$origem])) {
+                if (($porOrigem[$origem]['ativo'] ?? 'S') === 'S') {
+                    $regras[] = $porOrigem[$origem];
+                }
+            } else {
+                $regras[] = $fallback;
+            }
+        }
+        foreach ($regrasCadastradas as $regra) {
+            $origem = (string)$regra['origem'];
+            if (!isset($origensFallback[$origem]) && ($regra['ativo'] ?? 'S') === 'S') {
+                $regras[] = $regra;
+            }
+        }
+    } else {
+        $regras = array_values(array_filter($regrasCadastradas, function ($regra) {
+            return ($regra['ativo'] ?? 'S') === 'S';
+        }));
+    }
 
     if (!empty($regras)) {
         foreach ($regras as &$regra) {
@@ -237,7 +302,7 @@ function listarRegrasImportacaoRecebimentos(PDO $pdo, int $empresaId): array
         return $regras;
     }
 
-    return $empresaId === 1 ? regrasImportacaoFallbackArmazem() : [];
+    return [];
 }
 
 function normalizarAdquirenteOrigem(string $origem): string
@@ -366,6 +431,10 @@ function descricaoRegraImportacao(array $regra): string
         return 'Sincronizacao via API - Debito CMCONTADOR ' . (int)$regra['cm_debito']
             . ' | Credito CMCONTADOR ' . (int)$regra['cm_credito']
             . ' | PIX CMCONTADOR ' . (int)$regra['cm_pix'];
+    }
+
+    if ($tipo === 'alelo_edi_comercial') {
+        return 'Sincronizacao EDI via SFTP - CMCONTADOR ' . (int)$regra['cm_debito'];
     }
 
     return 'CMCONTADOR ' . (int)$regra['cm_pix'];

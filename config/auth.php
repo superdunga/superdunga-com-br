@@ -290,6 +290,7 @@ function validarPermissaoModuloAtual(): void
         'modulos/fechamentodecaixa/importar_recebimentos.php' => 'fechamento_importar_recebimentos',
         'modulos/fechamentodecaixa/sincronizar_cielo_comercial.php' => 'fechamento_importar_recebimentos',
         'modulos/fechamentodecaixa/sincronizar_cielo_outros.php' => 'fechamento_importar_recebimentos',
+        'modulos/fechamentodecaixa/sincronizar_alelo_comercial.php' => 'fechamento_importar_recebimentos',
         'modulos/fechamentodecaixa/extrato_caixa.php' => 'fechamento_caixa',
         'modulos/fechamentodecaixa/detalhar_fechamento.php' => 'fechamento_caixa',
         'modulos/fechamentodecaixa/validar_cm.php' => 'fechamento_importar_recebimentos',
