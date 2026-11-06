@@ -1,3 +1,5 @@
+import time
+
 import requests
 
 
@@ -15,7 +17,13 @@ def buscar_conciliados():
     while True:
         resposta = requests.get(
             f"{BASE_SITE}/modulos/tesouraria/listar_conciliados_firebird.php",
-            params={"token": TOKEN_SITE, "empresa": EMPRESA_SUPERDUNGA, "limit": TAMANHO_LOTE, "offset": offset},
+            params={
+                "token": TOKEN_SITE,
+                "empresa": EMPRESA_SUPERDUNGA,
+                "limit": TAMANHO_LOTE,
+                "offset": offset,
+                "_ts": time.time_ns(),
+            },
             timeout=120,
         )
         resposta.raise_for_status()
@@ -61,7 +69,12 @@ def enviar_conciliados(registros):
 def processar_desvinculos():
     resposta = requests.get(
         f"{BASE_SITE}/modulos/tesouraria/listar_desvinculos_firebird.php",
-        params={"token": TOKEN_SITE, "empresa": EMPRESA_SUPERDUNGA, "limit": TAMANHO_LOTE},
+        params={
+            "token": TOKEN_SITE,
+            "empresa": EMPRESA_SUPERDUNGA,
+            "limit": TAMANHO_LOTE,
+            "_ts": time.time_ns(),
+        },
         timeout=120,
     )
     resposta.raise_for_status()

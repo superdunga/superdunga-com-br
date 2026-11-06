@@ -2,6 +2,9 @@
 require __DIR__ . '/../../config/conexao.php';
 
 header('Content-Type: application/json');
+header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
+header('Pragma: no-cache');
+header('Expires: 0');
 
 if (($_GET['token'] ?? '') !== '123456') {
     http_response_code(403);
