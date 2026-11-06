@@ -937,6 +937,7 @@ function parseFaturaMensalidadeCsvUnimed(string $arquivoCsv, string $nomeOrigina
         }
 
         $itens = [];
+        $itensPorCodigo = [];
         $competencia = null;
         while (($linha = fgetcsv($handle, 0, ';')) !== false) {
             if (count(array_filter($linha, static function ($valor) {
@@ -969,7 +970,7 @@ function parseFaturaMensalidadeCsvUnimed(string $arquivoCsv, string $nomeOrigina
             }
 
             [$unidade, $contrato, $familia, $dependente] = partesCodigoUnimed($mCodigo['codigo']);
-            $itens[] = [
+            $item = [
                 'codigo_completo' => $mCodigo['codigo'],
                 'unidade_unimed' => $unidade,
                 'contrato_unimed' => $contrato,
@@ -988,6 +989,24 @@ function parseFaturaMensalidadeCsvUnimed(string $arquivoCsv, string $nomeOrigina
                 'status_operacao' => 'A',
                 'contrato_venda' => $get('CONTRATO_VENDA_NUMERO') ?: null,
             ];
+
+            $chaveItem = $item['codigo_completo'] . '|' . $item['lancamento'];
+            if (isset($itensPorCodigo[$chaveItem])) {
+                $indiceItem = $itensPorCodigo[$chaveItem];
+                if (textoLimpoUnimed($itens[$indiceItem]['nome']) !== $nome) {
+                    throw new RuntimeException(
+                        'CSV da Unimed contem o mesmo cartao para beneficiarios diferentes: ' . $item['codigo_completo'] . '.'
+                    );
+                }
+
+                $valorConsolidado = round((float)$itens[$indiceItem]['valor_mensalidade'] + $valor, 2);
+                $itens[$indiceItem]['valor_mensalidade'] = $valorConsolidado;
+                $itens[$indiceItem]['valor_total'] = $valorConsolidado;
+                continue;
+            }
+
+            $itensPorCodigo[$chaveItem] = count($itens);
+            $itens[] = $item;
         }
     } finally {
         fclose($handle);
