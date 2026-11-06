@@ -100,6 +100,77 @@ function numeroCsvContasBanco($valor): string
     return number_format((float)$valor, 2, ',', '');
 }
 
+function exportarAcertoCsv(PDO $pdo, int $empresaId, int $acertoId): void
+{
+    $stmtAcerto = $pdo->prepare("
+        SELECT id, cbcontador, data_acerto, descricao
+        FROM financeiro_acertos_extrato
+        WHERE id = ? AND empresa_id = ?
+        LIMIT 1
+    ");
+    $stmtAcerto->execute([$acertoId, $empresaId]);
+    $acerto = $stmtAcerto->fetch(PDO::FETCH_ASSOC);
+
+    if (!$acerto) {
+        http_response_code(404);
+        exit('Acerto nao encontrado.');
+    }
+
+    $stmtItens = $pdo->prepare("
+        SELECT
+            ai.movcontador,
+            ai.tipo_mov,
+            ai.valor,
+            b.DTMOV,
+            b.TIPOES,
+            b.HISTMOV
+        FROM financeiro_acertos_extrato_itens ai
+        LEFT JOIN armazem_bnc001 b
+            ON b.EMPRESA = ai.empresa_id
+           AND b.MOVCONTADOR = ai.movcontador
+        WHERE ai.acerto_id = ? AND ai.empresa_id = ?
+        ORDER BY b.DTMOV, ai.movcontador
+    ");
+    $stmtItens->execute([$acertoId, $empresaId]);
+
+    header('Content-Type: text/csv; charset=utf-8');
+    header('Content-Disposition: attachment; filename="acerto_' . $acertoId . '.csv"');
+    header('Pragma: no-cache');
+    header('Expires: 0');
+
+    echo "\xEF\xBB\xBF";
+    $saidaCsv = fopen('php://output', 'w');
+    fputcsv($saidaCsv, ['Acerto', 'Descricao', 'Conta', 'Data Acerto', 'Mov.', 'Data', 'TipoEs', 'Historico', 'D/C', 'Valor'], ';');
+
+    while ($item = $stmtItens->fetch(PDO::FETCH_ASSOC)) {
+        $tipoMov = strtoupper((string)$item['tipo_mov']);
+        $valor = abs((float)$item['valor']);
+        if ($tipoMov === 'D') {
+            $valor *= -1;
+        }
+
+        fputcsv($saidaCsv, [
+            (int)$acerto['id'],
+            (string)$acerto['descricao'],
+            (int)$acerto['cbcontador'],
+            dataContasBanco($acerto['data_acerto']),
+            (int)$item['movcontador'],
+            dataContasBanco($item['DTMOV'] ?? null),
+            (string)($item['TIPOES'] ?? ''),
+            (string)($item['HISTMOV'] ?? ''),
+            $tipoMov,
+            numeroCsvContasBanco($valor),
+        ], ';');
+    }
+
+    fclose($saidaCsv);
+    exit;
+}
+
+if (!empty($_GET['exportar_acerto'])) {
+    exportarAcertoCsv($pdo_master, $empresaId, (int)$_GET['exportar_acerto']);
+}
+
 function naturezaSaldoContasBanco($valor): string
 {
     $valor = (float)$valor;
@@ -1524,6 +1595,7 @@ require '../../layout/header.php';
                 </div>
                 <div class="modal-footer">
                     <a href="acerto_pdf.php?id=<?= $acertoModalId ?>" class="btn btn-outline-primary">PDF</a>
+                    <a href="contas.php?exportar_acerto=<?= $acertoModalId ?>" class="btn btn-outline-success">CSV</a>
                     <form method="POST" onsubmit="return confirm('Desfazer este acerto e voltar a exibir os lancamentos filhos?')">
                         <input type="hidden" name="acao" value="desfazer_acerto">
                         <input type="hidden" name="acerto_id" value="<?= $acertoModalId ?>">
