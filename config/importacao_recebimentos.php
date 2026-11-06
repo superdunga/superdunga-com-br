@@ -73,7 +73,7 @@ function garantirTabelaRegrasImportacao(PDO $pdo): void
         )
         SELECT 1, 'ALELO', 'Comercial', 'alelo_edi_comercial', 'ALELO_EDI_COMERCIAL',
                'sincronizar_alelo_comercial.php', '6000317874',
-               3, NULL, NULL, 'S', 60
+               15, NULL, NULL, 'S', 60
         WHERE NOT EXISTS (
             SELECT 1 FROM fechamento_importacao_regras
             WHERE empresa_id = 1 AND tipo = 'alelo_edi_comercial' AND grupo = 'Comercial'
@@ -236,13 +236,13 @@ function regraImportacaoAleloComercialArmazem(): array
         'id' => 0,
         'empresa_id' => 1,
         'nome' => 'ALELO',
-        'descricao' => 'Sincronizacao EDI via SFTP - CMCONTADOR 3',
+        'descricao' => 'Sincronizacao EDI via SFTP - CMCONTADOR 15',
         'grupo' => 'Comercial',
         'tipo' => 'alelo_edi_comercial',
         'origem' => 'ALELO_EDI_COMERCIAL',
         'arquivo_php' => 'sincronizar_alelo_comercial.php',
         'estabelecimento' => '6000317874',
-        'cm_debito' => 3,
+        'cm_debito' => 15,
         'cm_credito' => null,
         'cm_pix' => null,
         'botao' => 'btn-primary',

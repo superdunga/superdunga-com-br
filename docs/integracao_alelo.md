@@ -8,7 +8,7 @@ Ela consulta a caixa postal SFTP da ALELO sem upload manual e processa os arquiv
 - Tipo `01`: transacoes. Somente movimentos `01 - Venda` geram recebiveis.
 - Tipo `02`: pagamentos. Os dados sao armazenados em `fechamento_alelo_pagamentos` para auditoria.
 
-O CM inicial das vendas e `3`, definido em `fechamento_importacao_regras` e alteravel sem mudar o parser.
+O CM das vendas da empresa 1 e `15`, definido em `fechamento_importacao_regras` e alteravel sem mudar o parser.
 A data prevista informada no EDI e sempre preservada.
 
 ## Credenciais

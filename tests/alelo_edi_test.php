@@ -35,7 +35,7 @@ $venda = linhaAlelo([
 ]);
 $trailerVenda = linhaAlelo([[1, 2, '99']]);
 $arquivoVenda = aleloLerArquivo(implode("\r\n", [$headerVenda, $venda, $trailerVenda]), [
-    'origem' => 'ALELO_EDI_COMERCIAL', 'cm_debito' => 3,
+    'origem' => 'ALELO_EDI_COMERCIAL', 'cm_debito' => 15,
 ]);
 
 conferirAlelo(count($arquivoVenda['registros']) === 1, 'A venda ALELO nao foi interpretada.');
@@ -44,7 +44,7 @@ conferirAlelo($registro['data_venda'] === '2026-11-05 13:45:00', 'Data da venda 
 conferirAlelo($registro['data_prevista'] === '2026-11-06', 'Data prevista incorreta.');
 conferirAlelo(abs($registro['valor_bruto'] - 4.99) < 0.001, 'Valor bruto incorreto.');
 conferirAlelo(abs($registro['valor_liquido'] - 4.84) < 0.001, 'Valor liquido incorreto.');
-conferirAlelo($registro['cm'] === 3, 'CM incorreto.');
+conferirAlelo($registro['cm'] === 15, 'CM incorreto.');
 conferirAlelo($registro['descricao'] === 'ALELO - ALIMENTACAO PAT', 'Descricao incorreta.');
 
 $headerPagamento = linhaAlelo([
@@ -59,7 +59,7 @@ $pagamento = linhaAlelo([
     [105, 1, '+'], [106, 18, '000000000004990000'],
 ]);
 $arquivoPagamento = aleloLerArquivo(implode("\n", [$headerPagamento, $pagamento, $trailerVenda]), [
-    'origem' => 'ALELO_EDI_COMERCIAL', 'cm_debito' => 3,
+    'origem' => 'ALELO_EDI_COMERCIAL', 'cm_debito' => 15,
 ]);
 conferirAlelo(count($arquivoPagamento['pagamentos']) === 1, 'O pagamento ALELO nao foi interpretado.');
 conferirAlelo(abs($arquivoPagamento['pagamentos'][0]['valor'] - 4.99) < 0.001, 'Valor do pagamento incorreto.');
