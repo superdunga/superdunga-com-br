@@ -1399,19 +1399,61 @@ elseif ($tabela === 'cr001') {
             'N', NULL, NULL, NOW()
         )
         ON DUPLICATE KEY UPDATE
+            enviado_firebird = CASE
+                WHEN recebimento_id IS NOT NULL
+                 AND (
+                        NOT (CMCONTADOR <=> VALUES(CMCONTADOR))
+                     OR NOT (DTVENC <=> VALUES(DTVENC))
+                 )
+                THEN 'N'
+                ELSE enviado_firebird
+            END,
+            data_envio_firebird = CASE
+                WHEN recebimento_id IS NOT NULL
+                 AND (
+                        NOT (CMCONTADOR <=> VALUES(CMCONTADOR))
+                     OR NOT (DTVENC <=> VALUES(DTVENC))
+                 )
+                THEN NULL
+                ELSE data_envio_firebird
+            END,
+            tentativa_envio = CASE
+                WHEN recebimento_id IS NOT NULL
+                 AND (
+                        NOT (CMCONTADOR <=> VALUES(CMCONTADOR))
+                     OR NOT (DTVENC <=> VALUES(DTVENC))
+                 )
+                THEN 0
+                ELSE tentativa_envio
+            END,
+            erro_envio = CASE
+                WHEN recebimento_id IS NOT NULL
+                 AND (
+                        NOT (CMCONTADOR <=> VALUES(CMCONTADOR))
+                     OR NOT (DTVENC <=> VALUES(DTVENC))
+                 )
+                THEN NULL
+                ELSE erro_envio
+            END,
             DTVENDA = VALUES(DTVENDA),
             NUMPARCELA = VALUES(NUMPARCELA),
             NOTAFISCAL = VALUES(NOTAFISCAL),
             TITULO = VALUES(TITULO),
             VALORVENDA = VALUES(VALORVENDA),
             CLICONTADOR = VALUES(CLICONTADOR),
-            CMCONTADOR = VALUES(CMCONTADOR),
+            CMCONTADOR = CASE
+                WHEN recebimento_id IS NOT NULL THEN CMCONTADOR
+                ELSE VALUES(CMCONTADOR)
+            END,
             OBSERVACAO = VALUES(OBSERVACAO),
             NUMCH = VALUES(NUMCH),
             DTEMISSAO = VALUES(DTEMISSAO),
             VLRPARCELA = VALUES(VLRPARCELA),
             PARCELA = VALUES(PARCELA),
-            DTVENC = VALUES(DTVENC),
+            DTVENC = CASE
+                WHEN recebimento_id IS NOT NULL THEN DTVENC
+                ELSE VALUES(DTVENC)
+            END,
             VLRPAGO = VALUES(VLRPAGO),
             VLRRESTANTE = VALUES(VLRRESTANTE),
             DTPAGTO = VALUES(DTPAGTO),
