@@ -15,7 +15,7 @@ chamadas externas longas e usam o endpoint dedicado
 ## Regras preservadas
 
 - O cron geral roda a cada cinco minutos.
-- O monitor Cielo roda separadamente a cada dez minutos.
+- O monitor Cielo roda separadamente a cada trinta minutos.
 - `GET_LOCK('superdunga_whatsapp_agendamentos', 0)` impede duas execucoes simultaneas
   do cron geral.
 - Uma resposta HTTP de sucesso da Evolution significa mensagem aceita e permite

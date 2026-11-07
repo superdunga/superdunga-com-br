@@ -136,7 +136,7 @@ function cieloCaixaExecutarMonitor(PDO $pdo, ?DateTimeImmutable $agora = null): 
 
         if (!empty($controle['ultima_verificacao_em'])) {
             $ultima = new DateTimeImmutable((string)$controle['ultima_verificacao_em']);
-            if (($agora->getTimestamp() - $ultima->getTimestamp()) < 10 * 60) {
+            if (($agora->getTimestamp() - $ultima->getTimestamp()) < 30 * 60) {
                 return ['status' => 'AGUARDANDO_INTERVALO', 'data_caixa' => $dataCaixa];
             }
         }
