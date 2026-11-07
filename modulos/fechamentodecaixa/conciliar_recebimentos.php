@@ -462,7 +462,6 @@ if (!$modoLeveAuto) {
     WHERE c.DTLANC BETWEEN ? AND ?
       AND c.EMPRESA = $empresa_id
       AND c.recebimento_id IS NULL
-      AND COALESCE(c.cm_original, c.CMCONTADOR) <> 9
       AND (c.validado IS NULL OR c.validado <> 'S')
       AND COALESCE(c.excluido_firebird, 'N') = 'N'
       AND COALESCE(c.STATUS, '') <> 'QT'
