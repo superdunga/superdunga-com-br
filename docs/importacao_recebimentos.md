@@ -19,8 +19,11 @@ regra geral D+1 ou D+30.
 - SIPAG POS Comercial e Outros: usa a data prevista fornecida no arquivo.
 - SIPAG PIX Comercial e Outros: o layout nao fornece previsao separada; usa a
   data da venda, sem hora e minuto.
-- PagSeguro PIX: o layout nao fornece previsao separada; usa a data da venda,
-  sem hora e minuto.
+- PagSeguro PIX: aceita o CSV de transacoes e o OFX da conta PagSeguro
+  51679053-2. No OFX, importa somente creditos identificados como `Pix
+  recebido`, usa o `FITID` contra duplicidade e ignora rendimentos e outras
+  movimentacoes. Nenhum dos layouts fornece previsao separada; usa a data da
+  venda, sem hora e minuto.
 - TON Comercial: aceita o layout historico de vendas e o layout atual de
   cobrancas. O layout atual usa o identificador da cobranca como chave unica,
   a data de captura como data da venda, o valor bruto atualizado e o valor

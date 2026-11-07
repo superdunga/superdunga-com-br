@@ -2,6 +2,7 @@
 require '../../config/auth.php';
 require '../../config/conexao.php';
 require_once '../../config/importacao_recebimentos.php';
+require_once '../../config/pagseguro_ofx.php';
 require '../../layout/header.php';
 
 ini_set('display_errors', 1);
@@ -55,8 +56,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['arquivo'])) {
     $arquivo = $_FILES['arquivo']['tmp_name'];
     $nomeArquivo = $_FILES['arquivo']['name'];
 
-    if (strtolower(pathinfo($nomeArquivo, PATHINFO_EXTENSION)) !== 'csv') {
-        echo "<div class='alert alert-danger'>Arquivo inválido: selecione um arquivo CSV.</div>";
+    $extensao = strtolower(pathinfo($nomeArquivo, PATHINFO_EXTENSION));
+    if (!in_array($extensao, ['csv', 'ofx'], true)) {
+        echo "<div class='alert alert-danger'>Arquivo inválido: selecione um arquivo CSV ou OFX.</div>";
         require '../../layout/footer.php';
         exit;
     }
@@ -64,10 +66,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['arquivo'])) {
     if (!file_exists($arquivo)) {
         echo "<div class='alert alert-danger'>Arquivo não encontrado.</div>";
     } else {
-        $handle = fopen($arquivo, 'r');
-        if (!$handle) {
-            echo "<div class='alert alert-danger'>Erro ao abrir arquivo.</div>";
+        $registros = [];
+        $errosArquivo = [];
+
+        if ($extensao === 'ofx') {
+            [$registros, $errosArquivo] = pagseguroLerOfx($arquivo);
         } else {
+            $handle = fopen($arquivo, 'r');
+            if (!$handle) {
+                echo "<div class='alert alert-danger'>Erro ao abrir arquivo.</div>";
+                require '../../layout/footer.php';
+                exit;
+            }
+
             $cabecalhoEsperado = [
                 'CODIGO DA TRANSACAO',
                 'DATA',
@@ -79,8 +90,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['arquivo'])) {
             $cabecalhoNormalizado = is_array($cabecalho)
                 ? array_map('pagseguroNormalizarCabecalho', $cabecalho)
                 : [];
-            $errosArquivo = [];
-            $registros = [];
             $linha = 1;
 
             if ($cabecalhoNormalizado !== $cabecalhoEsperado) {
@@ -140,18 +149,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['arquivo'])) {
             if (!$registros && !$errosArquivo) {
                 $errosArquivo[] = 'O arquivo não possui registros.';
             }
+        }
 
-            if ($errosArquivo) {
-                echo "<div class='alert alert-danger'><strong>Arquivo não importado.</strong><ul class='mb-0 mt-2'>";
-                foreach ($errosArquivo as $erroArquivo) {
-                    echo '<li>' . htmlspecialchars($erroArquivo) . '</li>';
-                }
-                echo '</ul></div>';
-                require '../../layout/footer.php';
-                exit;
+        if ($errosArquivo) {
+            echo "<div class='alert alert-danger'><strong>Arquivo não importado.</strong><ul class='mb-0 mt-2'>";
+            foreach ($errosArquivo as $erroArquivo) {
+                echo '<li>' . htmlspecialchars($erroArquivo) . '</li>';
             }
+            echo '</ul></div>';
+            require '../../layout/footer.php';
+            exit;
+        }
 
-            $importados = 0;
+        $importados = 0;
             $atualizados = 0;
             $ambiguos = 0;
             $duplicados = 0;
@@ -217,8 +227,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['arquivo'])) {
                     $data = $registro['data'];
                     $descricao = $registro['descricao'];
                     $valor_float = $registro['valor'];
-                    $dataObj = DateTime::createFromFormat('!d/m/Y', $data);
-                    $dataObj->setTime(12, 0, 0);
+                    if (!empty($registro['data_hora'])) {
+                        $dataObj = DateTime::createFromFormat('!Y-m-d H:i:s', $registro['data_hora']);
+                    } else {
+                        $dataObj = DateTime::createFromFormat('!d/m/Y', $data);
+                        $dataObj->setTime(12, 0, 0);
+                    }
                     $data_formatada = $dataObj->format('Y-m-d H:i:s');
                     $data_prevista = substr($data_formatada, 0, 10);
                     $identificador = $codigo;
@@ -286,7 +300,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['arquivo'])) {
                         Registros não importados por possuírem mais de um recebível do extrato compatível: <strong>{$ambiguos}</strong>.
                       </div>";
             }
-        }
     }
 }
 ?>
@@ -303,8 +316,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['arquivo'])) {
                 <input type="hidden" name="regra_id" value="<?= (int)$regraImportacao['id'] ?>">
             <?php endif; ?>
             <div class="mb-3">
-                <label class="form-label">Selecione o arquivo CSV</label>
-                <input type="file" name="arquivo" class="form-control" required>
+                <label class="form-label">Selecione o arquivo CSV ou OFX</label>
+                <input type="file" name="arquivo" class="form-control" accept=".csv,.ofx" required>
             </div>
 
             <button type="submit" class="btn btn-primary">

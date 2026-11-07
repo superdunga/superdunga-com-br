@@ -935,9 +935,16 @@ function lerOfxExtrato(string $arquivo): array
         }
         $dataRaw = $capturar('DTPOSTED');
         $data = null;
-        if ($dataRaw !== '') {
-            $data = substr($dataRaw, 0, 8);
-            $data = substr($data, 0, 4) . '-' . substr($data, 4, 2) . '-' . substr($data, 6, 2) . ' 00:00:00';
+        if (preg_match('/^(\d{4})(\d{2})(\d{2})(?:(\d{2})(\d{2})(\d{2}))?/', $dataRaw, $dataPartes)) {
+            $data = sprintf(
+                '%s-%s-%s %s:%s:%s',
+                $dataPartes[1],
+                $dataPartes[2],
+                $dataPartes[3],
+                $dataPartes[4] ?? '00',
+                $dataPartes[5] ?? '00',
+                $dataPartes[6] ?? '00'
+            );
         }
 
         $linhas[] = [
@@ -945,7 +952,7 @@ function lerOfxExtrato(string $arquivo): array
             'historico' => normalizarTextoExtrato($memo ?: $nome),
             'documento' => normalizarTextoExtrato($capturar('CHECKNUM') ?: $capturar('REFNUM')),
             'valor' => $valor,
-            'tipo' => in_array($tipoOfx, ['CREDIT', 'DEP', 'DIRECTDEP', 'INT'], true) ? 'C' : 'D',
+            'tipo' => in_array($tipoOfx, ['CREDIT', 'DEP', 'DIRECTDEP', 'INT', 'IN'], true) ? 'C' : 'D',
             // O Sicoob renumera o FITID quando novos lancamentos entram no mesmo dia/valor.
             // A chave natural com ocorrencia preserva os repetidos reais sem perder movimentos novos.
             'identificador' => $sicoob ? '' : normalizarTextoExtrato($capturar('FITID')),
@@ -956,10 +963,40 @@ function lerOfxExtrato(string $arquivo): array
     return $linhas;
 }
 
-function validarContaOfxSicoob(string $arquivo, int $empresaId, int $cbcontador): void
+function validarContaOfxConhecida(string $arquivo, int $empresaId, int $cbcontador): void
 {
     $conteudo = file_get_contents($arquivo);
-    if ($conteudo === false || !preg_match('/<BANKID>([^<\r\n]+)/i', $conteudo, $banco) || trim($banco[1]) !== '756') {
+    if ($conteudo === false) {
+        throw new RuntimeException('Nao foi possivel ler o arquivo OFX.');
+    }
+    $codigoBanco = preg_match('/<BANKID>([^<\r\n]+)/i', $conteudo, $banco)
+        ? trim($banco[1])
+        : '';
+
+    if ($empresaId === 1 && $cbcontador === 15) {
+        if ($codigoBanco !== '290') {
+            throw new RuntimeException('A conta 15 aceita somente o extrato OFX do PagSeguro (banco 290).');
+        }
+        if (!preg_match('/<ACCTID>([^<\r\n]+)/i', $conteudo, $contaPagseguro)) {
+            throw new RuntimeException('O arquivo PagSeguro nao informa o numero da conta.');
+        }
+        if (preg_replace('/\D/', '', $contaPagseguro[1]) !== '516790532') {
+            throw new RuntimeException('O extrato PagSeguro pertence a conta ' . trim($contaPagseguro[1]) . ', diferente da conta 15.');
+        }
+        return;
+    }
+
+    if ($codigoBanco === '') {
+        return;
+    }
+
+    if ($codigoBanco === '290'
+        && preg_match('/<ACCTID>([^<\r\n]+)/i', $conteudo, $contaPagseguro)
+        && preg_replace('/\D/', '', $contaPagseguro[1]) === '516790532') {
+        throw new RuntimeException('Este extrato PagSeguro pertence a empresa 1, conta 15. Selecione essa conta para importar.');
+    }
+
+    if ($codigoBanco !== '756') {
         return;
     }
     if (!preg_match('/<ACCTID>([^<\r\n]+)/i', $conteudo, $conta)) {
@@ -2686,7 +2723,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['acao'] ?? '') === 'importa
             } else {
                 try {
                     if ($extensao === 'ofx') {
-                        validarContaOfxSicoob($destino, $empresaId, $cbcontadorPost);
+                        validarContaOfxConhecida($destino, $empresaId, $cbcontadorPost);
                     }
                     $linhas = $extensao === 'ofx' ? lerOfxExtrato($destino) : lerCsvExtrato($destino);
                 } catch (Throwable $e) {
