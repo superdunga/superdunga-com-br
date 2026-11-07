@@ -1,7 +1,6 @@
 <?php
 require __DIR__ . '/../../config/conexao.php';
 require __DIR__ . '/whatsapp_lib.php';
-require __DIR__ . '/../../config/cielo_caixa_whatsapp.php';
 require __DIR__ . '/../whatsapp_operacional/whatsapp_operacional_lib.php';
 
 header('Content-Type: application/json; charset=utf-8');
@@ -34,25 +33,49 @@ try {
         exit;
     }
 
-    $pdo_master->prepare('UPDATE whatsapp_gerencial_config SET cron_ultimo_contato_em=NOW() WHERE agendamento_token=?')->execute([$tokenRecebido]);
+    $stmtLock = $pdo_master->query("SELECT GET_LOCK('superdunga_whatsapp_agendamentos', 0)");
+    if ((int)$stmtLock->fetchColumn() !== 1) {
+        echo json_encode([
+            'status' => 'em_execucao',
+            'mensagem' => 'Uma execucao anterior ainda esta ativa.',
+        ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+        exit;
+    }
 
-    $resultado = whatsappExecutarAgendamentos($pdo_master);
-    $resultadoCaixaCielo = cieloCaixaExecutarMonitor($pdo_master);
-    $resultadoOperacional = whatsappOperacionalExecutarAutomacao($pdo_master);
-    $confirmacoesOperacionais = whatsappOperacionalConsultarConfirmacoes($pdo_master);
-    $confirmacoesGerenciais = whatsappAtualizarConfirmacoesGerenciais($pdo_master);
+    $inicioCron = microtime(true);
+    $pdo_master->prepare("INSERT INTO whatsapp_cron_execucoes (processo) VALUES ('WHATSAPP_AGENDAMENTOS')")->execute();
+    $execucaoId = (int)$pdo_master->lastInsertId();
 
-    echo json_encode([
-        'status' => 'ok',
-        'executadas' => count(array_filter($resultado, static function ($item) { return $item['status'] !== 'IGNORADO_ATRASO'; })),
-        'ignoradas_atraso' => count(array_filter($resultado, static function ($item) { return $item['status'] === 'IGNORADO_ATRASO'; })),
-        'resultado' => $resultado,
-        'caixa_dia_anterior_cielo' => $resultadoCaixaCielo,
-        'fechamentos_operacionais' => $resultadoOperacional,
-        'confirmacoes_operacionais' => $confirmacoesOperacionais,
-        'confirmacoes_gerenciais' => $confirmacoesGerenciais,
-    ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
-} catch (Exception $e) {
+    try {
+        $pdo_master->prepare('UPDATE whatsapp_gerencial_config SET cron_ultimo_contato_em=NOW() WHERE agendamento_token=?')->execute([$tokenRecebido]);
+
+        $resultado = whatsappExecutarAgendamentos($pdo_master);
+        $resultadoOperacional = whatsappOperacionalExecutarAutomacao($pdo_master);
+        $confirmacoesOperacionais = whatsappOperacionalConsultarConfirmacoes($pdo_master);
+        $confirmacoesGerenciais = whatsappAtualizarConfirmacoesGerenciais($pdo_master);
+
+        $resposta = [
+            'status' => 'ok',
+            'executadas' => count(array_filter($resultado, static function ($item) { return $item['status'] !== 'IGNORADO_ATRASO'; })),
+            'ignoradas_atraso' => count(array_filter($resultado, static function ($item) { return $item['status'] === 'IGNORADO_ATRASO'; })),
+            'resultado' => $resultado,
+            'fechamentos_operacionais' => $resultadoOperacional,
+            'confirmacoes_operacionais' => $confirmacoesOperacionais,
+            'confirmacoes_gerenciais' => $confirmacoesGerenciais,
+        ];
+        $duracaoMs = (int)round((microtime(true) - $inicioCron) * 1000);
+        $stmtFim = $pdo_master->prepare("UPDATE whatsapp_cron_execucoes SET status='OK',finalizado_em=NOW(),duracao_ms=?,detalhes=? WHERE id=?");
+        $stmtFim->execute([$duracaoMs, json_encode($resposta, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES), $execucaoId]);
+        echo json_encode($resposta, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    } catch (Throwable $e) {
+        $duracaoMs = (int)round((microtime(true) - $inicioCron) * 1000);
+        $stmtFim = $pdo_master->prepare("UPDATE whatsapp_cron_execucoes SET status='ERRO',finalizado_em=NOW(),duracao_ms=?,detalhes=? WHERE id=?");
+        $stmtFim->execute([$duracaoMs, $e->getMessage(), $execucaoId]);
+        throw $e;
+    } finally {
+        $pdo_master->query("SELECT RELEASE_LOCK('superdunga_whatsapp_agendamentos')");
+    }
+} catch (Throwable $e) {
     http_response_code(500);
     echo json_encode([
         'status' => 'erro',

@@ -197,6 +197,20 @@ function whatsappEnsureTables(PDO $pdo): void
     ");
 
     $pdo->exec("
+        CREATE TABLE IF NOT EXISTS whatsapp_cron_execucoes (
+            id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+            processo VARCHAR(60) NOT NULL,
+            status VARCHAR(30) NOT NULL DEFAULT 'EXECUTANDO',
+            iniciado_em DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            finalizado_em DATETIME NULL,
+            duracao_ms INT UNSIGNED NULL,
+            detalhes TEXT NULL,
+            INDEX idx_whatsapp_cron_processo (processo, iniciado_em),
+            INDEX idx_whatsapp_cron_status (status, iniciado_em)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    ");
+
+    $pdo->exec("
         CREATE TABLE IF NOT EXISTS unimed_whatsapp_envios (
             id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
             empresa_id INT NOT NULL,
@@ -1294,14 +1308,10 @@ function whatsappEnviarRotina(PDO $pdo, array $rotina, string $mensagem, ?int $m
             $consultarTentativas->execute([$agendamentoId, $previstoEm, (int)$destinatario['id']]);
             $tentativas = $consultarTentativas->fetchAll(PDO::FETCH_ASSOC);
             $ultima = $tentativas[0] ?? null;
-            if ($ultima && ($ultima['entrega_status'] ?? '') === 'ENTREGUE') {
+            // Um HTTP de sucesso da Evolution significa que a mensagem foi aceita.
+            // O ACK posterior nem sempre e emitido para grupos e serve apenas para auditoria.
+            if ($ultima && ($ultima['status'] ?? '') === 'OK') {
                 $ok++;
-                continue;
-            }
-            if ($ultima && ($ultima['status'] ?? '') === 'OK'
-                && ($ultima['entrega_status'] ?? '') !== 'FALHA'
-                && (int)$ultima['idade_segundos'] < 600) {
-                $pendente++;
                 continue;
             }
             if ($ultima && ($ultima['status'] ?? '') === 'ERRO' && (int)$ultima['idade_segundos'] < 240) {
@@ -1326,11 +1336,7 @@ function whatsappEnviarRotina(PDO $pdo, array $rotina, string $mensagem, ?int $m
             $previstoEm !== '' ? $previstoEm : null
         );
         if ($resultado['status'] === 'OK') {
-            if ($agendamentoId > 0) {
-                $pendente++;
-            } else {
-                $ok++;
-            }
+            $ok++;
         } else {
             $falha++;
         }
