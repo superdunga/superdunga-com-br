@@ -32,16 +32,12 @@ try {
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
     ");
     $stmt = $pdo_master->prepare("
-        SELECT d.id AS FILA_ID, d.crcontador AS CRCONTADOR,
-               CAST(d.recebimento_id AS CHAR) AS CHAVEINTEGRACAO_ANTERIOR,
-               COALESCE(c.cm_original, c.CMCONTADOR) AS CMCONTADOR_ORIGINAL
-        FROM conciliacao_recebimentos_desvinculos_firebird d
-        LEFT JOIN armazem_cr001 c
-          ON c.EMPRESA = d.empresa_id
-         AND c.CRCONTADOR = d.crcontador
-        WHERE d.empresa_id = ?
-          AND d.status IN ('PENDENTE', 'ERRO')
-        ORDER BY d.id
+        SELECT id AS FILA_ID, crcontador AS CRCONTADOR,
+               CAST(recebimento_id AS CHAR) AS CHAVEINTEGRACAO_ANTERIOR
+        FROM conciliacao_recebimentos_desvinculos_firebird
+        WHERE empresa_id = ?
+          AND status IN ('PENDENTE', 'ERRO')
+        ORDER BY id
         LIMIT $limit
     ");
     $stmt->execute([$empresa]);
