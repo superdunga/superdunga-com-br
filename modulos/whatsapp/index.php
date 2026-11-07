@@ -19,6 +19,7 @@ $previewRotina = null;
 $previewMensagem = null;
 $secoesWhatsapp = ['painel', 'rotinas', 'destinatarios', 'mensagens', 'historico', 'configuracoes'];
 $secaoWhatsapp = strtolower(trim((string)($_GET['secao'] ?? 'painel')));
+$historicoRotinaId = max(0, (int)($_GET['rotina_id'] ?? 0));
 if (!in_array($secaoWhatsapp, $secoesWhatsapp, true)) {
     $secaoWhatsapp = 'painel';
 }
@@ -526,26 +527,42 @@ $stmt->execute([$empresaId]);
 foreach ($stmt as $ag) {
     $agendamentosRotina[(int)$ag['rotina_id']][] = $ag;
 }
-$stmt = $pdo_master->prepare("
+$sqlHistorico = "
     SELECT e.*, m.titulo, r.nome AS rotina_nome
     FROM whatsapp_envios e
     LEFT JOIN whatsapp_mensagens m ON m.id = e.mensagem_id AND m.empresa_id = e.empresa_id
     LEFT JOIN whatsapp_rotinas r ON r.id = e.rotina_id AND r.empresa_id = e.empresa_id
     WHERE e.empresa_id = ?
+";
+$parametrosHistorico = [$empresaId];
+if ($historicoRotinaId > 0) {
+    $sqlHistorico .= ' AND e.rotina_id = ?';
+    $parametrosHistorico[] = $historicoRotinaId;
+}
+$sqlHistorico .= "
     ORDER BY e.enviado_em DESC, e.id DESC
     LIMIT 50
-");
-$stmt->execute([$empresaId]);
+";
+$stmt = $pdo_master->prepare($sqlHistorico);
+$stmt->execute($parametrosHistorico);
 $historico = $stmt->fetchAll(PDO::FETCH_ASSOC);
-$stmt = $pdo_master->prepare("
+$sqlIgnorados = "
     SELECT i.previsto_em, i.motivo, r.nome AS rotina_nome
     FROM whatsapp_agendamentos_ignorados i
     INNER JOIN whatsapp_rotina_agendamentos a ON a.id=i.agendamento_id
     INNER JOIN whatsapp_rotinas r ON r.id=a.rotina_id AND r.empresa_id=i.empresa_id
     WHERE i.empresa_id=?
+";
+$parametrosIgnorados = [$empresaId];
+if ($historicoRotinaId > 0) {
+    $sqlIgnorados .= ' AND r.id = ?';
+    $parametrosIgnorados[] = $historicoRotinaId;
+}
+$sqlIgnorados .= "
     ORDER BY i.previsto_em DESC LIMIT 20
-");
-$stmt->execute([$empresaId]);
+";
+$stmt = $pdo_master->prepare($sqlIgnorados);
+$stmt->execute($parametrosIgnorados);
 $agendamentosIgnorados = $stmt->fetchAll(PDO::FETCH_ASSOC);
 $stmt = $pdo_master->prepare("
     SELECT u.*, f.competencia, f.numero_fatura
@@ -585,6 +602,10 @@ $proximoEnvio = $proximosEnvios[0] ?? null;
 $rotinasPorId = [];
 foreach ($rotinas as $rotina) {
     $rotinasPorId[(int)$rotina['id']] = $rotina;
+}
+$historicoRotina = $historicoRotinaId > 0 ? ($rotinasPorId[$historicoRotinaId] ?? null) : null;
+if ($historicoRotinaId > 0 && !$historicoRotina) {
+    $historicoRotinaId = 0;
 }
 
 $cronUrl = '';
@@ -1166,6 +1187,7 @@ require __DIR__ . '/../../layout/header.php';
                             <td data-label="Ultima execucao"><?= $r['ultima_execucao'] ? date('d/m/Y H:i', strtotime($r['ultima_execucao'])) : '-' ?></td>
                             <td data-label="Acoes" class="text-center">
                                 <div class="d-flex gap-1 justify-content-center rotinas-acoes">
+                                    <a class="btn btn-sm btn-outline-info" href="?secao=historico&amp;rotina_id=<?= (int)$r['id'] ?>">Historico</a>
                                     <button class="btn btn-sm btn-outline-primary" type="button" data-bs-toggle="collapse" data-bs-target="#rotina<?= (int)$r['id'] ?>" aria-expanded="<?= $rotinaExpandidaId === (int)$r['id'] ? 'true' : 'false' ?>">Editar</button>
                                     <form method="post">
                                         <input type="hidden" name="csrf" value="<?= htmlspecialchars($csrf) ?>">
@@ -1579,8 +1601,18 @@ require __DIR__ . '/../../layout/header.php';
 
 <?php if ($secaoWhatsapp === 'historico'): ?>
 <div class="card shadow-sm">
-    <div class="card-header">
-        <h2 class="h5 mb-0">Historico de Envios</h2>
+    <div class="card-header d-flex flex-column flex-md-row align-items-md-center justify-content-between gap-2">
+        <div>
+            <h2 class="h5 mb-0">Historico de Envios</h2>
+            <?php if ($historicoRotina): ?>
+                <div class="small text-muted mt-1">
+                    Filtrado por: <strong><?= htmlspecialchars($historicoRotina['nome']) ?></strong>
+                </div>
+            <?php endif; ?>
+        </div>
+        <?php if ($historicoRotina): ?>
+            <a class="btn btn-sm btn-outline-secondary" href="?secao=historico">Limpar filtro</a>
+        <?php endif; ?>
     </div>
     <div class="card-body">
         <div class="table-responsive">
