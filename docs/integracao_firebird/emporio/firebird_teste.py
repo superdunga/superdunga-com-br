@@ -1027,13 +1027,15 @@ def update_cr001():
 
                 if operacao == "DESVINCULAR":
                     esperado = item.get("CHAVEINTEGRACAO_ANTERIOR")
-                    if chave_atual is None:
-                        resultados.append({"FILA_ID": fila_id, "status": "SINCRONIZADO"})
-                    elif str(chave_atual) == str(esperado):
+                    cm_original = item.get("CMCONTADOR_ORIGINAL")
+                    if chave_atual is None or str(chave_atual) == str(esperado):
                         cursor.execute("""
-                            UPDATE CR001 SET CHAVEINTEGRACAO = NULL
-                            WHERE CRCONTADOR = ? AND EMPRESA = ? AND CHAVEINTEGRACAO = ?
-                        """, (crcontador, int(empresa), chave_atual))
+                            UPDATE CR001
+                            SET CHAVEINTEGRACAO = NULL,
+                                CMCONTADOR = COALESCE(?, CMCONTADOR)
+                            WHERE CRCONTADOR = ? AND EMPRESA = ?
+                              AND (CHAVEINTEGRACAO = ? OR CHAVEINTEGRACAO IS NULL)
+                        """, (cm_original, crcontador, int(empresa), chave_atual))
                         atualizados += cursor.rowcount
                         resultados.append({"FILA_ID": fila_id, "status": "SINCRONIZADO"})
                     else:

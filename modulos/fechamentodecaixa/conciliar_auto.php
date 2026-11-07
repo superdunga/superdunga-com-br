@@ -70,6 +70,7 @@ $sqlSeguro = "
         FROM armazem_cr001 c
         WHERE c.recebimento_id IS NULL
           AND c.EMPRESA = $empresa_id
+          AND COALESCE(c.cm_original, c.CMCONTADOR) <> 9
           AND (c.validado IS NULL OR c.validado <> 'S')
           AND COALESCE(c.excluido_firebird, 'N') = 'N'
       AND COALESCE(c.STATUS, '') <> 'QT'
@@ -140,7 +141,7 @@ $sqlMovimento = "
         FROM armazem_cr001 c
         WHERE c.recebimento_id IS NULL
           AND c.EMPRESA = $empresa_id
-          AND c.CMCONTADOR <> 9
+          AND COALESCE(c.cm_original, c.CMCONTADOR) <> 9
           AND (c.validado IS NULL OR c.validado <> 'S')
           AND COALESCE(c.excluido_firebird, 'N') = 'N'
       AND COALESCE(c.STATUS, '') <> 'QT'
@@ -180,6 +181,7 @@ $sqlAproximado = "
       AND c.DTLANC BETWEEN ? AND ?
       AND c.EMPRESA = $empresa_id
       AND c.recebimento_id IS NULL
+      AND COALESCE(c.cm_original, c.CMCONTADOR) <> 9
       AND (c.validado IS NULL OR c.validado <> 'S')
       AND COALESCE(c.excluido_firebird, 'N') = 'N'
       AND COALESCE(c.STATUS, '') <> 'QT'
@@ -223,7 +225,7 @@ function conciliar($pdo, $rec_id, $cm, $crcontador, $empresa_id) {
 
     // Evita reutilizar o mesmo CR001.
     $check = $pdo->prepare("
-        SELECT recebimento_id
+        SELECT recebimento_id, COALESCE(cm_original, CMCONTADOR) AS cm_origem
         FROM armazem_cr001
         WHERE CRCONTADOR = ?
           AND EMPRESA = ?
@@ -233,7 +235,7 @@ function conciliar($pdo, $rec_id, $cm, $crcontador, $empresa_id) {
     $check->execute([$crcontador, $empresa_id]);
     $existe = $check->fetch(PDO::FETCH_ASSOC);
 
-    if (!empty($existe['recebimento_id'])) {
+    if (!empty($existe['recebimento_id']) || (int)($existe['cm_origem'] ?? 0) === 9) {
         return false;
     }
 
@@ -259,6 +261,7 @@ function conciliar($pdo, $rec_id, $cm, $crcontador, $empresa_id) {
         $update = $pdo->prepare("
             UPDATE armazem_cr001
             SET recebimento_id = ?,
+                cm_original = COALESCE(cm_original, CMCONTADOR),
                 CMCONTADOR = ?,
                 DTVENC = ?,
                 enviado_firebird = 'N',

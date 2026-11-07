@@ -40,7 +40,7 @@ if (empty($rec['data_prevista'])) {
 }
 
 $stmt = $pdo_master->prepare("
-    SELECT recebimento_id
+    SELECT recebimento_id, COALESCE(cm_original, CMCONTADOR) AS cm_origem
     FROM armazem_cr001
     WHERE CRCONTADOR = ?
       AND EMPRESA = ?
@@ -58,6 +58,10 @@ if (!empty($cr['recebimento_id'])) {
     die("Este CR001 ja esta vinculado a outro recebivel.");
 }
 
+if ((int)($cr['cm_origem'] ?? 0) === 9) {
+    die("Titulos originados em venda CM 9 nao podem ser conciliados com recebiveis de cartao ou PIX.");
+}
+
 $pdo_master->beginTransaction();
 
 try {
@@ -65,6 +69,7 @@ try {
         UPDATE armazem_cr001
         SET
             recebimento_id = ?,
+            cm_original = COALESCE(cm_original, CMCONTADOR),
             CMCONTADOR = ?,
             DTVENC = ?,
             enviado_firebird = 'N',

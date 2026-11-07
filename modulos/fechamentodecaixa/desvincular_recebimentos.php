@@ -165,7 +165,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['acao'] ?? '') === 'desvinc
             $recebivel = $stmtRecebivel->fetch(PDO::FETCH_ASSOC);
 
             $stmtCr = $pdo_master->prepare("
-                SELECT CRCONTADOR, EMPRESA, DTLANC, DTEMISSAO, VLRPARCELA, CMCONTADOR, STATUS, recebimento_id, excluido_firebird
+                SELECT CRCONTADOR, EMPRESA, DTLANC, DTEMISSAO, VLRPARCELA, CMCONTADOR, cm_original, STATUS, recebimento_id, excluido_firebird
                 FROM armazem_cr001
                 WHERE CRCONTADOR = ?
                   AND EMPRESA = ?
@@ -199,7 +199,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['acao'] ?? '') === 'desvinc
             if ($crApontaRecebivel) {
                 $stmt = $pdo_master->prepare("
                     UPDATE armazem_cr001
-                    SET recebimento_id = NULL
+                    SET recebimento_id = NULL,
+                        CMCONTADOR = COALESCE(cm_original, CMCONTADOR),
+                        enviado_firebird = 'N',
+                        data_envio_firebird = NULL
                     WHERE CRCONTADOR = ?
                       AND EMPRESA = ?
                       AND recebimento_id = ?
