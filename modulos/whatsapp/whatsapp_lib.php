@@ -106,6 +106,10 @@ function whatsappEnsureTables(PDO $pdo): void
     whatsappEnsureColumn($pdo, 'whatsapp_envios', 'entrega_consultada_em', 'ALTER TABLE whatsapp_envios ADD entrega_consultada_em DATETIME NULL AFTER entrega_status');
     whatsappEnsureColumn($pdo, 'whatsapp_envios', 'entregue_em', 'ALTER TABLE whatsapp_envios ADD entregue_em DATETIME NULL AFTER entrega_consultada_em');
     whatsappEnsureColumn($pdo, 'whatsapp_gerencial_config', 'cron_ultimo_contato_em', 'ALTER TABLE whatsapp_gerencial_config ADD cron_ultimo_contato_em DATETIME NULL AFTER agendamento_token');
+    whatsappEnsureColumn($pdo, 'whatsapp_gerencial_config', 'webhook_token', 'ALTER TABLE whatsapp_gerencial_config ADD webhook_token VARCHAR(64) NULL AFTER agendamento_token');
+    whatsappEnsureColumn($pdo, 'whatsapp_gerencial_config', 'webhook_configurado_em', 'ALTER TABLE whatsapp_gerencial_config ADD webhook_configurado_em DATETIME NULL AFTER webhook_token');
+    whatsappEnsureColumn($pdo, 'whatsapp_envios', 'agendamento_id', 'ALTER TABLE whatsapp_envios ADD agendamento_id INT UNSIGNED NULL AFTER rotina_id');
+    whatsappEnsureColumn($pdo, 'whatsapp_envios', 'agendamento_previsto_em', 'ALTER TABLE whatsapp_envios ADD agendamento_previsto_em DATETIME NULL AFTER agendamento_id');
     whatsappEnsureColumn($pdo, 'whatsapp_rotinas', 'origem_mensagem', "ALTER TABLE whatsapp_rotinas ADD origem_mensagem ENUM('TEXTO','SISTEMA') NOT NULL DEFAULT 'TEXTO' AFTER mensagem_id");
     whatsappEnsureColumn($pdo, 'whatsapp_rotinas', 'gerador_sistema', 'ALTER TABLE whatsapp_rotinas ADD gerador_sistema VARCHAR(80) NULL AFTER origem_mensagem');
     whatsappEnsureColumn($pdo, 'whatsapp_rotinas', 'periodicidade', "ALTER TABLE whatsapp_rotinas ADD periodicidade ENUM('MANUAL','DIARIO','SEMANAL','MENSAL') NOT NULL DEFAULT 'MANUAL' AFTER evitar_duplicidade_diaria");
@@ -178,6 +182,21 @@ function whatsappEnsureTables(PDO $pdo): void
     ");
 
     $pdo->exec("
+        CREATE TABLE IF NOT EXISTS whatsapp_gerencial_webhook_eventos (
+            id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+            instancia VARCHAR(120) NULL,
+            evento VARCHAR(80) NULL,
+            mensagem_id VARCHAR(120) NULL,
+            status_recebido VARCHAR(40) NULL,
+            envio_id BIGINT UNSIGNED NULL,
+            resultado VARCHAR(40) NOT NULL,
+            recebido_em DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            INDEX idx_wgwe_mensagem (mensagem_id),
+            INDEX idx_wgwe_recebido (recebido_em)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    ");
+
+    $pdo->exec("
         CREATE TABLE IF NOT EXISTS unimed_whatsapp_envios (
             id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
             empresa_id INT NOT NULL,
@@ -235,6 +254,12 @@ function whatsappEnsureTables(PDO $pdo): void
         ORDER BY (instancia = 'Armazem_do_Dunga') DESC, (empresa_id = 4) DESC, id
         LIMIT 1
     ");
+
+    $stmt = $pdo->query("SELECT webhook_token FROM whatsapp_gerencial_config WHERE id = 1");
+    if (trim((string)$stmt->fetchColumn()) === '') {
+        $token = function_exists('random_bytes') ? bin2hex(random_bytes(24)) : md5(uniqid('', true));
+        $pdo->prepare("UPDATE whatsapp_gerencial_config SET webhook_token = ? WHERE id = 1")->execute([$token]);
+    }
 
     $stmt = $pdo->query("SELECT agendamento_token FROM whatsapp_config WHERE empresa_id = 1 LIMIT 1");
     if (trim((string)$stmt->fetchColumn()) === '') {
@@ -562,6 +587,11 @@ function whatsappEnsureCompanyIndexes(PDO $pdo): void
 
     try {
         $pdo->exec("ALTER TABLE whatsapp_envios ADD INDEX idx_whatsapp_envios_entrega (entrega_status, entrega_consultada_em)");
+    } catch (Throwable $e) {
+    }
+
+    try {
+        $pdo->exec("ALTER TABLE whatsapp_envios ADD INDEX idx_whatsapp_envios_agendamento (agendamento_id, agendamento_previsto_em, destinatario_id)");
     } catch (Throwable $e) {
     }
 
@@ -926,7 +956,7 @@ function whatsappMensagemAlertaCuponsFiscais(PDO $pdo, int $empresaId): string
     return whatsappFormatarAlertaCuponsFiscais($totais, whatsappNomeEmpresa($pdo, $empresaId), $inicio, $dia);
 }
 
-function whatsappSend(PDO $pdo, array $config, array $destinatario, string $mensagem, ?int $mensagemId, ?int $usuarioId, ?int $rotinaId = null): array
+function whatsappSend(PDO $pdo, array $config, array $destinatario, string $mensagem, ?int $mensagemId, ?int $usuarioId, ?int $rotinaId = null, ?int $agendamentoId = null, ?string $agendamentoPrevistoEm = null): array
 {
     $token = trim($config['token'] ?? '');
     $apiBase = rtrim(trim($config['api_base_url'] ?? ''), '/');
@@ -940,16 +970,16 @@ function whatsappSend(PDO $pdo, array $config, array $destinatario, string $mens
     $nome = trim($destinatario['nome'] ?? '');
 
     if ($token === '' || $apiBase === '') {
-        return whatsappRegisterSend($pdo, $mensagemId, $destinatario, $mensagem, 'ERRO', null, 'Token ou URL da API nao configurado.', $usuarioId, $rotinaId);
+        return whatsappRegisterSend($pdo, $mensagemId, $destinatario, $mensagem, 'ERRO', null, 'Token ou URL da API nao configurado.', $usuarioId, $rotinaId, $agendamentoId, $agendamentoPrevistoEm);
     }
 
     if ($numero === '') {
-        return whatsappRegisterSend($pdo, $mensagemId, $destinatario, $mensagem, 'ERRO', null, 'Numero do destinatario vazio.', $usuarioId, $rotinaId);
+        return whatsappRegisterSend($pdo, $mensagemId, $destinatario, $mensagem, 'ERRO', null, 'Numero do destinatario vazio.', $usuarioId, $rotinaId, $agendamentoId, $agendamentoPrevistoEm);
     }
 
     if ($provedor === 'EVOLUTION') {
         if ($instancia === '') {
-            return whatsappRegisterSend($pdo, $mensagemId, $destinatario, $mensagem, 'ERRO', null, 'Instancia da Evolution API nao configurada.', $usuarioId, $rotinaId);
+            return whatsappRegisterSend($pdo, $mensagemId, $destinatario, $mensagem, 'ERRO', null, 'Instancia da Evolution API nao configurada.', $usuarioId, $rotinaId, $agendamentoId, $agendamentoPrevistoEm);
         }
         if (strtoupper(trim($destinatario['tipo'] ?? 'PESSOA')) === 'GRUPO') {
             $numero = preg_replace('/\D+/', '', preg_replace('/@g\.us$/i', '', $numero)) . '@g.us';
@@ -976,7 +1006,7 @@ function whatsappSend(PDO $pdo, array $config, array $destinatario, string $mens
     curl_close($ch);
 
     if ($response === false) {
-        return whatsappRegisterSend($pdo, $mensagemId, $destinatario, $mensagem, 'ERRO', null, $curlError ?: 'Erro desconhecido no cURL.', $usuarioId, $rotinaId);
+        return whatsappRegisterSend($pdo, $mensagemId, $destinatario, $mensagem, 'ERRO', null, $curlError ?: 'Erro desconhecido no cURL.', $usuarioId, $rotinaId, $agendamentoId, $agendamentoPrevistoEm);
     }
 
     $decoded = json_decode($response, true);
@@ -984,10 +1014,10 @@ function whatsappSend(PDO $pdo, array $config, array $destinatario, string $mens
     $status = $apiSuccess ? 'OK' : 'ERRO';
     $erro = $apiSuccess ? null : ('HTTP ' . $httpCode . ' - ' . $response);
 
-    return whatsappRegisterSend($pdo, $mensagemId, $destinatario, $mensagem, $status, $response, $erro, $usuarioId, $rotinaId);
+    return whatsappRegisterSend($pdo, $mensagemId, $destinatario, $mensagem, $status, $response, $erro, $usuarioId, $rotinaId, $agendamentoId, $agendamentoPrevistoEm);
 }
 
-function whatsappSendDocument(PDO $pdo, array $config, array $destinatario, string $mensagemRegistro, string $arquivoPdf, string $nomeArquivo, ?int $usuarioId, ?int $rotinaId = null): array
+function whatsappSendDocument(PDO $pdo, array $config, array $destinatario, string $mensagemRegistro, string $arquivoPdf, string $nomeArquivo, ?int $usuarioId, ?int $rotinaId = null, ?int $agendamentoId = null, ?string $agendamentoPrevistoEm = null): array
 {
     $token = trim($config['token'] ?? '');
     $apiBase = rtrim(trim($config['api_base_url'] ?? ''), '/');
@@ -1000,22 +1030,22 @@ function whatsappSendDocument(PDO $pdo, array $config, array $destinatario, stri
     $numero = trim($destinatario['numero'] ?? '');
 
     if ($token === '' || $apiBase === '') {
-        return whatsappRegisterSend($pdo, null, $destinatario, $mensagemRegistro, 'ERRO', null, 'Token ou URL da API nao configurado.', $usuarioId, $rotinaId);
+        return whatsappRegisterSend($pdo, null, $destinatario, $mensagemRegistro, 'ERRO', null, 'Token ou URL da API nao configurado.', $usuarioId, $rotinaId, $agendamentoId, $agendamentoPrevistoEm);
     }
 
     if ($numero === '') {
-        return whatsappRegisterSend($pdo, null, $destinatario, $mensagemRegistro, 'ERRO', null, 'Numero do destinatario vazio.', $usuarioId, $rotinaId);
+        return whatsappRegisterSend($pdo, null, $destinatario, $mensagemRegistro, 'ERRO', null, 'Numero do destinatario vazio.', $usuarioId, $rotinaId, $agendamentoId, $agendamentoPrevistoEm);
     }
 
     if (!is_file($arquivoPdf)) {
-        return whatsappRegisterSend($pdo, null, $destinatario, $mensagemRegistro, 'ERRO', null, 'Arquivo PDF nao encontrado.', $usuarioId, $rotinaId);
+        return whatsappRegisterSend($pdo, null, $destinatario, $mensagemRegistro, 'ERRO', null, 'Arquivo PDF nao encontrado.', $usuarioId, $rotinaId, $agendamentoId, $agendamentoPrevistoEm);
     }
 
     $base64Puro = base64_encode((string)file_get_contents($arquivoPdf));
     $base64DataUrl = 'data:application/pdf;base64,' . $base64Puro;
     if ($provedor === 'EVOLUTION') {
         if ($instancia === '') {
-            return whatsappRegisterSend($pdo, null, $destinatario, $mensagemRegistro, 'ERRO', null, 'Instancia da Evolution API nao configurada.', $usuarioId, $rotinaId);
+            return whatsappRegisterSend($pdo, null, $destinatario, $mensagemRegistro, 'ERRO', null, 'Instancia da Evolution API nao configurada.', $usuarioId, $rotinaId, $agendamentoId, $agendamentoPrevistoEm);
         }
         if (strtoupper(trim($destinatario['tipo'] ?? 'PESSOA')) === 'GRUPO') {
             $numero = preg_replace('/\D+/', '', preg_replace('/@g\.us$/i', '', $numero)) . '@g.us';
@@ -1059,7 +1089,7 @@ function whatsappSendDocument(PDO $pdo, array $config, array $destinatario, stri
     curl_close($ch);
 
     if ($response === false) {
-        return whatsappRegisterSend($pdo, null, $destinatario, $mensagemRegistro, 'ERRO', null, $curlError ?: 'Erro desconhecido no cURL.', $usuarioId, $rotinaId);
+        return whatsappRegisterSend($pdo, null, $destinatario, $mensagemRegistro, 'ERRO', null, $curlError ?: 'Erro desconhecido no cURL.', $usuarioId, $rotinaId, $agendamentoId, $agendamentoPrevistoEm);
     }
 
     $decoded = json_decode($response, true);
@@ -1067,10 +1097,10 @@ function whatsappSendDocument(PDO $pdo, array $config, array $destinatario, stri
     $status = $apiSuccess ? 'OK' : 'ERRO';
     $erro = $apiSuccess ? null : ('HTTP ' . $httpCode . ' - ' . $response);
 
-    return whatsappRegisterSend($pdo, null, $destinatario, $mensagemRegistro, $status, $response, $erro, $usuarioId, $rotinaId);
+    return whatsappRegisterSend($pdo, null, $destinatario, $mensagemRegistro, $status, $response, $erro, $usuarioId, $rotinaId, $agendamentoId, $agendamentoPrevistoEm);
 }
 
-function whatsappRegisterSend(PDO $pdo, ?int $mensagemId, array $destinatario, string $mensagem, string $status, ?string $resposta, ?string $erro, ?int $usuarioId, ?int $rotinaId = null): array
+function whatsappRegisterSend(PDO $pdo, ?int $mensagemId, array $destinatario, string $mensagem, string $status, ?string $resposta, ?string $erro, ?int $usuarioId, ?int $rotinaId = null, ?int $agendamentoId = null, ?string $agendamentoPrevistoEm = null): array
 {
     $empresaId = (int)($destinatario['empresa_id'] ?? 1);
     $dadosResposta = $resposta !== null ? json_decode($resposta, true) : null;
@@ -1078,13 +1108,15 @@ function whatsappRegisterSend(PDO $pdo, ?int $mensagemId, array $destinatario, s
     $entregaStatus = $status === 'OK' && $evolutionId !== '' ? 'PENDENTE' : null;
     $stmt = $pdo->prepare("
         INSERT INTO whatsapp_envios
-            (empresa_id, rotina_id, mensagem_id, destinatario_id, destino_nome, destino_numero, mensagem, status, resposta_api, mensagem_evolution_id, entrega_status, erro, usuario_id)
+            (empresa_id, rotina_id, agendamento_id, agendamento_previsto_em, mensagem_id, destinatario_id, destino_nome, destino_numero, mensagem, status, resposta_api, mensagem_evolution_id, entrega_status, erro, usuario_id)
         VALUES
-            (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ");
     $stmt->execute([
         $empresaId,
         $rotinaId,
+        $agendamentoId,
+        $agendamentoPrevistoEm,
         $mensagemId,
         $destinatario['id'] ?? null,
         $destinatario['nome'] ?? '',
@@ -1103,6 +1135,7 @@ function whatsappRegisterSend(PDO $pdo, ?int $mensagemId, array $destinatario, s
         'destino' => $destinatario['nome'] ?? '',
         'erro' => $erro,
         'envio_id' => (int)$pdo->lastInsertId(),
+        'entrega_status' => $entregaStatus,
     ];
 }
 
@@ -1240,50 +1273,76 @@ function whatsappEnviarRotina(PDO $pdo, array $rotina, string $mensagem, ?int $m
 
     $ok = 0;
     $falha = 0;
+    $pendente = 0;
+    $agendamentoId = (int)($rotina['agendamento_id'] ?? 0);
     $previstoEm = trim((string)($rotina['agendamento_previsto_em'] ?? ''));
-    $verificarEnvioAnterior = null;
-    if ($previstoEm !== '') {
-        $verificarEnvioAnterior = $pdo->prepare("
-            SELECT 1
+    $consultarTentativas = null;
+    if ($agendamentoId > 0 && $previstoEm !== '') {
+        $consultarTentativas = $pdo->prepare("
+            SELECT id, status, entrega_status, enviado_em,
+                   TIMESTAMPDIFF(SECOND, enviado_em, NOW()) AS idade_segundos
             FROM whatsapp_envios
-            WHERE empresa_id = ?
-              AND rotina_id = ?
+            WHERE agendamento_id = ?
+              AND agendamento_previsto_em = ?
               AND destinatario_id = ?
-              AND status = 'OK'
-              AND enviado_em >= ?
-            LIMIT 1
+            ORDER BY id DESC
         ");
     }
 
     foreach ($destinatarios as $destinatario) {
-        if ($verificarEnvioAnterior) {
-            $verificarEnvioAnterior->execute([
-                $empresaId,
-                (int)$rotina['id'],
-                (int)$destinatario['id'],
-                $previstoEm,
-            ]);
-            if ($verificarEnvioAnterior->fetchColumn()) {
+        if ($consultarTentativas) {
+            $consultarTentativas->execute([$agendamentoId, $previstoEm, (int)$destinatario['id']]);
+            $tentativas = $consultarTentativas->fetchAll(PDO::FETCH_ASSOC);
+            $ultima = $tentativas[0] ?? null;
+            if ($ultima && ($ultima['entrega_status'] ?? '') === 'ENTREGUE') {
                 $ok++;
+                continue;
+            }
+            if ($ultima && ($ultima['status'] ?? '') === 'OK'
+                && ($ultima['entrega_status'] ?? '') !== 'FALHA'
+                && (int)$ultima['idade_segundos'] < 600) {
+                $pendente++;
+                continue;
+            }
+            if ($ultima && ($ultima['status'] ?? '') === 'ERRO' && (int)$ultima['idade_segundos'] < 240) {
+                $pendente++;
+                continue;
+            }
+            if (count($tentativas) >= 3) {
+                $falha++;
                 continue;
             }
         }
 
-        $resultado = whatsappSend($pdo, $config, $destinatario, $mensagem, $mensagemId, $usuarioId, (int)$rotina['id']);
+        $resultado = whatsappSend(
+            $pdo,
+            $config,
+            $destinatario,
+            $mensagem,
+            $mensagemId,
+            $usuarioId,
+            (int)$rotina['id'],
+            $agendamentoId > 0 ? $agendamentoId : null,
+            $previstoEm !== '' ? $previstoEm : null
+        );
         if ($resultado['status'] === 'OK') {
-            $ok++;
+            if ($agendamentoId > 0) {
+                $pendente++;
+            } else {
+                $ok++;
+            }
         } else {
             $falha++;
         }
     }
 
-    if ($falha === 0) {
+    if ($falha === 0 && $pendente === 0) {
         $stmt = $pdo->prepare("UPDATE whatsapp_rotinas SET ultima_execucao = NOW() WHERE id = ?");
         $stmt->execute([(int)$rotina['id']]);
         whatsappAtualizarProximaExecucao($pdo, (int)$rotina['id']);
     }
 
-    return ['ok' => $ok, 'falha' => $falha];
+    return ['ok' => $ok, 'falha' => $falha, 'pendente' => $pendente];
 }
 
 function whatsappCalcularProximaExecucao(array $rotina, ?DateTime $base = null): ?string
@@ -1507,11 +1566,14 @@ function whatsappExecutarAgendamentos(PDO $pdo): array
             $resultado[] = [
                 'rotina' => $rotina['codigo'],
                 'agendamento_id' => (int)$rotina['agendamento_id'],
-                'status' => $envio['falha'] > 0 ? ($envio['ok'] > 0 ? 'PARCIAL' : 'ERRO') : 'OK',
+                'status' => $envio['falha'] > 0
+                    ? ($envio['ok'] > 0 ? 'PARCIAL' : 'ERRO')
+                    : ((int)($envio['pendente'] ?? 0) > 0 ? 'PENDENTE' : 'OK'),
                 'ok' => $envio['ok'],
                 'falha' => $envio['falha'],
+                'pendente' => (int)($envio['pendente'] ?? 0),
             ];
-            if ($envio['falha'] === 0) {
+            if ($envio['falha'] === 0 && (int)($envio['pendente'] ?? 0) === 0) {
                 $stmt = $pdo->prepare("UPDATE whatsapp_rotina_agendamentos SET ultima_execucao = NOW() WHERE id = ?");
                 $stmt->execute([(int)$rotina['agendamento_id']]);
                 whatsappAtualizarProximaAgendamento($pdo, (int)$rotina['agendamento_id']);
@@ -1548,6 +1610,114 @@ function whatsappStatusEntregaEvolution(array $mensagem): ?string
         return 'FALHA';
     }
     return null;
+}
+
+function whatsappGerencialWebhookUrl(array $config): string
+{
+    return 'https://www.superdunga.com.br/modulos/whatsapp/webhook_evolution.php?token='
+        . rawurlencode((string)($config['webhook_token'] ?? ''));
+}
+
+function whatsappGerencialConfigurarWebhook(array $config): array
+{
+    $url = rtrim((string)$config['evolution_api_base_url'], '/')
+        . '/webhook/set/' . rawurlencode((string)$config['instancia']);
+    $payload = [
+        'webhook' => [
+            'enabled' => true,
+            'url' => whatsappGerencialWebhookUrl($config),
+            'webhookByEvents' => false,
+            'webhookBase64' => false,
+            'events' => ['MESSAGES_UPDATE', 'SEND_MESSAGE_UPDATE'],
+        ],
+    ];
+    $ch = curl_init($url);
+    curl_setopt_array($ch, [
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_POST => true,
+        CURLOPT_POSTFIELDS => json_encode($payload, JSON_UNESCAPED_SLASHES),
+        CURLOPT_HTTPHEADER => ['Content-Type: application/json', 'apikey: ' . $config['evolution_token']],
+        CURLOPT_TIMEOUT => 30,
+    ]);
+    $resposta = curl_exec($ch);
+    $erroCurl = curl_error($ch);
+    $http = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    curl_close($ch);
+    $ok = $resposta !== false && $http >= 200 && $http < 300;
+    return [
+        'ok' => $ok,
+        'http' => $http,
+        'resposta' => $resposta,
+        'erro' => $ok ? null : ($resposta === false ? $erroCurl : 'HTTP ' . $http . ' - ' . $resposta),
+    ];
+}
+
+function whatsappGerencialEventoMensagemId(array $dados, array $payload): string
+{
+    return trim((string)(
+        $dados['key']['id']
+        ?? $dados['update']['key']['id']
+        ?? $dados['keyId']
+        ?? $dados['update']['keyId']
+        ?? $dados['message']['key']['id']
+        ?? $dados['messageId']
+        ?? $payload['messageId']
+        ?? $dados['id']
+        ?? ''
+    ));
+}
+
+function whatsappGerencialProcessarWebhook(PDO $pdo, string $token, array $payload): array
+{
+    $stmt = $pdo->prepare("SELECT * FROM whatsapp_gerencial_config WHERE webhook_token = ? AND webhook_token <> '' LIMIT 1");
+    $stmt->execute([$token]);
+    $config = $stmt->fetch(PDO::FETCH_ASSOC);
+    if (!$config) {
+        throw new RuntimeException('Token de webhook invalido.');
+    }
+
+    $instanciaPayload = $payload['instance'] ?? null;
+    $instancia = is_array($instanciaPayload)
+        ? (string)($instanciaPayload['instanceName'] ?? $instanciaPayload['name'] ?? '')
+        : (string)($instanciaPayload ?? $payload['instanceName'] ?? '');
+    if ($instancia !== '' && $instancia !== (string)$config['instancia']) {
+        throw new RuntimeException('Instancia do evento nao corresponde ao WhatsApp gerencial.');
+    }
+
+    $evento = strtoupper(str_replace(['.', '-'], '_', (string)($payload['event'] ?? '')));
+    $dados = $payload['data'] ?? [];
+    if (isset($dados[0]) && is_array($dados[0])) {
+        $dados = $dados[0];
+    }
+    $mensagemId = whatsappGerencialEventoMensagemId($dados, $payload);
+    $status = strtoupper((string)($dados['update']['status'] ?? $dados['status'] ?? $payload['status'] ?? ''));
+    $statusNumerico = ['0'=>'ERROR','1'=>'PENDING','2'=>'SERVER_ACK','3'=>'DELIVERY_ACK','4'=>'READ','5'=>'PLAYED'];
+    $status = $statusNumerico[$status] ?? $status;
+
+    $envioId = null;
+    $resultado = 'IGNORADO';
+    if ($mensagemId !== '') {
+        $stmt = $pdo->prepare("SELECT id FROM whatsapp_envios WHERE mensagem_evolution_id = ? ORDER BY id DESC LIMIT 1");
+        $stmt->execute([$mensagemId]);
+        $envioId = (int)$stmt->fetchColumn();
+        if ($envioId > 0) {
+            if (in_array($status, ['DELIVERY_ACK','DELIVERED','READ','PLAYED'], true)) {
+                $pdo->prepare("UPDATE whatsapp_envios SET entrega_status='ENTREGUE', entregue_em=COALESCE(entregue_em,NOW()), entrega_consultada_em=NOW() WHERE id=?")
+                    ->execute([$envioId]);
+                $resultado = 'ENTREGUE';
+            } elseif (in_array($status, ['ERROR','FAILED'], true)) {
+                $pdo->prepare("UPDATE whatsapp_envios SET entrega_status='FALHA', entrega_consultada_em=NOW() WHERE id=?")
+                    ->execute([$envioId]);
+                $resultado = 'FALHA';
+            } else {
+                $resultado = 'SEM_ALTERACAO';
+            }
+        }
+    }
+
+    $stmt = $pdo->prepare("INSERT INTO whatsapp_gerencial_webhook_eventos (instancia,evento,mensagem_id,status_recebido,envio_id,resultado) VALUES (?,?,?,?,?,?)");
+    $stmt->execute([$instancia ?: null, $evento ?: null, $mensagemId ?: null, $status ?: null, $envioId ?: null, $resultado]);
+    return ['resultado'=>$resultado, 'envio_id'=>$envioId, 'mensagem_id'=>$mensagemId, 'status'=>$status];
 }
 
 function whatsappAtualizarConfirmacoesGerenciais(PDO $pdo): array
