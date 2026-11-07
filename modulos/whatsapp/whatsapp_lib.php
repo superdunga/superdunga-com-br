@@ -1240,7 +1240,35 @@ function whatsappEnviarRotina(PDO $pdo, array $rotina, string $mensagem, ?int $m
 
     $ok = 0;
     $falha = 0;
+    $previstoEm = trim((string)($rotina['agendamento_previsto_em'] ?? ''));
+    $verificarEnvioAnterior = null;
+    if ($previstoEm !== '') {
+        $verificarEnvioAnterior = $pdo->prepare("
+            SELECT 1
+            FROM whatsapp_envios
+            WHERE empresa_id = ?
+              AND rotina_id = ?
+              AND destinatario_id = ?
+              AND status = 'OK'
+              AND enviado_em >= ?
+            LIMIT 1
+        ");
+    }
+
     foreach ($destinatarios as $destinatario) {
+        if ($verificarEnvioAnterior) {
+            $verificarEnvioAnterior->execute([
+                $empresaId,
+                (int)$rotina['id'],
+                (int)$destinatario['id'],
+                $previstoEm,
+            ]);
+            if ($verificarEnvioAnterior->fetchColumn()) {
+                $ok++;
+                continue;
+            }
+        }
+
         $resultado = whatsappSend($pdo, $config, $destinatario, $mensagem, $mensagemId, $usuarioId, (int)$rotina['id']);
         if ($resultado['status'] === 'OK') {
             $ok++;
@@ -1249,9 +1277,11 @@ function whatsappEnviarRotina(PDO $pdo, array $rotina, string $mensagem, ?int $m
         }
     }
 
-    $stmt = $pdo->prepare("UPDATE whatsapp_rotinas SET ultima_execucao = NOW() WHERE id = ?");
-    $stmt->execute([(int)$rotina['id']]);
-    whatsappAtualizarProximaExecucao($pdo, (int)$rotina['id']);
+    if ($falha === 0) {
+        $stmt = $pdo->prepare("UPDATE whatsapp_rotinas SET ultima_execucao = NOW() WHERE id = ?");
+        $stmt->execute([(int)$rotina['id']]);
+        whatsappAtualizarProximaExecucao($pdo, (int)$rotina['id']);
+    }
 
     return ['ok' => $ok, 'falha' => $falha];
 }
@@ -1481,11 +1511,12 @@ function whatsappExecutarAgendamentos(PDO $pdo): array
                 'ok' => $envio['ok'],
                 'falha' => $envio['falha'],
             ];
-            $stmt = $pdo->prepare("UPDATE whatsapp_rotina_agendamentos SET ultima_execucao = NOW() WHERE id = ?");
-            $stmt->execute([(int)$rotina['agendamento_id']]);
-            whatsappAtualizarProximaAgendamento($pdo, (int)$rotina['agendamento_id']);
+            if ($envio['falha'] === 0) {
+                $stmt = $pdo->prepare("UPDATE whatsapp_rotina_agendamentos SET ultima_execucao = NOW() WHERE id = ?");
+                $stmt->execute([(int)$rotina['agendamento_id']]);
+                whatsappAtualizarProximaAgendamento($pdo, (int)$rotina['agendamento_id']);
+            }
         } catch (Exception $e) {
-            whatsappAtualizarProximaAgendamento($pdo, (int)$rotina['agendamento_id']);
             $resultado[] = [
                 'rotina' => $rotina['codigo'],
                 'agendamento_id' => (int)$rotina['agendamento_id'],
