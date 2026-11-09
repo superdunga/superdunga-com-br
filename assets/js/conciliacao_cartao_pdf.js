@@ -13,6 +13,7 @@ const payload = document.getElementById('pdf-payload');
 const status = document.getElementById('pdf-status');
 const botao = document.getElementById('btn-importar-fatura');
 const competencia = document.getElementById('competencia-fatura');
+const cartao = form?.querySelector('select[name="cartao_id"]');
 
 function moeda(valor) {
     return Number(String(valor).replace(/\./g, '').replace(',', '.'));
@@ -47,7 +48,11 @@ function proximoValor(itens, rotulo) {
     if (indice < 0) return null;
     for (let i = indice + 1; i < Math.min(itens.length, indice + 8); i += 1) {
         const achou = itens[i].str.match(/R\$\s*([\d.]+,\d{2})/);
-        if (achou) return moeda(achou[1]);
+        if (achou) {
+            const negativo = itens.slice(indice + 1, i + 1)
+                .some((item) => item.str.trim() === '-' || /^-\s*R\$/.test(item.str.trim()));
+            return moeda(achou[1]) * (negativo ? -1 : 1);
+        }
     }
     return null;
 }
@@ -167,14 +172,19 @@ export async function extrairMercadoPago(file, password) {
     const itens = transacoesPagina(pagina2.items, vencimento);
     const [ano, mes] = vencimento.split('-');
     const competenciaPdf = `${ano}-${mes}`;
-    itens.push({
-        data_compra: `${competenciaPdf}-01`,
-        descricao: 'SALDO ANTERIOR DA FATURA',
-        categoria: 'SALDO ANTERIOR',
-        tipo_lancamento: '',
-        valor: saldoAnterior,
-        natureza: 'S',
-    });
+    if (saldoAnterior !== 0) {
+        itens.push({
+            data_compra: `${competenciaPdf}-01`,
+            descricao: saldoAnterior < 0 ? 'CREDITO DA FATURA ANTERIOR' : 'SALDO ANTERIOR DA FATURA',
+            categoria: saldoAnterior < 0 ? 'CREDITOS' : 'SALDO ANTERIOR',
+            tipo_lancamento: '',
+            valor: Math.abs(saldoAnterior),
+            natureza: saldoAnterior < 0 ? 'C' : 'S',
+        });
+    }
+
+    const saldoAnteriorDebito = Math.max(saldoAnterior, 0);
+    const creditoAnterior = Math.abs(Math.min(saldoAnterior, 0));
 
     return {
         origem: 'MERCADO_PAGO_PDF',
@@ -182,7 +192,13 @@ export async function extrairMercadoPago(file, password) {
         competencia: competenciaPdf,
         vencimento,
         total,
-        resumo: { saldo_anterior: saldoAnterior, consumos, tarifas, juros, creditos },
+        resumo: {
+            saldo_anterior: saldoAnteriorDebito,
+            consumos,
+            tarifas,
+            juros,
+            creditos: creditos + creditoAnterior,
+        },
         itens,
     };
 }
@@ -204,6 +220,13 @@ if (arquivo && form) {
         status.textContent = 'Lendo e validando a fatura Mercado Pago...';
         try {
             const dados = await extrairMercadoPago(file, senha.value);
+            const mercadoPago = [...(cartao?.options ?? [])].find(
+                (option) => option.textContent.trim().toUpperCase().startsWith('MERCADO PAGO')
+            );
+            if (!mercadoPago) {
+                throw new Error('Cadastre e ative o cartao MERCADO PAGO antes de importar o PDF.');
+            }
+            cartao.value = mercadoPago.value;
             competencia.value = dados.competencia;
             payload.value = JSON.stringify(dados);
             status.textContent = `${dados.itens.length} lancamentos identificados. Enviando...`;

@@ -12,7 +12,11 @@ function cccGarantirTabelas(PDO $pdo): void
 function cccVencimento(string $competencia, int $dia): string
 {
     $ultimo=(int)date('t',strtotime($competencia.'-01'));
-    return $competencia.'-'.str_pad((string)min($dia,$ultimo),2,'0',STR_PAD_LEFT);
+    $vencimento=$competencia.'-'.str_pad((string)min($dia,$ultimo),2,'0',STR_PAD_LEFT);
+    $diaSemana=(int)date('N',strtotime($vencimento));
+    if($diaSemana===6)return date('Y-m-d',strtotime($vencimento.' +2 days'));
+    if($diaSemana===7)return date('Y-m-d',strtotime($vencimento.' +1 day'));
+    return $vencimento;
 }
 
 function lerCsvConciliacaoCartao(string $arquivo): array
@@ -29,8 +33,15 @@ function lerPdfMercadoPagoPayload(string $json, string $arquivo, string $compete
     if (!hash_equals(hash_file('sha256', $arquivo), (string)($dados['hash_arquivo'] ?? ''))) {
         throw new RuntimeException('O PDF enviado nao corresponde aos dados extraidos.');
     }
-    if (($dados['competencia'] ?? '') !== $competencia || ($dados['vencimento'] ?? '') !== $vencimentoEsperado) {
-        throw new RuntimeException('Competencia ou vencimento do PDF diverge do cadastro do cartao.');
+    $competenciaPdf = (string)($dados['competencia'] ?? '');
+    $vencimentoPdf = (string)($dados['vencimento'] ?? '');
+    if ($competenciaPdf !== $competencia || $vencimentoPdf !== $vencimentoEsperado) {
+        throw new RuntimeException(
+            'PDF: competencia ' . ($competenciaPdf !== '' ? $competenciaPdf : '-') .
+            ' e vencimento ' . ($vencimentoPdf !== '' ? $vencimentoPdf : '-') .
+            '. Cadastro: competencia ' . $competencia .
+            ' e vencimento ' . $vencimentoEsperado . '.'
+        );
     }
 
     $linhas = [];
@@ -58,14 +69,15 @@ function lerPdfMercadoPagoPayload(string $json, string $arquivo, string $compete
         throw new RuntimeException('Nenhum lancamento foi identificado no PDF.');
     }
 
-    $debitos = $creditos = $saldo = $compras = $encargos = 0.0;
+    $debitos = $creditos = $pagamentos = $saldo = $compras = $encargos = 0.0;
     foreach ($linhas as $linha) {
         if ($linha['natureza'] === 'D') {
             $debitos += $linha['valor'];
             if ($linha['categoria'] === 'COMPRAS') $compras += $linha['valor'];
             if ($linha['categoria'] === 'ENCARGOS') $encargos += $linha['valor'];
         }
-        if (in_array($linha['natureza'], ['C', 'P'], true)) $creditos += $linha['valor'];
+        if ($linha['natureza'] === 'C') $creditos += $linha['valor'];
+        if ($linha['natureza'] === 'P') $pagamentos += $linha['valor'];
         if ($linha['natureza'] === 'S') $saldo += $linha['valor'];
     }
     $resumo = is_array($dados['resumo'] ?? null) ? $dados['resumo'] : [];
@@ -73,7 +85,7 @@ function lerPdfMercadoPagoPayload(string $json, string $arquivo, string $compete
         [$saldo, (float)($resumo['saldo_anterior'] ?? 0), 'saldo anterior'],
         [$compras, (float)($resumo['consumos'] ?? 0), 'total de compras'],
         [$encargos, (float)($resumo['tarifas'] ?? 0) + (float)($resumo['juros'] ?? 0), 'encargos'],
-        [$creditos, (float)($resumo['creditos'] ?? 0), 'pagamentos e creditos'],
+        [$creditos + $pagamentos, (float)($resumo['creditos'] ?? 0), 'pagamentos e creditos'],
     ];
     foreach ($esperados as $validacao) {
         if (abs(round($validacao[0], 2) - round($validacao[1], 2)) >= 0.02) {
@@ -81,7 +93,7 @@ function lerPdfMercadoPagoPayload(string $json, string $arquivo, string $compete
         }
     }
     $total = round((float)($dados['total'] ?? 0), 2);
-    if (abs(round($saldo + $debitos - $creditos, 2) - $total) >= 0.02) {
+    if (abs(round($saldo + $debitos - $creditos - $pagamentos, 2) - $total) >= 0.02) {
         throw new RuntimeException('A composicao dos lancamentos nao fecha com o total do PDF.');
     }
     return ['linhas' => $linhas, 'debitos' => $debitos, 'creditos' => $creditos, 'total' => $total];
