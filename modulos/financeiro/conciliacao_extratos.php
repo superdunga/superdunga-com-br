@@ -48,7 +48,7 @@ function garantirTabelasConciliacaoExtratos(PDO $pdo): void
             conciliado CHAR(1) NOT NULL DEFAULT 'N',
             criado_em DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
             UNIQUE KEY uk_fin_ext_identificador (empresa_id, cbcontador, identificador_banco),
-            UNIQUE KEY uk_fin_ext_identificador_externo (identificador_externo_hash),
+            UNIQUE KEY uk_fin_ext_identificador_externo (empresa_id, cbcontador, identificador_externo_hash),
             INDEX idx_fin_ext_pendentes (empresa_id, cbcontador, conciliado, data_movimento),
             INDEX idx_fin_ext_match (empresa_id, cbcontador, tipo, valor, data_movimento),
             INDEX idx_fin_ext_movcontador (bnc001_movcontador),
@@ -113,10 +113,7 @@ function garantirTabelasConciliacaoExtratos(PDO $pdo): void
         ");
     }
 
-    garantirIndiceConciliacaoExtratos($pdo, 'financeiro_extrato_bancario', 'uk_fin_ext_identificador_externo', "
-        CREATE UNIQUE INDEX uk_fin_ext_identificador_externo
-        ON financeiro_extrato_bancario (identificador_externo_hash)
-    ");
+    garantirIndiceExternoExtratoEscopado($pdo);
 
     $pdo->exec("
         UPDATE financeiro_extrato_bancario
@@ -215,6 +212,38 @@ function garantirIndiceConciliacaoExtratos(PDO $pdo, string $tabela, string $ind
     }
 
     $cache[$chave] = true;
+}
+
+function garantirIndiceExternoExtratoEscopado(PDO $pdo): void
+{
+    $stmt = $pdo->prepare("
+        SELECT non_unique,
+               GROUP_CONCAT(column_name ORDER BY seq_in_index SEPARATOR ',') AS colunas
+        FROM information_schema.statistics
+        WHERE table_schema = DATABASE()
+          AND table_name = 'financeiro_extrato_bancario'
+          AND index_name = 'uk_fin_ext_identificador_externo'
+        GROUP BY non_unique
+        LIMIT 1
+    ");
+    $stmt->execute();
+    $indice = $stmt->fetch(PDO::FETCH_ASSOC);
+    $colunasEsperadas = 'empresa_id,cbcontador,identificador_externo_hash';
+
+    if ($indice
+        && (int)$indice['non_unique'] === 0
+        && (string)$indice['colunas'] === $colunasEsperadas) {
+        return;
+    }
+
+    if ($indice) {
+        $pdo->exec('DROP INDEX uk_fin_ext_identificador_externo ON financeiro_extrato_bancario');
+    }
+
+    $pdo->exec("
+        CREATE UNIQUE INDEX uk_fin_ext_identificador_externo
+        ON financeiro_extrato_bancario (empresa_id, cbcontador, identificador_externo_hash)
+    ");
 }
 
 garantirTabelasConciliacaoExtratos($pdo_master);
@@ -1240,9 +1269,11 @@ function importarLinhasExtratoBanco(PDO $pdo, int $empresaId, int $usuarioId, in
         $stmtExternos = $pdo->prepare("
             SELECT identificador_externo_hash
             FROM financeiro_extrato_bancario
-            WHERE identificador_externo_hash IN ({$placeholders})
+            WHERE empresa_id = ?
+              AND cbcontador = ?
+              AND identificador_externo_hash IN ({$placeholders})
         ");
-        $stmtExternos->execute($loteHashes);
+        $stmtExternos->execute(array_merge([$empresaId, $cbcontador], $loteHashes));
         foreach ($stmtExternos->fetchAll(PDO::FETCH_COLUMN) as $hashExistente) {
             $identificadoresExternosExistentes[(string)$hashExistente] = true;
         }
@@ -1309,9 +1340,9 @@ function importarLinhasExtratoBanco(PDO $pdo, int $empresaId, int $usuarioId, in
         $qtdNaturalExistente = (int)($chavesNaturaisExistentes[$registroImportacao['chave_natural']] ?? 0);
         $existePorChaveNatural = $qtdNaturalExistente >= (int)$registroImportacao['ocorrencia_natural'];
         $hashExterno = $registroImportacao['identificador_externo_hash'];
-        $existeGlobalmente = $hashExterno !== null && isset($identificadoresExternosExistentes[$hashExterno]);
+        $existeNaConta = $hashExterno !== null && isset($identificadoresExternosExistentes[$hashExterno]);
 
-        if (!$existe && !$existePorChaveNatural && !$existeGlobalmente) {
+        if (!$existe && !$existePorChaveNatural && !$existeNaConta) {
             $registrosNovos[] = $registroImportacao['dados'];
             $chavesNaturaisExistentes[$registroImportacao['chave_natural']] = max($qtdNaturalExistente, (int)$registroImportacao['ocorrencia_natural']);
             if ($hashExterno !== null) {
@@ -2834,9 +2865,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['acao'] ?? '') === 'importa
                     $stmtExternos = $pdo_master->prepare("
                         SELECT identificador_externo_hash
                         FROM financeiro_extrato_bancario
-                        WHERE identificador_externo_hash IN ({$placeholders})
+                        WHERE empresa_id = ?
+                          AND cbcontador = ?
+                          AND identificador_externo_hash IN ({$placeholders})
                     ");
-                    $stmtExternos->execute($loteHashes);
+                    $stmtExternos->execute(array_merge([$empresaId, $cbcontadorPost], $loteHashes));
                     foreach ($stmtExternos->fetchAll(PDO::FETCH_COLUMN) as $hashExistente) {
                         $identificadoresExternosExistentes[(string)$hashExistente] = true;
                     }
@@ -2903,9 +2936,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['acao'] ?? '') === 'importa
                     $qtdNaturalExistente = (int)($chavesNaturaisExistentes[$registroImportacao['chave_natural']] ?? 0);
                     $existePorChaveNatural = $qtdNaturalExistente >= (int)$registroImportacao['ocorrencia_natural'];
                     $hashExterno = $registroImportacao['identificador_externo_hash'];
-                    $existeGlobalmente = $hashExterno !== null && isset($identificadoresExternosExistentes[$hashExterno]);
+                    $existeNaConta = $hashExterno !== null && isset($identificadoresExternosExistentes[$hashExterno]);
 
-                    if (!$existe && !$existePorChaveNatural && !$existeGlobalmente) {
+                    if (!$existe && !$existePorChaveNatural && !$existeNaConta) {
                         $registrosNovos[] = $registroImportacao['dados'];
                         $chavesNaturaisExistentes[$registroImportacao['chave_natural']] = max($qtdNaturalExistente, (int)$registroImportacao['ocorrencia_natural']);
                         if ($hashExterno !== null) {
