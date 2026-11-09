@@ -30,6 +30,9 @@ function aleloDiretorioCredenciais(): string
             . 'secrets' . DIRECTORY_SEPARATOR . 'alelo_empresa1';
     }
 
+    $candidatos[] = dirname(__DIR__, 3) . DIRECTORY_SEPARATOR . '.superdunga' . DIRECTORY_SEPARATOR
+        . 'secrets' . DIRECTORY_SEPARATOR . 'alelo_empresa1';
+
     $candidatos[] = dirname(__DIR__, 2) . DIRECTORY_SEPARATOR . '.superdunga' . DIRECTORY_SEPARATOR
         . 'secrets' . DIRECTORY_SEPARATOR . 'alelo_empresa1';
 

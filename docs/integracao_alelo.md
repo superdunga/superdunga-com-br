@@ -20,7 +20,8 @@ O diretorio pode ser indicado por `SUPERDUNGA_ALELO_EMPRESA1_DIR`. Sem essa vari
 
 1. `%APPDATA%/SuperDunga/secrets/alelo_empresa1`;
 2. `$HOME/.superdunga/secrets/alelo_empresa1`;
-3. `.superdunga/secrets/alelo_empresa1` acima da raiz publicada.
+3. `.superdunga/secrets/alelo_empresa1` na raiz privada da conta de hospedagem;
+4. `.superdunga/secrets/alelo_empresa1` acima da raiz publicada, para o ambiente local.
 
 A conexao valida a chave publica conhecida do servidor ALELO antes de baixar arquivos.
 
