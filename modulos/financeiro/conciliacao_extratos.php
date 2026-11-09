@@ -4444,10 +4444,12 @@ function atualizarResumoRecSelecionados() {
     var resumo = document.getElementById('resumo-rec-selecionados');
     var quantidade = document.getElementById('resumo-rec-quantidade');
     var total = document.getElementById('resumo-rec-total');
+    var selecionarTodos = document.getElementById('selecionar-todos-rec');
     if (!resumo || !quantidade || !total) {
         return;
     }
 
+    var disponiveis = document.querySelectorAll('input[name="extratos_recebiveis[]"]');
     var selecionados = document.querySelectorAll('input[name="extratos_recebiveis[]"]:checked');
     var valorTotal = 0;
     Array.prototype.forEach.call(selecionados, function (checkbox) {
@@ -4462,6 +4464,25 @@ function atualizarResumoRecSelecionados() {
         style: 'currency',
         currency: 'BRL'
     });
+
+    if (selecionarTodos) {
+        selecionarTodos.disabled = disponiveis.length === 0;
+        selecionarTodos.textContent = disponiveis.length > 0 && selecionados.length === disponiveis.length
+            ? 'Desmarcar todos'
+            : 'Selecionar todos';
+    }
+}
+
+function alternarTodosRec() {
+    var disponiveis = document.querySelectorAll('input[name="extratos_recebiveis[]"]');
+    var todosMarcados = disponiveis.length > 0 && Array.prototype.every.call(disponiveis, function (checkbox) {
+        return checkbox.checked;
+    });
+
+    Array.prototype.forEach.call(disponiveis, function (checkbox) {
+        checkbox.checked = !todosMarcados;
+    });
+    atualizarResumoRecSelecionados();
 }
 
 document.addEventListener('change', function (event) {
@@ -4651,7 +4672,12 @@ window.addEventListener('pageshow', atualizarResumoRecSelecionados);
                     <table class="table table-sm table-hover align-middle mb-0">
                         <thead class="table-primary">
                             <tr>
-                                <th class="text-center" style="width: 45px;">Rec</th>
+                                <th class="text-center" style="width: 120px;">
+                                    <button type="button" id="selecionar-todos-rec" class="btn btn-outline-primary btn-sm text-nowrap mb-1" onclick="alternarTodosRec()">
+                                        Selecionar todos
+                                    </button>
+                                    <div>REC</div>
+                                </th>
                                 <th class="text-center" style="width: 45px;">BNC</th>
                                 <th>ID</th>
                                 <th>Conta / Data</th>
