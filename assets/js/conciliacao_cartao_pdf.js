@@ -18,6 +18,30 @@ function moeda(valor) {
     return Number(String(valor).replace(/\./g, '').replace(',', '.'));
 }
 
+const mapaFonteMercadoPago = new Map([
+    ['A', 'fi'], ['ó', 'A'], ['x', 'ó'], ['.', 'x'], ['J', '.'], ['5', 'J'],
+    ['%', '5'], ['(', '%'], ['7', '('], ['4', '7'], [')', '4'], ['I', ')'],
+    ['F', 'I'], ['+', 'F'], ['8', '+'], ['C', '8'], ['í', 'C'], ['j', 'í'],
+    ['R', 'j'], ['$', 'R'], ['9', '$'], ['M', '9'], ['ê', 'M'], ['b', 'ê'],
+    ['D', 'b'], ['õ', 'D'], ['*', 'õ'], ['U', '*'], ['à', 'U'], ['z', 'à'],
+    ['"', 'z'], ['”', '"'], ['ô', '”'], ['N', 'ô'], ['Q', 'N'], ['-', 'Q'],
+    ['k', '-'],
+]);
+
+function decodificarFonteMercadoPago(texto) {
+    return [...texto].map((caractere) => mapaFonteMercadoPago.get(caractere) ?? caractere).join('');
+}
+
+function normalizarItensMercadoPago(itens) {
+    const marcador = itens.find((item) => /^\$9\s/.test(item.str.trim()))
+        ?? itens.find((item) => /^íonsumos\b/i.test(item.str.trim()));
+    if (!marcador?.fontName) return itens;
+
+    return itens.map((item) => item.fontName === marcador.fontName
+        ? { ...item, str: decodificarFonteMercadoPago(item.str) }
+        : item);
+}
+
 function proximoValor(itens, rotulo) {
     const indice = itens.findIndex((item) => item.str.trim() === rotulo);
     if (indice < 0) return null;
@@ -122,8 +146,10 @@ export async function extrairMercadoPago(file, password) {
     const pdf = await pdfjsLib.getDocument({ data: new Uint8Array(buffer), password }).promise;
     if (pdf.numPages < 2) throw new Error('PDF Mercado Pago incompleto.');
 
-    const pagina1 = await (await pdf.getPage(1)).getTextContent();
-    const pagina2 = await (await pdf.getPage(2)).getTextContent();
+    const pagina1Original = await (await pdf.getPage(1)).getTextContent();
+    const pagina2Original = await (await pdf.getPage(2)).getTextContent();
+    const pagina1 = { ...pagina1Original, items: normalizarItensMercadoPago(pagina1Original.items) };
+    const pagina2 = { ...pagina2Original, items: normalizarItensMercadoPago(pagina2Original.items) };
     const texto1 = pagina1.items.map((item) => item.str).join(' ');
     if (!/Mercado Pago/i.test(texto1)) {
         throw new Error('O arquivo nao foi reconhecido como fatura Mercado Pago.');
@@ -165,9 +191,9 @@ if (arquivo && form) {
     arquivo.addEventListener('change', () => {
         const pdf = arquivo.files[0]?.name.toLowerCase().endsWith('.pdf');
         senhaWrap.classList.toggle('d-none', !pdf);
-        senha.required = pdf;
+        senha.required = false;
         payload.value = '';
-        status.textContent = pdf ? 'A senha abre o PDF apenas neste navegador.' : '';
+        status.textContent = pdf ? 'Informe a senha somente se o PDF estiver protegido.' : '';
     });
 
     form.addEventListener('submit', async (event) => {
