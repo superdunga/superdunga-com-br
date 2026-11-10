@@ -377,7 +377,7 @@ function cieloRegistroVenda(string $linha, array $regra, array $cabecalho): ?arr
     }
 
     $tipoLancamento = cieloCampo($linha, 28, 2);
-    if (!in_array($tipoLancamento, ['01', '02', '03'], true)) {
+    if (!in_array($tipoLancamento, ['01', '02', '03', '42'], true)) {
         return null;
     }
     if (cieloCampo($linha, 164, 1) === 'S') {
@@ -391,7 +391,13 @@ function cieloRegistroVenda(string $linha, array $regra, array $cabecalho): ?arr
     } else {
         $cm = (int)$regra['cm_credito'];
         $tipoOperacao = 'C';
-        $modalidade = $tipoLancamento === '03' ? 'CREDITO PARCELADO' : 'CREDITO';
+        if ($tipoLancamento === '03') {
+            $modalidade = 'CREDITO PARCELADO';
+        } elseif ($tipoLancamento === '42') {
+            $modalidade = 'VOUCHER';
+        } else {
+            $modalidade = 'CREDITO';
+        }
     }
     if ($cm <= 0) {
         return null;
