@@ -35,13 +35,24 @@ function lerPdfMercadoPagoPayload(string $json, string $arquivo, string $compete
     }
     $competenciaPdf = (string)($dados['competencia'] ?? '');
     $vencimentoPdf = (string)($dados['vencimento'] ?? '');
-    if ($competenciaPdf !== $competencia || $vencimentoPdf !== $vencimentoEsperado) {
+    if ($competenciaPdf !== $competencia) {
         throw new RuntimeException(
             'PDF: competencia ' . ($competenciaPdf !== '' ? $competenciaPdf : '-') .
             ' e vencimento ' . ($vencimentoPdf !== '' ? $vencimentoPdf : '-') .
             '. Cadastro: competencia ' . $competencia .
             ' e vencimento ' . $vencimentoEsperado . '.'
         );
+    }
+    $dataVencimentoPdf = DateTimeImmutable::createFromFormat('!Y-m-d', $vencimentoPdf);
+    $dataVencimentoEsperado = DateTimeImmutable::createFromFormat('!Y-m-d', $vencimentoEsperado);
+    if (
+        !$dataVencimentoPdf ||
+        !$dataVencimentoEsperado ||
+        $dataVencimentoPdf->format('Y-m-d') !== $vencimentoPdf ||
+        $dataVencimentoPdf < $dataVencimentoEsperado ||
+        $dataVencimentoPdf > $dataVencimentoEsperado->modify('+5 days')
+    ) {
+        throw new RuntimeException('O vencimento informado no PDF Mercado Pago e invalido.');
     }
 
     $linhas = [];
@@ -96,7 +107,7 @@ function lerPdfMercadoPagoPayload(string $json, string $arquivo, string $compete
     if (abs(round($saldo + $debitos - $creditos - $pagamentos, 2) - $total) >= 0.02) {
         throw new RuntimeException('A composicao dos lancamentos nao fecha com o total do PDF.');
     }
-    return ['linhas' => $linhas, 'debitos' => $debitos, 'creditos' => $creditos, 'total' => $total];
+    return ['linhas' => $linhas, 'debitos' => $debitos, 'creditos' => $creditos, 'total' => $total, 'vencimento' => $vencimentoPdf];
 }
 
 function cccCandidatos(PDO $pdo, array $item, string $vencimento): array
