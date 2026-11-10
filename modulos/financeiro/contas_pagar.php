@@ -32,6 +32,7 @@ function garantirCamposContasPagar(PDO $pdo): void
 garantirCamposContasPagar($pdo_master);
 
 $fornecedor = trim($_GET['fornecedor'] ?? '');
+$produto = trim($_GET['produto'] ?? '');
 $documento = trim($_GET['documento'] ?? '');
 $tipoDocOrigem = trim($_GET['tipo_doc_origem'] ?? '');
 $numDocOrigem = trim($_GET['num_doc_origem'] ?? '');
@@ -112,6 +113,34 @@ if (in_array($verificado, ['S', 'N'], true)) {
 if ($fornecedor !== '') {
     $where[] = "(f.NOME LIKE ? OR f.APELIDO LIKE ? OR cp.FCONTADOR LIKE ?)";
     $like = '%' . $fornecedor . '%';
+    $params[] = $like;
+    $params[] = $like;
+    $params[] = $like;
+}
+
+if ($produto !== '') {
+    $where[] = "EXISTS (
+        SELECT 1
+        FROM armazem_est005 compra
+        INNER JOIN armazem_est006 item
+            ON item.EMPRESA = compra.EMPRESA
+           AND item.ITEMCOMPRACONTADOR = compra.COMPRACONTADOR
+        LEFT JOIN armazem_est004 prod
+            ON prod.EMPRESA = item.EMPRESA
+           AND prod.CONTAPRODUTO = item.PRODUTO
+        WHERE compra.EMPRESA = cp.EMPRESA
+          AND compra.COMPRACONTADOR = cp.NUMDOCORIGEM
+          AND COALESCE(compra.excluido_firebird, 'N') <> 'S'
+          AND COALESCE(compra.CANCELADO, 'N') <> 'S'
+          AND COALESCE(item.excluido_firebird, 'N') <> 'S'
+          AND COALESCE(item.CANCELADO, 'N') <> 'S'
+          AND (
+              CAST(item.PRODUTO AS CHAR) LIKE ?
+              OR CAST(prod.CODPRODUTO AS CHAR) LIKE ?
+              OR prod.DESCPRODUTO LIKE ?
+          )
+    )";
+    $like = '%' . $produto . '%';
     $params[] = $like;
     $params[] = $like;
     $params[] = $like;
@@ -479,6 +508,7 @@ if (in_array($exportar, ['excel', 'pdf'], true)) {
     $tituloExportacao = 'Contas a Pagar';
     $metadados = [
         'Fornecedor: ' . ($fornecedor ?: 'Todos'),
+        'Produto: ' . ($produto ?: 'Todos'),
         'Documento: ' . ($documento ?: 'Todos'),
         'Compra: ' . ($compraIni ?: 'inicio') . ' ate ' . ($compraFim ?: 'fim'),
         'Vencimento: ' . ($vencIni ?: 'inicio') . ' ate ' . ($vencFim ?: 'fim'),
@@ -720,7 +750,7 @@ require '../../layout/header.php';
             <div class="col-lg-8">
                 <span class="badge text-bg-primary mb-3">Financeiro</span>
                 <h1 class="h3 fw-bold mb-2">Contas a Pagar</h1>
-                <p class="text-muted mb-0">Parcelas em aberto por fornecedor, origem, documento, valor e vencimento.</p>
+                <p class="text-muted mb-0">Parcelas em aberto por fornecedor, produto, origem, documento, valor e vencimento.</p>
             </div>
             <div class="col-lg-4 text-lg-end">
                 <a href="menu_financeiro.php" class="btn btn-outline-secondary">Voltar ao financeiro</a>
@@ -735,6 +765,10 @@ require '../../layout/header.php';
             <div class="col-md-4">
                 <label class="form-label">Fornecedor</label>
                 <input type="text" name="fornecedor" class="form-control" value="<?= htmlspecialchars($fornecedor) ?>" placeholder="Nome, apelido ou codigo">
+            </div>
+            <div class="col-md-4">
+                <label class="form-label">Produto</label>
+                <input type="text" name="produto" class="form-control" value="<?= htmlspecialchars($produto) ?>" placeholder="Codigo ou descricao">
             </div>
             <div class="col-md-4">
                 <label class="form-label">Documento</label>
