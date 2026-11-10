@@ -329,7 +329,10 @@ document.addEventListener('DOMContentLoaded', function () {
 <div class="card shadow-sm">
     <div class="card-body">
 
-        <h4 class="mb-3">Extrato da Tesouraria</h4>
+        <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
+            <h4 class="mb-0">Extrato da Tesouraria</h4>
+            <a href="movimentar.php" class="btn btn-primary">+ Nova movimentação</a>
+        </div>
 
         <?php if (!empty($_GET['excluido'])): ?>
             <div class="alert alert-success">
