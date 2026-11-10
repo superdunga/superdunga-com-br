@@ -113,7 +113,7 @@ function transacoesPagina(itens, vencimento) {
         const ehCompra = data.y < yCartao;
         const ehPagamento = /pagamento da fatura/i.test(descricao);
         const ehCredito = /cr[eé]dito concedido/i.test(descricao);
-        const ehEncargo = /juros|iof/i.test(descricao);
+        const ehEncargo = /juros|iof|multa/i.test(descricao);
         let natureza = 'D';
         let categoria = ehCompra ? 'COMPRAS' : 'ENCARGOS';
         let tipo = parcelaItem ? parcelaItem.str.replace(/Parcela\s+(\d+)\s+de\s+(\d+)/i, 'Parcela $1/$2') : '';
@@ -165,6 +165,7 @@ export async function extrairMercadoPago(file, password) {
     const saldoAnterior = proximoValorPrefixo(pagina1.items, 'Total da fatura de ') ?? 0;
     const consumos = proximoValorPrefixo(pagina1.items, 'Consumos de ') ?? 0;
     const tarifas = proximoValor(pagina1.items, 'Tarifas e encargos') ?? 0;
+    const multas = proximoValor(pagina1.items, 'Multas por atraso') ?? 0;
     const juros = proximoValor(pagina1.items, 'Juros do mes anterior') ?? proximoValor(pagina1.items, 'Juros do mês anterior') ?? 0;
     const creditos = proximoValor(pagina1.items, 'Pagamentos e creditos devolvidos') ?? proximoValor(pagina1.items, 'Pagamentos e créditos devolvidos') ?? 0;
     if (!vencimento || total === null) throw new Error('Vencimento ou total da fatura nao identificado.');
@@ -196,6 +197,7 @@ export async function extrairMercadoPago(file, password) {
             saldo_anterior: saldoAnteriorDebito,
             consumos,
             tarifas,
+            multas,
             juros,
             creditos: creditos + creditoAnterior,
         },

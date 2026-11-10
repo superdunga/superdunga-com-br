@@ -84,7 +84,7 @@ function lerPdfMercadoPagoPayload(string $json, string $arquivo, string $compete
     $esperados = [
         [$saldo, (float)($resumo['saldo_anterior'] ?? 0), 'saldo anterior'],
         [$compras, (float)($resumo['consumos'] ?? 0), 'total de compras'],
-        [$encargos, (float)($resumo['tarifas'] ?? 0) + (float)($resumo['juros'] ?? 0), 'encargos'],
+        [$encargos, (float)($resumo['tarifas'] ?? 0) + (float)($resumo['multas'] ?? 0) + (float)($resumo['juros'] ?? 0), 'encargos'],
         [$creditos + $pagamentos, (float)($resumo['creditos'] ?? 0), 'pagamentos e creditos'],
     ];
     foreach ($esperados as $validacao) {
