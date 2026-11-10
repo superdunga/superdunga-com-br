@@ -2,6 +2,7 @@
 
 require_once __DIR__ . '/../tesouraria/estoque_minimo_lib.php';
 require_once __DIR__ . '/../unimed/_lib.php';
+require_once __DIR__ . '/../desconto_cheques/_lib.php';
 
 function whatsappEnsureTables(PDO $pdo): void
 {
@@ -506,7 +507,7 @@ function whatsappEnsureTables(PDO $pdo): void
             INSERT INTO whatsapp_rotinas
                 (empresa_id, codigo, nome, descricao, mensagem_id, origem_mensagem, gerador_sistema, ativo, evitar_duplicidade_diaria, periodicidade)
             VALUES
-                (?, 'unimed_responsaveis_pdf', 'Demonstrativos UNIMED', 'Envia uma unica vez o PDF quando os arquivos da fatura estiverem importados.', NULL, 'SISTEMA', 'unimed_responsaveis_pdf', 'N', 'S', 'MANUAL')
+                (?, 'unimed_responsaveis_pdf', 'UNIMED - Envio aos responsaveis', 'Envia uma unica vez o PDF da competencia atual e os dados PIX ao responsavel pelo pagamento.', NULL, 'SISTEMA', 'unimed_responsaveis_pdf', 'N', 'S', 'MANUAL')
             ON DUPLICATE KEY UPDATE
                 nome = VALUES(nome),
                 descricao = VALUES(descricao),
@@ -661,8 +662,8 @@ function whatsappGeradoresSistema(): array
             'funcao' => 'whatsappMensagemFechamentoComprasClientesPreview',
         ],
         'unimed_responsaveis_pdf' => [
-            'nome' => 'Demonstrativos UNIMED',
-            'descricao' => 'Envia o PDF individual quando os dois arquivos da fatura estiverem importados, sem repetir envios concluidos.',
+            'nome' => 'UNIMED - Envio aos responsaveis',
+            'descricao' => 'Envia o PDF da competencia atual e os dados PIX quando os dois relatorios estiverem importados.',
             'arquivo' => 'modulos/whatsapp/whatsapp_lib.php',
             'funcao' => 'whatsappMensagemUnimedPreview',
         ],
@@ -2324,74 +2325,124 @@ function whatsappGerarPdfUnimedResponsavel(string $arquivo, string $empresa, arr
 function whatsappMensagemUnimed(array $responsavel, array $fatura): string
 {
     $total = (float)$responsavel['mensalidade'] + (float)$responsavel['utilizacao'];
+    $vencimento = $fatura['data_pagamento_unimed'] ?? null;
+    $vencimentoTexto = $vencimento instanceof DateTimeInterface ? $vencimento->format('d/m/Y') : 'dia 11';
     return "Olá, " . $responsavel['nome'] . ".\n\n"
         . "Segue o demonstrativo da UNIMED referente à competência " . competenciaUnimed((string)$fatura['competencia']) . ".\n\n"
         . "Este documento reúne os valores dos beneficiários sob sua responsabilidade.\n\n"
         . "Mensalidades: R$ " . number_format((float)$responsavel['mensalidade'], 2, ',', '.') . "\n"
         . "Utilizações: R$ " . number_format((float)$responsavel['utilizacao'], 2, ',', '.') . "\n\n"
         . "*Valor total a ser depositado: R$ " . number_format($total, 2, ',', '.') . "*\n\n"
-        . "Favor realizar o PIX *antes do dia 12*.\n\n"
-        . "*Chave PIX - CNPJ*\n"
-        . "26732639000155\n\n"
-        . "Ethicos37 Serviços Ltda.\n\n"
+        . "*Pagamento via PIX*\n"
+        . "Chave PIX (CNPJ): 26732639000155\n"
+        . "Favorecido: Ethicos Servicos\n\n"
+        . "*Pagar até " . $vencimentoTexto . ".*\n"
+        . "Quando o dia 11 cair em final de semana ou feriado, o pagamento deve ser antecipado para o dia útil anterior.\n\n"
         . "Após o pagamento, favor enviar o comprovante.";
 }
 
-function whatsappFaturasUnimedProntas(PDO $pdo, int $empresaId): array
+function whatsappAnteciparVencimentoUnimed(
+    DateTimeImmutable $vencimento,
+    array $feriadosRecorrentes = [],
+    array $feriadosEspecificos = []
+): DateTimeImmutable {
+    while (!ehDiaUtilDC($vencimento, $feriadosRecorrentes, $feriadosEspecificos)) {
+        $vencimento = $vencimento->modify('-1 day');
+    }
+    return $vencimento;
+}
+
+function whatsappDataPagamentoUnimed(
+    PDO $pdo,
+    int $empresaId,
+    string $competencia,
+    bool $garantirFeriados = true
+): DateTimeImmutable
 {
+    if (!preg_match('/^(\d{4})(\d{2})$/', $competencia, $partes)) {
+        throw new RuntimeException('Competencia UNIMED invalida para calcular o pagamento.');
+    }
+
+    $ano = (int)$partes[1];
+    $mes = (int)$partes[2];
+    if ($mes < 1 || $mes > 12) {
+        throw new RuntimeException('Competencia UNIMED invalida para calcular o pagamento.');
+    }
+
+    if ($garantirFeriados) {
+        garantirTabelasDescontoCheques($pdo);
+        garantirFeriadosNacionaisFixosDC($pdo, $empresaId);
+        garantirFeriadosVariaveisDC($pdo, $empresaId, $ano, 0);
+    }
+
+    return whatsappAnteciparVencimentoUnimed(
+        new DateTimeImmutable(sprintf('%04d-%02d-11', $ano, $mes)),
+        feriadosRecorrentesDC($pdo, $empresaId),
+        feriadosEspecificosDC($pdo, $empresaId, $ano, $ano)
+    );
+}
+
+function whatsappFaturasUnimedProntas(PDO $pdo, int $empresaId, ?string $competencia = null): array
+{
+    $whereCompetencia = $competencia !== null ? ' AND f.competencia = ?' : '';
     $stmt = $pdo->prepare("
         SELECT f.*
         FROM unimed_faturas f
         WHERE f.empresa_id = ?
           AND COALESCE(NULLIF(TRIM(f.arquivo_nome), ''), '') <> ''
           AND COALESCE(NULLIF(TRIM(f.arquivo_utilizacao_nome), ''), '') <> ''
+          {$whereCompetencia}
         ORDER BY f.competencia, f.id
     ");
-    $stmt->execute([$empresaId]);
+    $params = [$empresaId];
+    if ($competencia !== null) {
+        $params[] = $competencia;
+    }
+    $stmt->execute($params);
     return $stmt->fetchAll(PDO::FETCH_ASSOC);
 }
 
-function whatsappMensagemUnimedPreview(PDO $pdo, int $empresaId = 1): string
+function whatsappMensagemUnimedPreview(PDO $pdo, int $empresaId = 1, bool $garantirFeriados = true): string
 {
-    $faturas = whatsappFaturasUnimedProntas($pdo, $empresaId);
-    $pendentes = 0;
-    $bloqueados = 0;
-    $enviados = 0;
-    foreach ($faturas as $fatura) {
-        foreach (whatsappResponsaveisUnimedFatura($pdo, $empresaId, (int)$fatura['id']) as $responsavel) {
-            $total = (float)$responsavel['mensalidade'] + (float)$responsavel['utilizacao'];
-            if ($total <= 0) {
-                continue;
-            }
-            $stmt = $pdo->prepare("SELECT status FROM unimed_whatsapp_envios WHERE empresa_id = ? AND fatura_id = ? AND responsavel_id = ?");
-            $stmt->execute([$empresaId, (int)$fatura['id'], (int)$responsavel['id']]);
-            $status = (string)$stmt->fetchColumn();
-            if ($status === 'ENVIADO') {
-                $enviados++;
-            } elseif (whatsappNormalizarTelefoneBrasil((string)$responsavel['telefone']) === '') {
-                $bloqueados++;
-            } else {
-                $pendentes++;
-            }
-        }
+    $competenciaAtual = date('Ym');
+    $faturas = whatsappFaturasUnimedProntas($pdo, $empresaId, $competenciaAtual);
+    if (!$faturas) {
+        return "*UNIMED - ENVIO AOS RESPONSAVEIS*\n\n"
+            . "Os dois relatorios da competencia " . competenciaUnimed($competenciaAtual) . " ainda nao estao disponiveis.";
     }
 
-    return "*DEMONSTRATIVOS UNIMED*\n\n"
-        . "Empresa: " . whatsappNomeEmpresa($pdo, $empresaId) . "\n"
-        . "Faturas com arquivos importados: " . count($faturas) . "\n"
-        . "Pendentes para envio: {$pendentes}\n"
-        . "Ja enviados: {$enviados}\n"
-        . "Bloqueados sem telefone: {$bloqueados}\n\n"
-        . "No envio real, a mensagem e o PDF individual seguem juntos. Envios concluidos nao sao repetidos.";
+    $fatura = $faturas[0];
+    $responsaveis = whatsappResponsaveisUnimedFatura($pdo, $empresaId, (int)$fatura['id']);
+    if (!$responsaveis) {
+        return "*UNIMED - ENVIO AOS RESPONSAVEIS*\n\n"
+            . "Nenhum responsavel foi encontrado para a competencia " . competenciaUnimed($competenciaAtual) . ".";
+    }
+
+    $fatura['data_pagamento_unimed'] = whatsappDataPagamentoUnimed(
+        $pdo,
+        $empresaId,
+        (string)$fatura['competencia'],
+        $garantirFeriados
+    );
+
+    return whatsappMensagemUnimed(reset($responsaveis), $fatura);
 }
 
-function whatsappEnviarUnimedResponsaveisPdf(PDO $pdo, array $config, array $rotina, ?int $usuarioId): array
+function whatsappEnviarUnimedResponsaveisPdf(
+    PDO $pdo,
+    array $config,
+    array $rotina,
+    ?int $usuarioId,
+    ?string $competencia = null
+): array
 {
     $empresaId = (int)($rotina['empresa_id'] ?? 1);
+    $competencia = $competencia ?? date('Ym');
     $empresa = whatsappNomeEmpresa($pdo, $empresaId);
     $resultado = ['ok' => 0, 'falha' => 0, 'ignorado' => 0, 'bloqueado' => 0];
 
-    foreach (whatsappFaturasUnimedProntas($pdo, $empresaId) as $fatura) {
+    foreach (whatsappFaturasUnimedProntas($pdo, $empresaId, $competencia) as $fatura) {
+        $fatura['data_pagamento_unimed'] = whatsappDataPagamentoUnimed($pdo, $empresaId, (string)$fatura['competencia']);
         foreach (whatsappResponsaveisUnimedFatura($pdo, $empresaId, (int)$fatura['id']) as $responsavel) {
             $responsavelId = (int)$responsavel['id'];
             $total = (float)$responsavel['mensalidade'] + (float)$responsavel['utilizacao'];
@@ -2400,7 +2451,7 @@ function whatsappEnviarUnimedResponsaveisPdf(PDO $pdo, array $config, array $rot
                 continue;
             }
 
-            $telefone = whatsappNormalizarTelefoneBrasil((string)$responsavel['telefone']);
+            $telefone = normalizarCelularEvolutionUnimed((string)$responsavel['telefone']);
             $nomeLock = 'sd_unimed_' . $empresaId . '_' . (int)$fatura['id'] . '_' . $responsavelId;
             $stmtLock = $pdo->prepare("SELECT GET_LOCK(?, 5)");
             $stmtLock->execute([$nomeLock]);

@@ -24,7 +24,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $tipo = strtoupper(trim((string)($_POST['tipo'] ?? '')));
     $nome = trim((string)($_POST['nome'] ?? ''));
     $responsavelPagamentoId = (int)($_POST['responsavel_pagamento_id'] ?? 0);
-    $telefoneWhatsapp = trim((string)($_POST['telefone_whatsapp'] ?? ''));
+    $telefoneWhatsappInformado = trim((string)($_POST['telefone_whatsapp'] ?? ''));
+    $telefoneWhatsapp = normalizarCelularEvolutionUnimed($telefoneWhatsappInformado);
     $contratoVenda = trim((string)($_POST['contrato_venda'] ?? ''));
     $plano = trim((string)($_POST['plano'] ?? ''));
     $statusOperacao = strtoupper(trim((string)($_POST['status_operacao'] ?? 'A')));
@@ -34,13 +35,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $contrato = str_pad(substr($contrato, 0, 4), 4, '0', STR_PAD_LEFT);
     $familia = str_pad(substr($familia, 0, 6), 6, '0', STR_PAD_LEFT);
     $dependente = str_pad(substr($dependente, 0, 2), 2, '0', STR_PAD_LEFT);
-    $telefoneWhatsapp = preg_replace('/[^\d()+\-\s]/', '', $telefoneWhatsapp);
-    $telefoneWhatsapp = preg_replace('/\s+/', ' ', $telefoneWhatsapp);
-
     if (!in_array($tipo, ['TITULAR', 'DEPENDENTE'], true)) {
         $mensagemErro = 'Informe um tipo valido.';
     } elseif ($nome === '') {
         $mensagemErro = 'Informe o nome do beneficiario.';
+    } elseif ($telefoneWhatsappInformado !== '' && $telefoneWhatsapp === '') {
+        $mensagemErro = 'Informe um celular valido com DDD.';
     } elseif (!in_array($statusOperacao, ['A', 'I', 'E', 'R', 'IE'], true)) {
         $mensagemErro = 'Informe um status de operacao valido.';
     } elseif ($responsavelPagamentoId <= 0) {
@@ -217,6 +217,7 @@ require '../../layout/header.php';
             <div class="col-md-4">
                 <label class="form-label">Telefone WhatsApp</label>
                 <input type="tel" name="telefone_whatsapp" class="form-control" value="<?= htmlspecialchars((string)$beneficiario['telefone_whatsapp']) ?>" placeholder="(00) 00000-0000">
+                <div class="form-text">O numero sera salvo no formato Evolution API: 55 + DDD + celular.</div>
             </div>
 
             <div class="col-md-6">

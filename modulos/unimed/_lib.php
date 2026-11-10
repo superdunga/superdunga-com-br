@@ -210,6 +210,26 @@ function competenciaUnimed(string $competencia): string
     return $competencia;
 }
 
+function normalizarCelularEvolutionUnimed(string $telefone): string
+{
+    $digitos = ltrim((string)preg_replace('/\D+/', '', $telefone), '0');
+    $tamanho = strlen($digitos);
+
+    if ($tamanho === 11) {
+        $digitos = '55' . $digitos;
+    } elseif ($tamanho === 10) {
+        $digitos = '55' . substr($digitos, 0, 2) . '9' . substr($digitos, 2);
+    } elseif ($tamanho === 12 && substr($digitos, 0, 2) === '55') {
+        $digitos = substr($digitos, 0, 4) . '9' . substr($digitos, 4);
+    }
+
+    if (!preg_match('/^55[1-9][0-9]9[0-9]{8}$/', $digitos)) {
+        return '';
+    }
+
+    return $digitos;
+}
+
 function codigoUnimed(string $unidade, string $contrato, string $familia, string $dependente): string
 {
     return $unidade . '.' . $contrato . '.' . $familia . '-' . $dependente;
