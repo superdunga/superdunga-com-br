@@ -45,7 +45,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $_SESSION['usuario_id']   = $usuario['id'];
                 $_SESSION['usuario_nome'] = $usuario['nome'];
                 $_SESSION['nivel']        = $usuario['nivel'];
-                unset($_SESSION['operador_pendencias_liberado_data']);
 
                 if ($usuario['nivel'] === 'MASTER') {
                     $_SESSION['empresa_id'] = $empresa_id;
@@ -68,11 +67,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     WHERE id = ?
                 ")->execute([$usuario['id']]);
 
-                if ($usuario['nivel'] === 'OPERADOR') {
-                    header("Location: modulos/operador/pendencias.php");
-                } else {
-                    header("Location: index.php");
-                }
+                header("Location: index.php");
                 exit;
             }
 

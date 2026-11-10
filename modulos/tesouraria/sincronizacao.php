@@ -5,30 +5,6 @@ require '../../layout/header.php';
 
 $empresa_id = (int)($_SESSION['empresa_id'] ?? 1);
 
-$stmtColunaEmpresa = $pdo_master->prepare("
-    SELECT COUNT(*)
-    FROM information_schema.COLUMNS
-    WHERE TABLE_SCHEMA = DATABASE()
-      AND TABLE_NAME = 'tesouraria_sincronizacao_log'
-      AND COLUMN_NAME = 'empresa_id'
-");
-$stmtColunaEmpresa->execute();
-if ((int)$stmtColunaEmpresa->fetchColumn() === 0) {
-    $pdo_master->exec("ALTER TABLE tesouraria_sincronizacao_log ADD empresa_id INT NOT NULL DEFAULT 1 AFTER id");
-}
-
-$stmtIndice = $pdo_master->prepare("
-    SELECT COUNT(*)
-    FROM information_schema.STATISTICS
-    WHERE TABLE_SCHEMA = DATABASE()
-      AND TABLE_NAME = 'tesouraria_sincronizacao_log'
-      AND INDEX_NAME = 'idx_sync_log_empresa_data'
-");
-$stmtIndice->execute();
-if ((int)$stmtIndice->fetchColumn() === 0) {
-    $pdo_master->exec("ALTER TABLE tesouraria_sincronizacao_log ADD INDEX idx_sync_log_empresa_data (empresa_id, data_execucao)");
-}
-
 /* =========================
    BUSCAR LOGS
 ========================= */

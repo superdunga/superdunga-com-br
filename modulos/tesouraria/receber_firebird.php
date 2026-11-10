@@ -222,6 +222,31 @@ function garantirTabelaSnapshotAtivos(PDO $pdo): void
     ");
 }
 
+function limparSnapshotAtivos(PDO $pdo, string $syncId, string $tabela): void
+{
+    $stmt = $pdo->prepare("DELETE FROM sync_firebird_ativos_temp WHERE sync_id = ? AND tabela = ?");
+    $stmt->execute([$syncId, $tabela]);
+}
+
+function inserirSnapshotAtivosEmLotes(PDO $pdo, string $syncId, string $tabela, array $ids): void
+{
+    foreach (array_chunk($ids, 500) as $lote) {
+        $valores = [];
+        $params = [];
+        foreach ($lote as $id) {
+            $valores[] = '(?, ?, ?)';
+            $params[] = $syncId;
+            $params[] = $tabela;
+            $params[] = $id;
+        }
+        $stmt = $pdo->prepare(
+            'INSERT IGNORE INTO sync_firebird_ativos_temp (sync_id, tabela, chave_sync) VALUES '
+            . implode(', ', $valores)
+        );
+        $stmt->execute($params);
+    }
+}
+
 function garantirTabelasSnapshotEst008(PDO $pdo): void
 {
     $pdo->exec("
@@ -274,6 +299,34 @@ function garantirTabelasSnapshotEst008(PDO $pdo): void
     }
 }
 
+function limparSnapshotEst008(PDO $pdo, string $syncId, int $empresa): void
+{
+    $stmt = $pdo->prepare("DELETE FROM sync_firebird_est008_temp WHERE sync_id = ? AND empresa = ?");
+    $stmt->execute([$syncId, $empresa]);
+}
+
+function inserirSnapshotEst008EmLotes(PDO $pdo, string $syncId, array $chaves): void
+{
+    foreach (array_chunk($chaves, 250) as $lote) {
+        $valores = [];
+        $params = [];
+        foreach ($lote as $chave) {
+            $valores[] = '(?, ?, ?, ?, ?)';
+            $params[] = $syncId;
+            $params[] = $chave['EMPRESA'];
+            $params[] = $chave['ITEMVENDACONTADOR'];
+            $params[] = $chave['VENDACONTA'];
+            $params[] = $chave['PRODUTO'];
+        }
+        $stmt = $pdo->prepare(
+            'INSERT IGNORE INTO sync_firebird_est008_temp '
+            . '(sync_id, empresa, itemvendacontador, vendaconta, produto) VALUES '
+            . implode(', ', $valores)
+        );
+        $stmt->execute($params);
+    }
+}
+
 function registrarAuditoriaSnapshotEst008(
     PDO $pdo,
     string $syncId,
@@ -318,12 +371,13 @@ function processarAtivosEst008(PDO $pdo, array $dados): void
 
     if (!$finalizar) {
         if ($iniciar) {
-            $stmtLimpar = $pdo->prepare("DELETE FROM sync_firebird_est008_temp WHERE sync_id = ?");
-            $stmtLimpar->execute([$syncId]);
+            limparSnapshotEst008($pdo, $syncId, $empresa);
+            $pdo->exec("DELETE FROM sync_firebird_est008_temp WHERE criado_em < DATE_SUB(NOW(), INTERVAL 1 DAY) LIMIT 5000");
         }
 
         $registros = $dados['registros'] ?? $dados['ativos'] ?? $dados;
         if (!is_array($registros) || empty($registros)) {
+            limparSnapshotEst008($pdo, $syncId, $empresa);
             http_response_code(422);
             echo json_encode(['erro' => 'Lote EST008 vazio ou invalido.', 'recebidos' => 0, 'aceitos' => 0]);
             exit;
@@ -332,6 +386,7 @@ function processarAtivosEst008(PDO $pdo, array $dados): void
         $chaves = [];
         foreach ($registros as $indice => $item) {
             if (!is_array($item)) {
+                limparSnapshotEst008($pdo, $syncId, $empresa);
                 http_response_code(422);
                 echo json_encode(['erro' => "Registro EST008 invalido no indice $indice.", 'recebidos' => count($registros), 'aceitos' => 0]);
                 exit;
@@ -342,6 +397,7 @@ function processarAtivosEst008(PDO $pdo, array $dados): void
                 $valor = $item[$coluna] ?? null;
                 $valorNormalizado = trim((string)$valor);
                 if ($valor === null || !preg_match('/^\d+$/', $valorNormalizado)) {
+                    limparSnapshotEst008($pdo, $syncId, $empresa);
                     http_response_code(422);
                     echo json_encode(['erro' => "Chave $coluna invalida no indice $indice.", 'recebidos' => count($registros), 'aceitos' => 0]);
                     exit;
@@ -350,6 +406,7 @@ function processarAtivosEst008(PDO $pdo, array $dados): void
             }
 
             if ($valores['EMPRESA'] !== $empresa || $valores['ITEMVENDACONTADOR'] <= 0 || $valores['VENDACONTA'] <= 0 || $valores['PRODUTO'] <= 0) {
+                limparSnapshotEst008($pdo, $syncId, $empresa);
                 http_response_code(422);
                 echo json_encode(['erro' => "Chave EST008 fora do escopo no indice $indice.", 'recebidos' => count($registros), 'aceitos' => 0]);
                 exit;
@@ -360,23 +417,15 @@ function processarAtivosEst008(PDO $pdo, array $dados): void
 
         $pdo->beginTransaction();
         try {
-            $stmtInserir = $pdo->prepare("
-                INSERT IGNORE INTO sync_firebird_est008_temp (
-                    sync_id, empresa, itemvendacontador, vendaconta, produto
-                ) VALUES (?, ?, ?, ?, ?)
-            ");
-            foreach ($chaves as $chave) {
-                $stmtInserir->execute([
-                    $syncId,
-                    $chave['EMPRESA'],
-                    $chave['ITEMVENDACONTADOR'],
-                    $chave['VENDACONTA'],
-                    $chave['PRODUTO'],
-                ]);
-            }
+            inserirSnapshotEst008EmLotes($pdo, $syncId, $chaves);
             $pdo->commit();
         } catch (Throwable $e) {
             $pdo->rollBack();
+            try {
+                limparSnapshotEst008($pdo, $syncId, $empresa);
+            } catch (Throwable $cleanupError) {
+                error_log('Falha ao limpar snapshot EST008: ' . $cleanupError->getMessage());
+            }
             throw $e;
         }
 
@@ -402,6 +451,7 @@ function processarAtivosEst008(PDO $pdo, array $dados): void
     if ($esperado <= 0 || $recebido <= 0 || $recebido !== $esperado) {
         $mensagem = "Contagem do snapshot divergente: esperado=$esperado recebido=$recebido.";
         registrarAuditoriaSnapshotEst008($pdo, $syncId, $empresa, $esperado, $recebido, 0, 0, 0, 'BLOQUEADO', $mensagem);
+        limparSnapshotEst008($pdo, $syncId, $empresa);
         http_response_code(409);
         echo json_encode(['erro' => $mensagem, 'snapshot_bloqueado' => true]);
         exit;
@@ -441,6 +491,7 @@ function processarAtivosEst008(PDO $pdo, array $dados): void
     if ($ausentesMysql !== 0 || $candidatos > $limiteExclusao) {
         $mensagem = "Pre-validacao bloqueou o snapshot: ausentes_mysql=$ausentesMysql candidatos_exclusao=$candidatos limite=$limiteExclusao.";
         registrarAuditoriaSnapshotEst008($pdo, $syncId, $empresa, $esperado, $recebido, $correspondentes, $ausentesMysql, $candidatos, 'BLOQUEADO', $mensagem);
+        limparSnapshotEst008($pdo, $syncId, $empresa);
         http_response_code(409);
         echo json_encode([
             'erro' => $mensagem,
@@ -475,8 +526,7 @@ function processarAtivosEst008(PDO $pdo, array $dados): void
         $amostraCandidatos = $stmtAmostra->fetchAll(PDO::FETCH_ASSOC);
 
         registrarAuditoriaSnapshotEst008($pdo, $syncId, $empresa, $esperado, $recebido, $correspondentes, 0, $candidatos, 'PREVIA', 'Pre-validacao concluida sem alteracoes.');
-        $stmtLimpar = $pdo->prepare("DELETE FROM sync_firebird_est008_temp WHERE sync_id = ? AND empresa = ?");
-        $stmtLimpar->execute([$syncId, $empresa]);
+        limparSnapshotEst008($pdo, $syncId, $empresa);
         echo json_encode([
             'status' => 'ok',
             'modo' => 'previsualizacao',
@@ -532,11 +582,15 @@ function processarAtivosEst008(PDO $pdo, array $dados): void
         $marcadosExcluidos = $stmtExcluir->rowCount();
 
         registrarAuditoriaSnapshotEst008($pdo, $syncId, $empresa, $esperado, $recebido, $correspondentes, 0, $candidatos, 'FINALIZADO', "Snapshot EST008 finalizado: pendentes_confirmacao=$pendentesConfirmacao excluidos=$marcadosExcluidos.");
-        $stmtLimpar = $pdo->prepare("DELETE FROM sync_firebird_est008_temp WHERE sync_id = ? AND empresa = ?");
-        $stmtLimpar->execute([$syncId, $empresa]);
+        limparSnapshotEst008($pdo, $syncId, $empresa);
         $pdo->commit();
     } catch (Throwable $e) {
         $pdo->rollBack();
+        try {
+            limparSnapshotEst008($pdo, $syncId, $empresa);
+        } catch (Throwable $cleanupError) {
+            error_log('Falha ao limpar snapshot EST008: ' . $cleanupError->getMessage());
+        }
         throw $e;
     }
 
@@ -885,6 +939,10 @@ function processarAtivosFirebird(PDO $pdo, array $dados, array $config): void
     }
 
     if (!is_array($registros)) {
+        if ($syncId) {
+            garantirTabelaSnapshotAtivos($pdo);
+            limparSnapshotAtivos($pdo, $syncId, $nomeTabela);
+        }
         echo json_encode(["erro" => "Lista de ativos invalida."]);
         exit;
     }
@@ -905,6 +963,10 @@ function processarAtivosFirebird(PDO $pdo, array $dados, array $config): void
     }
 
     if (empty($ids) && !$finalizar && ($_GET['confirmar_vazio'] ?? '') !== '1') {
+        if ($syncId) {
+            garantirTabelaSnapshotAtivos($pdo);
+            limparSnapshotAtivos($pdo, $syncId, $nomeTabela);
+        }
         echo json_encode([
             "erro" => "Lista de ativos vazia. Para marcar todos como excluidos, envie confirmar_vazio=1."
         ]);
@@ -917,17 +979,21 @@ function processarAtivosFirebird(PDO $pdo, array $dados, array $config): void
         garantirTabelaSnapshotAtivos($pdo);
 
         if ($iniciar) {
-            $stmtLimpar = $pdo->prepare("DELETE FROM sync_firebird_ativos_temp WHERE sync_id = ? AND tabela = ?");
-            $stmtLimpar->execute([$syncId, $nomeTabela]);
+            limparSnapshotAtivos($pdo, $syncId, $nomeTabela);
+            $stmtLimparAntigos = $pdo->prepare("DELETE FROM sync_firebird_ativos_temp WHERE tabela = ? AND criado_em < DATE_SUB(NOW(), INTERVAL 1 DAY) LIMIT 5000");
+            $stmtLimparAntigos->execute([$nomeTabela]);
         }
 
         if (!empty($ids)) {
-            $stmtSnapshot = $pdo->prepare("
-                INSERT IGNORE INTO sync_firebird_ativos_temp (sync_id, tabela, chave_sync)
-                VALUES (?, ?, ?)
-            ");
-            foreach (array_keys($ids) as $id) {
-                $stmtSnapshot->execute([$syncId, $nomeTabela, $id]);
+            try {
+                inserirSnapshotAtivosEmLotes($pdo, $syncId, $nomeTabela, array_keys($ids));
+            } catch (Throwable $e) {
+                try {
+                    limparSnapshotAtivos($pdo, $syncId, $nomeTabela);
+                } catch (Throwable $cleanupError) {
+                    error_log('Falha ao limpar snapshot de ativos: ' . $cleanupError->getMessage());
+                }
+                throw $e;
             }
         }
 
@@ -981,12 +1047,16 @@ function processarAtivosFirebird(PDO $pdo, array $dados, array $config): void
             $stmtExcluir->execute(array_merge([$syncId, $nomeTabela, "Nao encontrado na foto $tabelaFirebird do Firebird"], $filtroParams));
             $marcadosExcluidos = $stmtExcluir->rowCount();
 
-            $stmtLimpar = $pdo->prepare("DELETE FROM sync_firebird_ativos_temp WHERE sync_id = ? AND tabela = ?");
-            $stmtLimpar->execute([$syncId, $nomeTabela]);
+            limparSnapshotAtivos($pdo, $syncId, $nomeTabela);
 
             $pdo->commit();
         } catch (Throwable $e) {
             $pdo->rollBack();
+            try {
+                limparSnapshotAtivos($pdo, $syncId, $nomeTabela);
+            } catch (Throwable $cleanupError) {
+                error_log('Falha ao limpar snapshot de ativos: ' . $cleanupError->getMessage());
+            }
             throw $e;
         }
 

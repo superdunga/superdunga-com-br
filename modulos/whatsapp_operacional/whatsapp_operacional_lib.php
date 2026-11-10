@@ -568,14 +568,14 @@ function whatsappOperacionalFeriados(PDO $pdo, int $empresaId, int $ano): array
 
 function whatsappOperacionalSincronizacaoAtualizada(PDO $pdo, int $empresaId, int $minutos = 30): bool
 {
-    $stmt = $pdo->prepare("SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='tesouraria_sincronizacao_log'");
-    $stmt->execute();
-    if ((int)$stmt->fetchColumn() === 0) {
+    try {
+        $stmt = $pdo->prepare("SELECT COUNT(*) FROM tesouraria_sincronizacao_log WHERE empresa_id=? AND tabela='CR001' AND status='OK' AND data_execucao>=DATE_SUB(NOW(),INTERVAL ? MINUTE)");
+        $stmt->execute([$empresaId, max(5, $minutos)]);
+        return (int)$stmt->fetchColumn() > 0;
+    } catch (Throwable $e) {
+        error_log('Falha ao consultar sincronizacao CR001: ' . $e->getMessage());
         return false;
     }
-    $stmt = $pdo->prepare("SELECT COUNT(*) FROM tesouraria_sincronizacao_log WHERE empresa_id=? AND UPPER(tabela)='CR001' AND UPPER(status)='OK' AND data_execucao>=DATE_SUB(NOW(),INTERVAL ? MINUTE)");
-    $stmt->execute([$empresaId, max(5, $minutos)]);
-    return (int)$stmt->fetchColumn() > 0;
 }
 
 function whatsappOperacionalDataEnvio(PDO $pdo, int $empresaId, string $competencia, int $diaUtil, string $horario, ?string $excecao = null): DateTimeImmutable
