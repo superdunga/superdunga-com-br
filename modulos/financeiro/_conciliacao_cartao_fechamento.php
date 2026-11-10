@@ -80,6 +80,14 @@ function cccBaixarCpsFatura(PDO $pdo,int $empresa,int $faturaId,int $usuario,str
         if($creditoSemDestino)throw new RuntimeException('O credito #'.$creditoSemDestino.' precisa ser classificado como estorno de compra anterior ou credito avulso antes da baixa dos CPs.');
         $s=$pdo->prepare("SELECT COALESCE(SUM(COALESCE(a.valor,v.valor)),0) FROM financeiro_cc_itens c LEFT JOIN financeiro_cc_creditos_aplicados a ON a.credito_id=c.id AND a.empresa_id=c.empresa_id LEFT JOIN financeiro_cc_creditos_avulsos v ON v.credito_id=c.id AND v.empresa_id=c.empresa_id WHERE c.fatura_id=? AND c.empresa_id=? AND c.natureza='C' AND c.status<>'ESTORNADO'");
         $s->execute([$faturaId,$empresa]);if((int)round((float)$s->fetchColumn()*100)!==(int)round((float)$creditos['devolucoes']*100))throw new RuntimeException('Os creditos classificados nao fecham com os creditos importados.');
+        $s=$pdo->prepare("SELECT e.id,e.valor,e.tipoes_credito,e.mov_credito_39,d.cpcontador,d.descricao,cp.FCONTADOR FROM financeiro_cc_creditos_esperados e JOIN financeiro_cc_itens d ON d.id=e.debito_id AND d.empresa_id=e.empresa_id LEFT JOIN armazem_cp001 cp ON cp.EMPRESA=e.empresa_id AND cp.CPCONTADOR=d.cpcontador WHERE d.fatura_id=? AND e.empresa_id=? AND e.aplicacao='ATUAL' FOR UPDATE");
+        $s->execute([$faturaId,$empresa]);$creditosAtuais=$s->fetchAll(PDO::FETCH_ASSOC);
+        $totalCreditosAtuais=0;
+        foreach($creditosAtuais as $creditoAtual){
+            if($creditoAtual['mov_credito_39'])throw new RuntimeException('O credito atual #'.$creditoAtual['id'].' ja foi contabilizado.');
+            cccValidarTipoCredito($pdo,$empresa,(int)$creditoAtual['tipoes_credito']);
+            $totalCreditosAtuais+=(int)round((float)$creditoAtual['valor']*100);
+        }
         $s=$pdo->prepare("SELECT c.id FROM financeiro_cc_itens c LEFT JOIN financeiro_cc_creditos_aplicados a ON a.credito_id=c.id AND a.empresa_id=c.empresa_id LEFT JOIN financeiro_cc_creditos_avulsos v ON v.credito_id=c.id AND v.empresa_id=c.empresa_id LEFT JOIN armazem_bnc001 b ON b.EMPRESA=c.empresa_id AND b.MOVCONTADOR=COALESCE(a.mov_credito_39,v.mov_credito_39) WHERE c.fatura_id=? AND c.empresa_id=? AND c.natureza='C' AND c.status<>'ESTORNADO' AND (b.MOVCONTADOR IS NULL OR COALESCE(b.deletado,'N')='S' OR b.CBCONTADOR<>39 OR b.TIPOMOV<>'C' OR ABS(b.VALORMOV-c.valor)>=0.01) LIMIT 1");
         $s->execute([$faturaId,$empresa]);if($s->fetchColumn())throw new RuntimeException('O movimento na conta 39 de um credito da fatura esta ausente ou divergente.');
         $total=0;$baixas=[];
@@ -100,7 +108,11 @@ function cccBaixarCpsFatura(PDO $pdo,int $empresa,int $faturaId,int $usuario,str
             $i['modo_baixa']=$modo;
             $total+=$valor;$baixas[]=[$i,$valor];
         }
-        $credito=(int)round((float)$creditos['devolucoes']*100);$pagamentosAnteriores=(int)round((float)$creditos['pagamentos']*100);$saldoAnterior=(int)round((float)$creditos['saldo_anterior']*100);$pagamento=(int)round((float)$f['total_fatura']*100);
+        $credito=(int)round((float)$creditos['devolucoes']*100)+$totalCreditosAtuais;
+        $composicaoPdf=strtolower(pathinfo((string)$f['nome_arquivo'],PATHINFO_EXTENSION))==='pdf';
+        $pagamentosAnteriores=$composicaoPdf?(int)round((float)$creditos['pagamentos']*100):0;
+        $saldoAnterior=$composicaoPdf?(int)round((float)$creditos['saldo_anterior']*100):0;
+        $pagamento=(int)round((float)$f['total_fatura']*100)-$totalCreditosAtuais;
         if($pagamento<=0 || $saldoAnterior+$total-$credito-$pagamentosAnteriores!==$pagamento || $total+$estornado!==(int)round((float)$f['total_debitos']*100))throw new RuntimeException('A soma dos CPs e estornos nao fecha com o total liquido da fatura. Confira creditos e itens antes de baixar.');
         $historico='FATURA '.substr($f['competencia'],5,2).'/'.substr($f['competencia'],0,4);
         $up=$pdo->prepare("UPDATE armazem_cp001 SET STATUS='QT',DTPAGTO=?,VLRPAGO=?,VLRRESTANTE=0,CBCONTADOR=39,USERALT=?,DTALT=NOW(),REGSTAMP=NOW() WHERE EMPRESA=? AND CPCONTADOR=? AND STATUS<>'QT' AND DTPAGTO IS NULL AND COALESCE(VLRPAGO,0)=0");
@@ -115,6 +127,13 @@ function cccBaixarCpsFatura(PDO $pdo,int $empresa,int $faturaId,int $usuario,str
             }
             $up->execute([$data,$valor/100,$usuario?:null,$empresa,(int)$i['cpcontador']]);if($up->rowCount()!==1)throw new RuntimeException('CP #'.$i['cpcontador'].' foi alterado durante o fechamento.');
             $log->execute([$faturaId,$empresa,(int)$i['cpcontador'],$mov,$valor/100]);
+        }
+        $registrarCreditoAtual=$pdo->prepare("UPDATE financeiro_cc_creditos_esperados SET mov_credito_39=?,fechado_em=NOW() WHERE id=? AND empresa_id=? AND mov_credito_39 IS NULL");
+        foreach($creditosAtuais as $creditoAtual){
+            $valor=(int)round((float)$creditoAtual['valor']*100);
+            $mov=cccInserirMovimentoFatura($pdo,$empresa,39,(int)$creditoAtual['tipoes_credito'],'C',$data,'DEVOLUCAO CARTAO - CP '.$creditoAtual['cpcontador'].' - '.mb_substr($creditoAtual['descricao'],0,140),$faturaId,$usuario,$valor,'CREDITO_CC_ATUAL',(int)$creditoAtual['id'],(int)$creditoAtual['FCONTADOR']);
+            $registrarCreditoAtual->execute([$mov,(int)$creditoAtual['id'],$empresa]);
+            if($registrarCreditoAtual->rowCount()!==1)throw new RuntimeException('O credito atual #'.$creditoAtual['id'].' foi alterado durante o fechamento.');
         }
         $pdo->prepare("UPDATE financeiro_cc_faturas SET status='ENCERRADA' WHERE id=? AND empresa_id=? AND status='IMPORTADA'")->execute([$faturaId,$empresa]);
         $pdo->commit();

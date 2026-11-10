@@ -5,10 +5,15 @@ function cccGarantirCreditos(PDO $pdo): void
     $pdo->exec("CREATE TABLE IF NOT EXISTS financeiro_cc_creditos_esperados (
         id INT AUTO_INCREMENT PRIMARY KEY, empresa_id INT NOT NULL, cartao_id INT NOT NULL,
         debito_id INT NOT NULL, valor DECIMAL(15,2) NOT NULL,
+        aplicacao VARCHAR(10) NOT NULL DEFAULT 'FUTURA',
         usuario_id INT NULL, criado_em DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
         UNIQUE KEY uq_cc_credito_debito (debito_id),
         INDEX idx_cc_credito_pendente (empresa_id,cartao_id)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+    $colunas=$pdo->query("SHOW COLUMNS FROM financeiro_cc_creditos_esperados LIKE 'aplicacao'")->fetchAll();
+    if(!$colunas)$pdo->exec("ALTER TABLE financeiro_cc_creditos_esperados ADD COLUMN aplicacao VARCHAR(10) NOT NULL DEFAULT 'FUTURA' AFTER valor");
+    $colunas=$pdo->query("SHOW COLUMNS FROM financeiro_cc_creditos_esperados LIKE 'tipoes_credito'")->fetchAll();
+    if(!$colunas)$pdo->exec("ALTER TABLE financeiro_cc_creditos_esperados ADD COLUMN tipoes_credito INT NULL AFTER aplicacao, ADD COLUMN mov_credito_39 INT NULL AFTER tipoes_credito, ADD COLUMN fechado_em DATETIME NULL AFTER mov_credito_39");
     $pdo->exec("CREATE TABLE IF NOT EXISTS financeiro_cc_creditos_aplicados (
         id INT AUTO_INCREMENT PRIMARY KEY, esperado_id INT NOT NULL, credito_id INT NOT NULL,
         empresa_id INT NOT NULL, valor DECIMAL(15,2) NOT NULL,
@@ -48,9 +53,14 @@ function cccDesfazerClassificacaoCredito(PDO $pdo,int $empresa,int $faturaId,int
     try {
         $s=$pdo->prepare("SELECT f.status FROM financeiro_cc_itens i JOIN financeiro_cc_faturas f ON f.id=i.fatura_id AND f.empresa_id=i.empresa_id WHERE i.id=? AND i.fatura_id=? AND i.empresa_id=? AND i.natureza='C' FOR UPDATE");
         $s->execute([$creditoId,$faturaId,$empresa]);if($s->fetchColumn()!=='IMPORTADA')throw new RuntimeException('Somente creditos de faturas abertas podem ser reclassificados.');
-        $s=$pdo->prepare("SELECT id,esperado_id,mov_credito_39,mov_reversao FROM financeiro_cc_creditos_aplicados WHERE credito_id=? AND empresa_id=? FOR UPDATE");$s->execute([$creditoId,$empresa]);$aplicado=$s->fetch(PDO::FETCH_ASSOC);
+        $s=$pdo->prepare("SELECT a.id,a.esperado_id,a.mov_credito_39,a.mov_reversao,e.aplicacao FROM financeiro_cc_creditos_aplicados a JOIN financeiro_cc_creditos_esperados e ON e.id=a.esperado_id WHERE a.credito_id=? AND a.empresa_id=? FOR UPDATE");$s->execute([$creditoId,$empresa]);$aplicado=$s->fetch(PDO::FETCH_ASSOC);
         $s=$pdo->prepare("SELECT credito_id,mov_credito_39 FROM financeiro_cc_creditos_avulsos WHERE credito_id=? AND empresa_id=? FOR UPDATE");$s->execute([$creditoId,$empresa]);$avulso=$s->fetch(PDO::FETCH_ASSOC);
         if((bool)$aplicado===(bool)$avulso)throw new RuntimeException('Classificacao do credito ausente ou inconsistente.');
+        if($aplicado && $aplicado['aplicacao']==='ATUAL'){
+            $pdo->prepare("DELETE FROM financeiro_cc_creditos_aplicados WHERE id=? AND empresa_id=?")->execute([(int)$aplicado['id'],$empresa]);
+            $pdo->commit();
+            return;
+        }
         $movimentos=array_filter([(int)($aplicado['mov_credito_39']??$avulso['mov_credito_39']),(int)($aplicado['mov_reversao']??0)]);
         foreach($movimentos as $mov){
             $s=$pdo->prepare("SELECT 1 FROM financeiro_extrato_bancario WHERE bnc001_movcontador=? LIMIT 1");$s->execute([$mov]);
@@ -92,16 +102,19 @@ function cccAplicarCreditoAvulso(PDO $pdo,int $empresa,int $faturaId,int $credit
     } catch(Throwable $e) {if($pdo->inTransaction())$pdo->rollBack();throw $e;}
 }
 
-function cccMarcarCreditoEsperado(PDO $pdo, int $empresa, int $faturaId, int $debitoId, int $usuario): void
+function cccMarcarCreditoEsperado(PDO $pdo, int $empresa, int $faturaId, int $debitoId, int $usuario, string $aplicacao='FUTURA', int $tipoesCredito=0): void
 {
+    $aplicacao=strtoupper(trim($aplicacao));
+    if(!in_array($aplicacao,['ATUAL','FUTURA'],true))throw new RuntimeException('Aplicacao do credito invalida.');
     $pdo->beginTransaction();
     try {
         $s=$pdo->prepare("SELECT f.cartao_id,f.status,i.natureza,i.status AS item_status,i.valor,i.cpcontador FROM financeiro_cc_faturas f JOIN financeiro_cc_itens i ON i.fatura_id=f.id AND i.empresa_id=f.empresa_id WHERE f.id=? AND f.empresa_id=? AND i.id=? FOR UPDATE");
         $s->execute([$faturaId,$empresa,$debitoId]);$i=$s->fetch(PDO::FETCH_ASSOC);
         if(!$i || !in_array($i['status'],['IMPORTADA','ENCERRADA'],true) || $i['natureza']!=='D' || $i['item_status']==='ESTORNADO' || !$i['cpcontador'])throw new RuntimeException('Selecione uma compra conciliada com CP nesta fatura.');
         $s=$pdo->prepare("SELECT 1 FROM financeiro_cc_estornos WHERE debito_id=?");$s->execute([$debitoId]);if($s->fetchColumn())throw new RuntimeException('Esta compra ja foi estornada na propria fatura.');
-        $s=$pdo->prepare("INSERT INTO financeiro_cc_creditos_esperados (empresa_id,cartao_id,debito_id,valor,usuario_id) VALUES (?,?,?,?,?)");
-        $s->execute([$empresa,(int)$i['cartao_id'],$debitoId,$i['valor'],$usuario?:null]);
+        if($aplicacao==='ATUAL')cccValidarTipoCredito($pdo,$empresa,$tipoesCredito);
+        $s=$pdo->prepare("INSERT INTO financeiro_cc_creditos_esperados (empresa_id,cartao_id,debito_id,valor,aplicacao,tipoes_credito,usuario_id) VALUES (?,?,?,?,?,?,?)");
+        $s->execute([$empresa,(int)$i['cartao_id'],$debitoId,$i['valor'],$aplicacao,$aplicacao==='ATUAL'?$tipoesCredito:null,$usuario?:null]);
         $pdo->commit();
     } catch(Throwable $e) {if($pdo->inTransaction())$pdo->rollBack();throw $e;}
 }
@@ -110,8 +123,9 @@ function cccCancelarCreditoEsperado(PDO $pdo,int $empresa,int $faturaId,int $esp
 {
     $pdo->beginTransaction();
     try {
-        $s=$pdo->prepare("SELECT e.id FROM financeiro_cc_creditos_esperados e JOIN financeiro_cc_itens d ON d.id=e.debito_id AND d.empresa_id=e.empresa_id WHERE e.id=? AND e.empresa_id=? AND d.fatura_id=? FOR UPDATE");
-        $s->execute([$esperadoId,$empresa,$faturaId]);if(!$s->fetchColumn())throw new RuntimeException('Credito esperado nao encontrado.');
+        $s=$pdo->prepare("SELECT e.id,e.mov_credito_39 FROM financeiro_cc_creditos_esperados e JOIN financeiro_cc_itens d ON d.id=e.debito_id AND d.empresa_id=e.empresa_id WHERE e.id=? AND e.empresa_id=? AND d.fatura_id=? FOR UPDATE");
+        $s->execute([$esperadoId,$empresa,$faturaId]);$esperado=$s->fetch(PDO::FETCH_ASSOC);if(!$esperado)throw new RuntimeException('Credito esperado nao encontrado.');
+        if($esperado['mov_credito_39'])throw new RuntimeException('Este credito ja foi contabilizado no fechamento da fatura e nao pode ser cancelado.');
         $s=$pdo->prepare("SELECT 1 FROM financeiro_cc_creditos_aplicados WHERE esperado_id=? LIMIT 1");$s->execute([$esperadoId]);if($s->fetchColumn())throw new RuntimeException('Nao e possivel cancelar um credito ja aplicado.');
         $pdo->prepare("DELETE FROM financeiro_cc_creditos_esperados WHERE id=? AND empresa_id=?")->execute([$esperadoId,$empresa]);
         $pdo->commit();
@@ -124,12 +138,22 @@ function cccAplicarCreditoPosterior(PDO $pdo,int $empresa,int $faturaId,int $esp
     try {
         $s=$pdo->prepare("SELECT e.*,d.fatura_id AS fatura_origem,d.cpcontador,d.descricao,d.valor AS valor_debito,fo.competencia AS competencia_origem,fo.status AS status_origem,fc.id AS fatura_credito,fc.competencia AS competencia_credito,fc.status AS status_credito,c.natureza,c.status AS item_status,c.valor AS valor_credito,c.data_compra FROM financeiro_cc_creditos_esperados e JOIN financeiro_cc_itens d ON d.id=e.debito_id AND d.empresa_id=e.empresa_id JOIN financeiro_cc_faturas fo ON fo.id=d.fatura_id AND fo.cartao_id=e.cartao_id JOIN financeiro_cc_faturas fc ON fc.id=? AND fc.empresa_id=e.empresa_id AND fc.cartao_id=e.cartao_id JOIN financeiro_cc_itens c ON c.id=? AND c.fatura_id=fc.id AND c.empresa_id=e.empresa_id WHERE e.id=? AND e.empresa_id=? FOR UPDATE");
         $s->execute([$faturaId,$creditoId,$esperadoId,$empresa]);$x=$s->fetch(PDO::FETCH_ASSOC);
-        if(!$x || $x['status_origem']!=='ENCERRADA' || $x['status_credito']!=='IMPORTADA' || $x['competencia_credito']<=$x['competencia_origem'] || $x['natureza']!=='C' || $x['item_status']==='ESTORNADO' || !$x['cpcontador'])throw new RuntimeException('Credito e compra devem ser do mesmo cartao, em faturas diferentes, com a compra ja baixada.');
+        $origemValida=$x && $x['status_origem']==='ENCERRADA';
+        if(!$x || !$origemValida || $x['status_credito']!=='IMPORTADA' || $x['competencia_credito']<=$x['competencia_origem'] || $x['natureza']!=='C' || $x['item_status']==='ESTORNADO' || !$x['cpcontador'])throw new RuntimeException('Credito e compra devem ser do mesmo cartao, em faturas diferentes e na aplicacao correta.');
         $s=$pdo->prepare("SELECT 1 FROM financeiro_cc_creditos_aplicados WHERE credito_id=?");$s->execute([$creditoId]);if($s->fetchColumn())throw new RuntimeException('Este credito ja foi aplicado.');
         $s=$pdo->prepare("SELECT 1 FROM financeiro_cc_creditos_avulsos WHERE credito_id=?");$s->execute([$creditoId]);if($s->fetchColumn())throw new RuntimeException('Este credito ja foi classificado como avulso.');
         $s=$pdo->prepare("SELECT COALESCE(SUM(valor),0) FROM financeiro_cc_creditos_aplicados WHERE esperado_id=?");$s->execute([$esperadoId]);$aplicado=(int)round((float)$s->fetchColumn()*100);
         $valor=(int)round((float)$x['valor_credito']*100);$restante=(int)round((float)$x['valor']*100)-$aplicado;
         if($valor<=0 || $restante<$valor)throw new RuntimeException('O credito ultrapassa o saldo esperado. Confira a compra e os creditos ja aplicados.');
+        if($x['aplicacao']==='ATUAL'){
+            if(!$x['mov_credito_39'] || !$x['fechado_em'] || $valor!==$restante)throw new RuntimeException('O credito atual deve corresponder integralmente ao valor deduzido no fechamento original.');
+            $s=$pdo->prepare("SELECT 1 FROM armazem_bnc001 WHERE EMPRESA=? AND MOVCONTADOR=? AND CBCONTADOR=39 AND TIPOMOV='C' AND ABS(VALORMOV-?)<0.01 AND COALESCE(deletado,'N')<>'S'");
+            $s->execute([$empresa,(int)$x['mov_credito_39'],$valor/100]);
+            if(!$s->fetchColumn())throw new RuntimeException('O credito da fatura original nao esta integro na conta 39.');
+            $pdo->prepare("INSERT INTO financeiro_cc_creditos_aplicados (esperado_id,credito_id,empresa_id,valor,tipoes_credito,tipoes_reversao,mov_credito_39,mov_reversao,usuario_id) VALUES (?,?,?,?,?,?,?,?,?)")->execute([$esperadoId,$creditoId,$empresa,$valor/100,(int)$x['tipoes_credito'],null,(int)$x['mov_credito_39'],null,$usuario?:null]);
+            $pdo->commit();
+            return;
+        }
         cccValidarTipoCredito($pdo,$empresa,$tipoesCredito);
         $s=$pdo->prepare("SELECT t.CONTRAP_CBCONTADOR,t.CONTRAP_TIPOES,t.CONTRAP_TIPOMOV,xt.TIPOMOV,cp.FCONTADOR FROM armazem_cp001 cp JOIN armazem_bnc005 t ON t.EMPRESA=cp.EMPRESA AND t.ESCONTADOR=cp.TIPOES LEFT JOIN armazem_bnc005 xt ON xt.EMPRESA=t.EMPRESA AND xt.ESCONTADOR=t.CONTRAP_TIPOES WHERE cp.EMPRESA=? AND cp.CPCONTADOR=?");$s->execute([$empresa,(int)$x['cpcontador']]);$cp=$s->fetch(PDO::FETCH_ASSOC);
         if(!$cp)throw new RuntimeException('CP original nao encontrado.');
