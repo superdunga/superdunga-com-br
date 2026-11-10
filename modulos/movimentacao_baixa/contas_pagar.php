@@ -940,7 +940,8 @@ function cpbExcluirBaixaTitulo(PDO $pdo, $empresaId, $usuarioId, $movcontador)
     }
 }
 
-$mensagem = '';
+$mensagem = (string)($_SESSION['contas_pagar_flash'] ?? '');
+unset($_SESSION['contas_pagar_flash']);
 $erro = '';
 $titulosBaixa = [];
 $idsBaixaSelecionados = [];
@@ -1010,7 +1011,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $mensagem = $cpcontadorEdicao
                 ? 'Titulo CP #' . (int)$resultado . ' atualizado com sucesso.'
                 : count($resultado) . ' CP(s) gravado(s): #' . implode(', #', array_map('intval', $resultado)) . '.' . ($gerarCr?' CR(s) vinculados: #'.implode(', #',$crCriados).'.':'');
-            $_GET['editar'] = null;
+            $_SESSION['contas_pagar_flash'] = $mensagem;
+            header('Location: contas_pagar.php');
+            exit;
         } catch (Throwable $e) {
             $erro = $e->getMessage();
         }
