@@ -38,6 +38,7 @@ if($a==='marcar_estorno'){
 }
 if($a==='gerar'){
     $ids=array_values(array_unique(array_filter(array_map('intval',(array)($_POST['itens']??[])),static function($id){return $id>0;})));
+    $observacoes=is_array($_POST['observacoes']??null)?$_POST['observacoes']:[];
     $tipoes=(int)($_POST['tipoes']??0);
     if(!$ids)throw new RuntimeException('Selecione os itens sem match.');
     if($tipoes<=0)throw new RuntimeException('Selecione o TIPOES dos CPs.');
@@ -64,6 +65,9 @@ if($a==='gerar'){
     }
     $atualizar=$pdo_master->prepare("UPDATE financeiro_cc_itens SET cpcontador=?,status='GERADO',usuario_id=?,conciliado_em=NOW() WHERE id=? AND cpcontador IS NULL");
     foreach($selecionados as $i){
+        $observacao=mb_substr(trim((string)($observacoes[$i['id']]??'')),0,255);
+        $pdo_master->prepare("UPDATE financeiro_cc_itens SET observacao=? WHERE id=? AND fatura_id=? AND empresa_id=?")->execute([$observacao!==''?$observacao:null,(int)$i['id'],$faturaId,$empresa]);
+        $i['observacao']=$observacao;
         $cp=cccGerarCp($pdo_master,$i,$f,$usuario,$tipoes);
         $atualizar->execute([$cp,$usuario?:null,(int)$i['id']]);
         if($atualizar->rowCount()!==1)throw new RuntimeException('Nao foi possivel vincular o item #'.$i['id'].'. Nenhum CP foi gerado.');

@@ -112,7 +112,7 @@ function transacoesPagina(itens, vencimento) {
         const parcelaItem = linha.find((item) => /^Parcela\s+\d+\s+de\s+\d+$/i.test(item.str));
         const ehCompra = data.y < yCartao;
         const ehPagamento = /pagamento da fatura/i.test(descricao);
-        const ehCredito = /cr[eé]dito concedido/i.test(descricao);
+        const ehCredito = /cr[eé]dito concedido|reembolso/i.test(descricao);
         const ehEncargo = /juros|iof|multa/i.test(descricao);
         let natureza = 'D';
         let categoria = ehCompra ? 'COMPRAS' : 'ENCARGOS';
