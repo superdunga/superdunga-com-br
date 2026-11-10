@@ -652,7 +652,7 @@ function cieloSincronizarRecebimentos(
         $resultado['arquivos_recebidos'] = count($links);
 
         $verificarArquivo = $pdo->prepare("
-            SELECT id FROM fechamento_cielo_arquivos
+            SELECT id, registros_ignorados FROM fechamento_cielo_arquivos
             WHERE empresa_id = ? AND integracao = ? AND sha256 = ?
             LIMIT 1
         ");
@@ -685,12 +685,21 @@ function cieloSincronizarRecebimentos(
                 registros_importados, registros_atualizados, registros_ignorados
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ");
+        $atualizarArquivo = $pdo->prepare("
+            UPDATE fechamento_cielo_arquivos
+            SET tipo_arquivo = ?, data_processamento = ?, periodo_inicial = ?,
+                periodo_final = ?, sequencia = ?, quantidade_bytes = ?,
+                registros_importados = ?, registros_atualizados = ?,
+                registros_ignorados = ?, processado_em = NOW()
+            WHERE id = ? AND empresa_id = ? AND integracao = ?
+        ");
 
         foreach ($links as $link) {
             $conteudo = cieloHttpGet($link);
             $hash = hash('sha256', $conteudo);
             $verificarArquivo->execute([$empresaId, $config['chave'], $hash]);
-            if ($verificarArquivo->fetchColumn()) {
+            $arquivoExistente = $verificarArquivo->fetch(PDO::FETCH_ASSOC);
+            if ($arquivoExistente && (int)$arquivoExistente['registros_ignorados'] === 0) {
                 $resultado['arquivos_duplicados']++;
                 continue;
             }
@@ -738,13 +747,23 @@ function cieloSincronizarRecebimentos(
                     }
                 }
 
-                $inserirArquivo->execute([
-                    $empresaId, $config['chave'], $cabecalho['tipo_arquivo'],
-                    $cabecalho['data_processamento'], $cabecalho['periodo_inicial'],
-                    $cabecalho['periodo_final'], $cabecalho['sequencia'], $hash,
-                    strlen($conteudo), $importadosArquivo, $atualizadosArquivo,
-                    (int)$arquivo['ignorados'],
-                ]);
+                if ($arquivoExistente) {
+                    $atualizarArquivo->execute([
+                        $cabecalho['tipo_arquivo'], $cabecalho['data_processamento'],
+                        $cabecalho['periodo_inicial'], $cabecalho['periodo_final'],
+                        $cabecalho['sequencia'], strlen($conteudo), $importadosArquivo,
+                        $atualizadosArquivo, (int)$arquivo['ignorados'],
+                        (int)$arquivoExistente['id'], $empresaId, $config['chave'],
+                    ]);
+                } else {
+                    $inserirArquivo->execute([
+                        $empresaId, $config['chave'], $cabecalho['tipo_arquivo'],
+                        $cabecalho['data_processamento'], $cabecalho['periodo_inicial'],
+                        $cabecalho['periodo_final'], $cabecalho['sequencia'], $hash,
+                        strlen($conteudo), $importadosArquivo, $atualizadosArquivo,
+                        (int)$arquivo['ignorados'],
+                    ]);
+                }
                 $pdo->commit();
             } catch (Throwable $e) {
                 if ($pdo->inTransaction()) {
