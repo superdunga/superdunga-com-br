@@ -61,6 +61,7 @@ $whereData = $todos ? "" : "AND c.DTLANC BETWEEN ? AND ?";
 $stmt = $pdo_master->prepare("
     SELECT 
         c.CRCONTADOR,
+        c.TIPODOCORIGEM,
         c.DTLANC,
         c.VLRPARCELA,
         cli.NOME
@@ -134,6 +135,7 @@ require '../../layout/header.php';
                     <tr>
                         <th>✔</th>
                         <th>CRCONTADOR</th>
+                        <th>TIPODOCORIGEM</th>
                         <th>Data</th>
                         <th>Valor</th>
                         <th>Cliente</th>
@@ -144,7 +146,7 @@ require '../../layout/header.php';
 
                     <?php if (empty($registros)): ?>
                         <tr>
-                            <td colspan="5" class="text-muted">
+                            <td colspan="6" class="text-muted">
                                 Nenhum registro pendente
                             </td>
                         </tr>
@@ -157,6 +159,8 @@ require '../../layout/header.php';
                                 </td>
 
                                 <td><?= $r['CRCONTADOR'] ?></td>
+
+                                <td><?= htmlspecialchars($r['TIPODOCORIGEM'] ?? '-') ?></td>
 
                                 <td><?= date('d/m/Y H:i', strtotime($r['DTLANC'])) ?></td>
 
