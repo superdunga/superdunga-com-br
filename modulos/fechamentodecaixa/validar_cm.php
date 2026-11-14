@@ -135,9 +135,9 @@ require '../../layout/header.php';
                 <thead class="table-dark">
                     <tr>
                         <th>✔</th>
-                        <th>CRCONTADOR</th>
-                        <th>VENDACONTADOR</th>
-                        <th>TIPODOCORIGEM</th>
+                        <th>CR</th>
+                        <th>VENDA</th>
+                        <th>DOC</th>
                         <th>Data</th>
                         <th>Valor</th>
                         <th>Cliente</th>
