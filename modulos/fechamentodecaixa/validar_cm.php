@@ -8,6 +8,11 @@ require '../../config/conexao.php';
 $data = $_GET['data'] ?? date('Y-m-d');
 $todos = ($_GET['todos'] ?? '') === '1';
 $empresa_id = (int)$_SESSION['empresa_id'];
+$usuarioMaster = strtoupper((string)($_SESSION['nivel'] ?? '')) === 'MASTER';
+$filtroValidacao = $usuarioMaster && in_array(($_GET['validacao'] ?? ''), ['validados', 'todos'], true)
+    ? (string)$_GET['validacao']
+    : 'nao_validados';
+$filtroCliente = $usuarioMaster ? trim((string)($_GET['cliente'] ?? '')) : '';
 
 $inicio = date('Y-m-d 07:00:00', strtotime($data));
 $fim    = date('Y-m-d 03:00:00', strtotime($data . ' +1 day'));
@@ -49,7 +54,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
     }
 
-    $redirect = $todos ? "validar_cm.php?todos=1" : "validar_cm.php?data=" . urlencode($data);
+    $parametrosRedirect = $todos ? ['todos' => 1] : ['data' => $data];
+    if ($usuarioMaster) {
+        $parametrosRedirect['validacao'] = $filtroValidacao;
+        if ($filtroCliente !== '') {
+            $parametrosRedirect['cliente'] = $filtroCliente;
+        }
+    }
+    $redirect = 'validar_cm.php?' . http_build_query($parametrosRedirect);
     header("Location: " . $redirect);
     exit;
 }
@@ -58,6 +70,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
    BUSCAR REGISTROS (CM = 9)
 ========================= */
 $whereData = $todos ? "" : "AND c.DTLANC BETWEEN ? AND ?";
+$whereValidacao = $filtroValidacao === 'validados'
+    ? "AND c.validado = 'S'"
+    : ($filtroValidacao === 'todos' ? "" : "AND (c.validado IS NULL OR c.validado = 'N')");
+$whereCliente = $filtroCliente !== ''
+    ? "AND (CAST(c.CLICONTADOR AS CHAR) LIKE ? OR cli.NOME LIKE ? OR cli.APELIDO LIKE ?)"
+    : "";
 $stmt = $pdo_master->prepare("
     SELECT 
         c.CRCONTADOR,
@@ -65,6 +83,7 @@ $stmt = $pdo_master->prepare("
         c.TIPODOCORIGEM,
         c.DTLANC,
         c.VLRPARCELA,
+        c.CLICONTADOR,
         cli.NOME
     FROM armazem_cr001 c
     LEFT JOIN armazem_cr002 cli
@@ -73,12 +92,18 @@ $stmt = $pdo_master->prepare("
     WHERE c.CMCONTADOR = 9
       AND c.EMPRESA = ?
       $whereData
-      AND (c.validado IS NULL OR c.validado = 'N')
+      $whereValidacao
+      $whereCliente
       AND COALESCE(c.excluido_firebird, 'N') = 'N'
     ORDER BY c.DTLANC DESC, c.VLRPARCELA ASC
 ");
 
-$stmt->execute($todos ? [$empresa_id] : [$empresa_id, $inicio, $fim]);
+$parametrosConsulta = $todos ? [$empresa_id] : [$empresa_id, $inicio, $fim];
+if ($filtroCliente !== '') {
+    $termoCliente = '%' . $filtroCliente . '%';
+    array_push($parametrosConsulta, $termoCliente, $termoCliente, $termoCliente);
+}
+$stmt->execute($parametrosConsulta);
 $registros = $stmt->fetchAll(PDO::FETCH_ASSOC);
 require '../../layout/header.php';
 ?>
@@ -89,6 +114,13 @@ require '../../layout/header.php';
         height: 22px;
         transform: scale(1.3);
         cursor: pointer;
+    }
+
+    .cliente-destaque > * {
+        --bs-table-bg: #fff3cd;
+        --bs-table-accent-bg: #fff3cd;
+        background-color: #fff3cd !important;
+        box-shadow: inset 0 0 0 9999px #fff3cd !important;
     }
 </style>
 
@@ -109,20 +141,34 @@ require '../../layout/header.php';
                 <input type="date" name="data" value="<?= htmlspecialchars($data) ?>" class="form-control">
             </div>
 
+            <?php if ($usuarioMaster): ?>
+                <div class="col-md-3">
+                    <select name="validacao" class="form-select">
+                        <option value="nao_validados" <?= $filtroValidacao === 'nao_validados' ? 'selected' : '' ?>>Nao validados</option>
+                        <option value="validados" <?= $filtroValidacao === 'validados' ? 'selected' : '' ?>>Validados</option>
+                        <option value="todos" <?= $filtroValidacao === 'todos' ? 'selected' : '' ?>>Todos</option>
+                    </select>
+                </div>
+
+                <div class="col-md-3">
+                    <input type="text" name="cliente" value="<?= htmlspecialchars($filtroCliente) ?>" class="form-control" placeholder="Codigo ou nome do cliente">
+                </div>
+            <?php endif; ?>
+
             <div class="col-md-2">
                 <button class="btn btn-primary w-100">Filtrar</button>
             </div>
 
             <div class="col-md-3">
-                <a href="validar_cm.php?todos=1" class="btn btn-outline-primary w-100">
-                    Todos nao validados
+                <a href="validar_cm.php?<?= htmlspecialchars(http_build_query(array_filter(['todos' => 1, 'validacao' => $usuarioMaster ? $filtroValidacao : null, 'cliente' => $usuarioMaster && $filtroCliente !== '' ? $filtroCliente : null], static function ($valor) { return $valor !== null; }))) ?>" class="btn btn-outline-primary w-100">
+                    <?= $usuarioMaster ? 'Todos os periodos' : 'Todos nao validados' ?>
                 </a>
             </div>
 
             <?php if ($todos): ?>
                 <div class="col-md-4">
                     <div class="alert alert-warning py-2 mb-0">
-                        Exibindo todos os clientes sem validacao.
+                        Exibindo todos os periodos com o filtro selecionado.
                     </div>
                 </div>
             <?php endif; ?>
@@ -155,7 +201,7 @@ require '../../layout/header.php';
                     <?php else: ?>
 
                         <?php foreach ($registros as $r): ?>
-                            <tr>
+                            <tr class="<?= (int)$r['CLICONTADOR'] === 1 ? 'cliente-destaque' : '' ?>">
                                 <td class="text-center">
                                     <input type="checkbox" class="checkbox-lg" name="validar[]" value="<?= $r['CRCONTADOR'] ?>">
                                 </td>
