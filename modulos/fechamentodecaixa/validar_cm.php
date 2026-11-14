@@ -116,6 +116,7 @@ $stmt = $pdo_master->prepare("
         c.DTLANC,
         c.VLRPARCELA,
         c.CLICONTADOR,
+        c.STATUS,
         c.validado,
         cli.NOME
     FROM armazem_cr001 c
@@ -243,16 +244,27 @@ require '../../layout/header.php';
                     <?php else: ?>
 
                         <?php foreach ($registros as $r): ?>
+                            <?php $crBaixado = ($r['STATUS'] ?? '') === 'QT'; ?>
                             <tr class="<?= (int)$r['CLICONTADOR'] === 1 ? 'cliente-destaque' : '' ?>">
                                 <td class="text-center">
-                                    <input type="hidden" name="estado[<?= $r['CRCONTADOR'] ?>]" value="N">
-                                    <input
-                                        type="checkbox"
-                                        class="checkbox-lg"
-                                        name="estado[<?= $r['CRCONTADOR'] ?>]"
-                                        value="S"
-                                        <?= ($r['validado'] ?? 'N') === 'S' ? 'checked' : '' ?>
-                                    >
+                                    <?php if ($crBaixado): ?>
+                                        <input
+                                            type="checkbox"
+                                            class="checkbox-lg"
+                                            <?= ($r['validado'] ?? 'N') === 'S' ? 'checked' : '' ?>
+                                            disabled
+                                            title="CR baixado"
+                                        >
+                                    <?php else: ?>
+                                        <input type="hidden" name="estado[<?= $r['CRCONTADOR'] ?>]" value="N">
+                                        <input
+                                            type="checkbox"
+                                            class="checkbox-lg"
+                                            name="estado[<?= $r['CRCONTADOR'] ?>]"
+                                            value="S"
+                                            <?= ($r['validado'] ?? 'N') === 'S' ? 'checked' : '' ?>
+                                        >
+                                    <?php endif; ?>
                                 </td>
 
                                 <td><?= $r['CRCONTADOR'] ?></td>
