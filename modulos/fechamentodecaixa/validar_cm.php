@@ -22,35 +22,64 @@ $fim    = date('Y-m-d 03:00:00', strtotime($data . ' +1 day'));
 ========================= */
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
-    $ids = $_POST['validar'] ?? [];
+    $estados = is_array($_POST['estado'] ?? null) ? $_POST['estado'] : [];
+    $idsExibidos = [];
+    $ids = [];
+    foreach ($estados as $id => $estado) {
+        $id = (int)$id;
+        if ($id <= 0) {
+            continue;
+        }
+        $idsExibidos[] = $id;
+        if ($estado === 'S') {
+            $ids[] = $id;
+        }
+    }
+    $idsExibidos = array_values(array_unique($idsExibidos));
+    $ids = array_values(array_unique($ids));
+    $idsDesmarcados = array_values(array_diff($idsExibidos, $ids));
+    $quantidadeValidada = 0;
+    $quantidadeDesmarcada = 0;
+    $usuario = (int)($_SESSION['usuario_id'] ?? 0);
 
-    if (!empty($ids)) {
+    if (!empty($idsExibidos)) {
+        $pdo_master->beginTransaction();
+        try {
+            foreach (array_chunk($ids, 100) as $lote) {
+                $in = implode(',', array_fill(0, count($lote), '?'));
+                $stmt = $pdo_master->prepare("
+                    UPDATE armazem_cr001
+                    SET validado = 'S',
+                        data_validacao = NOW(),
+                        usuario_validacao = ?
+                    WHERE CRCONTADOR IN ($in)
+                      AND EMPRESA = ?
+                      AND COALESCE(validado, 'N') <> 'S'
+                      AND COALESCE(excluido_firebird, 'N') = 'N'
+                ");
+                $stmt->execute(array_merge([$usuario], $lote, [$empresa_id]));
+                $quantidadeValidada += $stmt->rowCount();
+            }
 
-        // 🔥 GARANTE USUÁRIO
-        $usuario = $_SESSION['usuario_id'] ?? 0;
-
-        // 🔥 PROCESSA EM LOTES (EVITA QUEBRAR)
-        $lotes = array_chunk($ids, 100);
-
-        foreach ($lotes as $lote) {
-
-            $in = implode(',', array_fill(0, count($lote), '?'));
-
-            $sql = "
-                UPDATE armazem_cr001
-                SET validado = 'S',
-                    data_validacao = NOW(),
-                    usuario_validacao = ?
-                WHERE CRCONTADOR IN ($in)
-                  AND EMPRESA = ?
-                  AND COALESCE(excluido_firebird, 'N') = 'N'
-            ";
-
-            $stmt = $pdo_master->prepare($sql);
-
-            $params = array_merge([$usuario], $lote, [$empresa_id]);
-
-            $stmt->execute($params);
+            foreach (array_chunk($idsDesmarcados, 100) as $lote) {
+                $in = implode(',', array_fill(0, count($lote), '?'));
+                $stmt = $pdo_master->prepare("
+                    UPDATE armazem_cr001
+                    SET validado = 'N',
+                        data_validacao = NULL,
+                        usuario_validacao = NULL
+                    WHERE CRCONTADOR IN ($in)
+                      AND EMPRESA = ?
+                      AND validado = 'S'
+                      AND COALESCE(excluido_firebird, 'N') = 'N'
+                ");
+                $stmt->execute(array_merge($lote, [$empresa_id]));
+                $quantidadeDesmarcada += $stmt->rowCount();
+            }
+            $pdo_master->commit();
+        } catch (Throwable $e) {
+            $pdo_master->rollBack();
+            throw $e;
         }
     }
 
@@ -61,6 +90,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $parametrosRedirect['cliente'] = $filtroCliente;
         }
     }
+    $parametrosRedirect['resultado'] = empty($idsExibidos) ? 'sem_registros' : 'salvo';
+    $parametrosRedirect['validados'] = $quantidadeValidada;
+    $parametrosRedirect['desmarcados'] = $quantidadeDesmarcada;
     $redirect = 'validar_cm.php?' . http_build_query($parametrosRedirect);
     header("Location: " . $redirect);
     exit;
@@ -84,6 +116,7 @@ $stmt = $pdo_master->prepare("
         c.DTLANC,
         c.VLRPARCELA,
         c.CLICONTADOR,
+        c.validado,
         cli.NOME
     FROM armazem_cr001 c
     LEFT JOIN armazem_cr002 cli
@@ -135,6 +168,15 @@ require '../../layout/header.php';
     </div>
 
     <div class="card-body">
+
+        <?php if (($_GET['resultado'] ?? '') === 'sem_registros'): ?>
+            <div class="alert alert-warning">Nenhum registro foi exibido para salvar.</div>
+        <?php elseif (($_GET['resultado'] ?? '') === 'salvo'): ?>
+            <div class="alert alert-success">
+                Validacoes salvas: <?= (int)($_GET['validados'] ?? 0) ?> marcado(s) e
+                <?= (int)($_GET['desmarcados'] ?? 0) ?> desmarcado(s).
+            </div>
+        <?php endif; ?>
 
         <form method="GET" class="row mb-3">
             <div class="col-md-3">
@@ -203,7 +245,14 @@ require '../../layout/header.php';
                         <?php foreach ($registros as $r): ?>
                             <tr class="<?= (int)$r['CLICONTADOR'] === 1 ? 'cliente-destaque' : '' ?>">
                                 <td class="text-center">
-                                    <input type="checkbox" class="checkbox-lg" name="validar[]" value="<?= $r['CRCONTADOR'] ?>">
+                                    <input type="hidden" name="estado[<?= $r['CRCONTADOR'] ?>]" value="N">
+                                    <input
+                                        type="checkbox"
+                                        class="checkbox-lg"
+                                        name="estado[<?= $r['CRCONTADOR'] ?>]"
+                                        value="S"
+                                        <?= ($r['validado'] ?? 'N') === 'S' ? 'checked' : '' ?>
+                                    >
                                 </td>
 
                                 <td><?= $r['CRCONTADOR'] ?></td>
@@ -227,8 +276,8 @@ require '../../layout/header.php';
             </table>
 
             <?php if (!empty($registros)): ?>
-                <button class="btn btn-success">
-                    ✔ Validar selecionados
+                <button type="submit" class="btn btn-success">
+                    ✔ Salvar validacoes
                 </button>
             <?php endif; ?>
 
