@@ -183,6 +183,24 @@ function whatsappEnsureTables(PDO $pdo): void
     ");
 
     $pdo->exec("
+        CREATE TABLE IF NOT EXISTS whatsapp_agendamento_execucoes (
+            id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+            agendamento_id INT UNSIGNED NOT NULL,
+            rotina_id INT UNSIGNED NOT NULL,
+            empresa_id INT NOT NULL,
+            previsto_em DATETIME NOT NULL,
+            status VARCHAR(20) NOT NULL DEFAULT 'EXECUTANDO',
+            tentativas TINYINT UNSIGNED NOT NULL DEFAULT 1,
+            iniciado_em DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            finalizado_em DATETIME NULL,
+            detalhes TEXT NULL,
+            UNIQUE KEY uq_whatsapp_agendamento_execucao (agendamento_id, previsto_em),
+            INDEX idx_wae_status (status, iniciado_em),
+            INDEX idx_wae_empresa (empresa_id, previsto_em)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    ");
+
+    $pdo->exec("
         CREATE TABLE IF NOT EXISTS whatsapp_gerencial_webhook_eventos (
             id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
             instancia VARCHAR(120) NULL,
@@ -1543,36 +1561,86 @@ function whatsappExecutarAgendamentos(PDO $pdo): array
     ");
     $rotinas = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
+    // Uma ocorrencia interrompida e retomada somente depois dos horarios novos.
+    // Assim, mesmo que ela volte a exceder o limite do servidor, nao prende a fila atual.
+    $stmtInterrompida = $pdo->query("
+        SELECT
+            a.id AS agendamento_id,
+            e.previsto_em AS agendamento_previsto_em,
+            r.*
+        FROM whatsapp_agendamento_execucoes e
+        INNER JOIN whatsapp_rotina_agendamentos a ON a.id = e.agendamento_id
+        INNER JOIN whatsapp_rotinas r ON r.id = a.rotina_id
+        WHERE e.status = 'ERRO'
+          AND e.tentativas < 3
+          AND e.detalhes = 'Execucao interrompida antes da finalizacao pelo servidor.'
+          AND r.ativo = 'S'
+          AND a.ativo = 'S'
+        ORDER BY e.previsto_em ASC, e.id ASC
+        LIMIT 1
+    ");
+    $interrompida = $stmtInterrompida->fetch(PDO::FETCH_ASSOC);
+    if ($interrompida) {
+        $rotinas[] = $interrompida;
+    }
+
     $resultado = [];
     foreach ($rotinas as $rotina) {
+        $agendamentoId = (int)$rotina['agendamento_id'];
+        $previstoEm = (string)$rotina['agendamento_previsto_em'];
         if (whatsappAgendamentoAtrasado((string)$rotina['agendamento_previsto_em'])) {
             $pdo->prepare("INSERT IGNORE INTO whatsapp_agendamentos_ignorados (agendamento_id,empresa_id,previsto_em,motivo) VALUES (?,?,?,'Agendamento de dia anterior')")
-                ->execute([(int)$rotina['agendamento_id'],(int)$rotina['empresa_id'],$rotina['agendamento_previsto_em']]);
-            whatsappAtualizarProximaAgendamento($pdo, (int)$rotina['agendamento_id']);
-            $resultado[] = ['rotina'=>$rotina['codigo'],'agendamento_id'=>(int)$rotina['agendamento_id'],'status'=>'IGNORADO_ATRASO'];
+                ->execute([$agendamentoId,(int)$rotina['empresa_id'],$previstoEm]);
+            whatsappAtualizarProximaAgendamento($pdo, $agendamentoId);
+            whatsappFinalizarExecucaoAgendamento($pdo, $agendamentoId, $previstoEm, 'IGNORADO', 'Agendamento de dia anterior');
+            $resultado[] = ['rotina'=>$rotina['codigo'],'agendamento_id'=>$agendamentoId,'status'=>'IGNORADO_ATRASO'];
             continue;
         }
+
+        $tentativa = whatsappRegistrarInicioAgendamento($pdo, $rotina);
+        if ($tentativa > 3) {
+            whatsappFinalizarExecucaoAgendamento(
+                $pdo,
+                $agendamentoId,
+                $previstoEm,
+                'ERRO',
+                'Limite de 3 tentativas atingido. Agendamento avancado para proteger a fila.'
+            );
+            whatsappAtualizarProximaAgendamento($pdo, $agendamentoId);
+            $resultado[] = [
+                'rotina' => $rotina['codigo'],
+                'agendamento_id' => $agendamentoId,
+                'status' => 'ERRO_LIMITE_TENTATIVAS',
+            ];
+            continue;
+        }
+
+        // Avanca antes do trabalho pesado. Se o PHP for encerrado pelo servidor,
+        // esta ocorrencia nao permanece bloqueando todos os horarios seguintes.
+        whatsappAtualizarProximaAgendamento($pdo, $agendamentoId);
+
         try {
             list($mensagem, $mensagemId) = whatsappMensagemRotina($pdo, $rotina);
             $envio = whatsappEnviarRotina($pdo, $rotina, $mensagem, $mensagemId, null);
             if (!empty($envio['ignorado'])) {
                 $motivo = substr((string)($envio['motivo'] ?? 'Execucao sem envio'), 0, 120);
                 $pdo->prepare("INSERT IGNORE INTO whatsapp_agendamentos_ignorados (agendamento_id,empresa_id,previsto_em,motivo) VALUES (?,?,?,?)")
-                    ->execute([(int)$rotina['agendamento_id'], (int)$rotina['empresa_id'], $rotina['agendamento_previsto_em'], $motivo]);
+                    ->execute([$agendamentoId, (int)$rotina['empresa_id'], $previstoEm, $motivo]);
                 $resultado[] = [
                     'rotina' => $rotina['codigo'],
-                    'agendamento_id' => (int)$rotina['agendamento_id'],
+                    'agendamento_id' => $agendamentoId,
                     'status' => 'IGNORADO',
                     'motivo' => $motivo,
                 ];
                 $pdo->prepare("UPDATE whatsapp_rotina_agendamentos SET ultima_execucao = NOW() WHERE id = ?")
-                    ->execute([(int)$rotina['agendamento_id']]);
-                whatsappAtualizarProximaAgendamento($pdo, (int)$rotina['agendamento_id']);
+                    ->execute([$agendamentoId]);
+                whatsappFinalizarExecucaoAgendamento($pdo, $agendamentoId, $previstoEm, 'IGNORADO', $motivo);
                 continue;
             }
-            $resultado[] = [
+            $falhou = (int)$envio['falha'] > 0 || (int)($envio['pendente'] ?? 0) > 0;
+            $resultadoRotina = [
                 'rotina' => $rotina['codigo'],
-                'agendamento_id' => (int)$rotina['agendamento_id'],
+                'agendamento_id' => $agendamentoId,
                 'status' => $envio['falha'] > 0
                     ? ($envio['ok'] > 0 ? 'PARCIAL' : 'ERRO')
                     : ((int)($envio['pendente'] ?? 0) > 0 ? 'PENDENTE' : 'OK'),
@@ -1580,15 +1648,26 @@ function whatsappExecutarAgendamentos(PDO $pdo): array
                 'falha' => $envio['falha'],
                 'pendente' => (int)($envio['pendente'] ?? 0),
             ];
-            if ($envio['falha'] === 0 && (int)($envio['pendente'] ?? 0) === 0) {
+            $resultado[] = $resultadoRotina;
+            if (!$falhou) {
                 $stmt = $pdo->prepare("UPDATE whatsapp_rotina_agendamentos SET ultima_execucao = NOW() WHERE id = ?");
-                $stmt->execute([(int)$rotina['agendamento_id']]);
-                whatsappAtualizarProximaAgendamento($pdo, (int)$rotina['agendamento_id']);
+                $stmt->execute([$agendamentoId]);
+                whatsappFinalizarExecucaoAgendamento($pdo, $agendamentoId, $previstoEm, 'OK', json_encode($resultadoRotina, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
+            } else {
+                $detalhes = json_encode($resultadoRotina, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+                whatsappFinalizarExecucaoAgendamento($pdo, $agendamentoId, $previstoEm, 'ERRO', $detalhes);
+                if ($tentativa < 3) {
+                    whatsappRestaurarAgendamentoParaTentativa($pdo, $agendamentoId, $previstoEm);
+                }
             }
-        } catch (Exception $e) {
+        } catch (Throwable $e) {
+            whatsappFinalizarExecucaoAgendamento($pdo, $agendamentoId, $previstoEm, 'ERRO', $e->getMessage());
+            if ($tentativa < 3) {
+                whatsappRestaurarAgendamentoParaTentativa($pdo, $agendamentoId, $previstoEm);
+            }
             $resultado[] = [
                 'rotina' => $rotina['codigo'],
-                'agendamento_id' => (int)$rotina['agendamento_id'],
+                'agendamento_id' => $agendamentoId,
                 'status' => 'ERRO',
                 'erro' => $e->getMessage(),
             ];
@@ -1596,6 +1675,65 @@ function whatsappExecutarAgendamentos(PDO $pdo): array
     }
 
     return $resultado;
+}
+
+function whatsappRegistrarInicioAgendamento(PDO $pdo, array $rotina): int
+{
+    $stmt = $pdo->prepare("
+        INSERT INTO whatsapp_agendamento_execucoes
+            (agendamento_id, rotina_id, empresa_id, previsto_em, status, tentativas, iniciado_em, finalizado_em, detalhes)
+        VALUES (?, ?, ?, ?, 'EXECUTANDO', 1, NOW(), NULL, NULL)
+        ON DUPLICATE KEY UPDATE
+            status = 'EXECUTANDO',
+            tentativas = LEAST(tentativas + 1, 255),
+            iniciado_em = NOW(),
+            finalizado_em = NULL,
+            detalhes = NULL
+    ");
+    $stmt->execute([
+        (int)$rotina['agendamento_id'],
+        (int)$rotina['id'],
+        (int)$rotina['empresa_id'],
+        (string)$rotina['agendamento_previsto_em'],
+    ]);
+
+    $consulta = $pdo->prepare("SELECT tentativas FROM whatsapp_agendamento_execucoes WHERE agendamento_id = ? AND previsto_em = ?");
+    $consulta->execute([(int)$rotina['agendamento_id'], (string)$rotina['agendamento_previsto_em']]);
+    return (int)$consulta->fetchColumn();
+}
+
+function whatsappFinalizarExecucaoAgendamento(PDO $pdo, int $agendamentoId, string $previstoEm, string $status, ?string $detalhes = null): void
+{
+    $stmt = $pdo->prepare("
+        UPDATE whatsapp_agendamento_execucoes
+        SET status = ?, finalizado_em = NOW(), detalhes = ?
+        WHERE agendamento_id = ? AND previsto_em = ?
+    ");
+    $stmt->execute([$status, $detalhes, $agendamentoId, $previstoEm]);
+}
+
+function whatsappRestaurarAgendamentoParaTentativa(PDO $pdo, int $agendamentoId, string $previstoEm): void
+{
+    $stmt = $pdo->prepare("
+        UPDATE whatsapp_rotina_agendamentos
+        SET proxima_execucao = ?
+        WHERE id = ? AND ativo = 'S'
+    ");
+    $stmt->execute([$previstoEm, $agendamentoId]);
+}
+
+function whatsappMarcarExecucoesAgendamentoInterrompidas(PDO $pdo, int $minutos = 10): int
+{
+    $minutos = max(1, min($minutos, 1440));
+    $sql = "
+        UPDATE whatsapp_agendamento_execucoes
+        SET status = 'ERRO',
+            finalizado_em = NOW(),
+            detalhes = COALESCE(NULLIF(detalhes, ''), 'Execucao interrompida antes da finalizacao pelo servidor.')
+        WHERE status = 'EXECUTANDO'
+          AND iniciado_em < DATE_SUB(NOW(), INTERVAL {$minutos} MINUTE)
+    ";
+    return $pdo->exec($sql);
 }
 
 function whatsappAgendamentoAtrasado(string $previsto, ?DateTimeImmutable $agora = null): bool

@@ -42,6 +42,17 @@ try {
         exit;
     }
 
+    $pdo_master->exec("
+        UPDATE whatsapp_cron_execucoes
+        SET status = 'ERRO',
+            finalizado_em = NOW(),
+            duracao_ms = TIMESTAMPDIFF(MICROSECOND, iniciado_em, NOW()) DIV 1000,
+            detalhes = COALESCE(NULLIF(detalhes, ''), 'Execucao interrompida antes da finalizacao pelo servidor.')
+        WHERE status = 'EXECUTANDO'
+          AND iniciado_em < DATE_SUB(NOW(), INTERVAL 10 MINUTE)
+    ");
+    whatsappMarcarExecucoesAgendamentoInterrompidas($pdo_master, 10);
+
     $inicioCron = microtime(true);
     $pdo_master->prepare("INSERT INTO whatsapp_cron_execucoes (processo) VALUES ('WHATSAPP_AGENDAMENTOS')")->execute();
     $execucaoId = (int)$pdo_master->lastInsertId();
@@ -49,8 +60,11 @@ try {
     try {
         $pdo_master->prepare('UPDATE whatsapp_gerencial_config SET cron_ultimo_contato_em=NOW() WHERE agendamento_token=?')->execute([$tokenRecebido]);
 
+        $pdo_master->prepare("UPDATE whatsapp_cron_execucoes SET detalhes='Executando agendamentos gerenciais.' WHERE id=?")->execute([$execucaoId]);
         $resultado = whatsappExecutarAgendamentos($pdo_master);
+        $pdo_master->prepare("UPDATE whatsapp_cron_execucoes SET detalhes='Executando automacoes operacionais.' WHERE id=?")->execute([$execucaoId]);
         $resultadoOperacional = whatsappOperacionalExecutarAutomacao($pdo_master);
+        $pdo_master->prepare("UPDATE whatsapp_cron_execucoes SET detalhes='Consultando confirmacoes de entrega.' WHERE id=?")->execute([$execucaoId]);
         $confirmacoesOperacionais = whatsappOperacionalConsultarConfirmacoes($pdo_master);
         $confirmacoesGerenciais = whatsappAtualizarConfirmacoesGerenciais($pdo_master);
 
