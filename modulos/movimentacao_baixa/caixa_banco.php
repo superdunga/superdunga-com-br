@@ -942,6 +942,7 @@ $sqlListaBase = "
     SELECT b.*,
            c.NUMERO AS CONTA_NUMERO,
            c.DESCABREV AS CONTA_DESC,
+           c.CONTACONTABIL AS CONTA_CONTACONTABIL,
            t.DESCES AS TIPO_DESC,
            t.CONTRAP_TIPOES,
            cp.MOVCONTADOR AS CONTRAP_MOVCONTADOR,
@@ -1553,6 +1554,7 @@ require_once __DIR__ . '/../../layout/header.php';
                             $origem = trim((string)($linha['TIPODOCORIGEM'] ?? ''));
                             $temContrapAberta = !empty($linha['ABERTA_TIPO']) && !empty($linha['ABERTA_CONTADOR']);
                             $editavel = $origem === 'SUPERDUNGA' && (int)($linha['ORIGEMCPART'] ?? 0) === 0 && !$temContrapAberta;
+                            $contaTemExtrato = trim((string)($linha['CONTA_CONTACONTABIL'] ?? '')) === '01.01';
                         ?>
                         <tr>
                             <td><?= (int)$linha['MOVCONTADOR'] ?></td>
@@ -1573,6 +1575,8 @@ require_once __DIR__ . '/../../layout/header.php';
                                         Conta <?= (int)$linha['EXTRATO_CONTA'] ?> |
                                         <?= mbH(mbMoeda($linha['EXTRATO_VALOR'])) ?>
                                     </div>
+                                <?php elseif (!$contaTemExtrato): ?>
+                                    <span class="mb-badge">Sem extrato</span>
                                 <?php else: ?>
                                     <span class="mb-badge">Pendente</span>
                                 <?php endif; ?>
