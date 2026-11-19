@@ -97,7 +97,7 @@ function gerarLancamentosFinanceirosDescontoCheques(PDO $pdo, int $empresaId, in
         throw new RuntimeException('O cliente da operacao nao possui vinculo com o cliente oficial. Atualize o cadastro antes de gerar o financeiro.');
     }
     if ($cbcontadorLiquido <= 0 || $cbcontadorLiquido === 38) {
-        throw new RuntimeException('Selecione a conta que recebeu o valor liquido da operacao.');
+        throw new RuntimeException('Selecione a conta de saida do valor liquido antes de gerar os lancamentos.');
     }
 
     $stmtConta = $pdo->prepare("
@@ -168,7 +168,6 @@ function gerarLancamentosFinanceirosDescontoCheques(PDO $pdo, int $empresaId, in
         if (($operacao['status'] ?? '') === 'LANCADA') {
             throw new RuntimeException('Esta operacao ja foi lancada no financeiro.');
         }
-
         $stmtDocsLock = $pdo->prepare("
             SELECT *
             FROM desconto_cheques_documentos
@@ -1564,17 +1563,10 @@ require '../../layout/header.php';
                             <td class="text-end">
                                 <a href="operacoes.php?editar=<?= (int)$operacao['id'] ?>" class="btn btn-sm btn-outline-primary">Detalhes</a>
                                 <?php if (($operacao['status'] ?? '') !== 'LANCADA'): ?>
-                                    <form method="post" class="d-inline-flex align-items-center gap-1" onsubmit="return confirm('Gerar os titulos, os lancamentos da operacao e transferir o valor liquido para a conta selecionada? A operacao nao podera mais ser editada.');">
+                                    <form method="post" class="d-inline" onsubmit="return prepararGeracaoFinanceiraDC(this);">
                                         <input type="hidden" name="acao" value="gerar_financeiro">
                                         <input type="hidden" name="operacao_id" value="<?= (int)$operacao['id'] ?>">
-                                        <select name="cbcontador_liquido" class="form-select form-select-sm" required aria-label="Conta que recebeu o valor liquido">
-                                            <option value="">Conta do valor liquido</option>
-                                            <?php foreach ($contasLiquido as $contaLiquido): ?>
-                                                <option value="<?= (int)$contaLiquido['CBCONTADOR'] ?>">
-                                                    <?= htmlspecialchars($contaLiquido['nome_conta']) ?> (<?= (int)$contaLiquido['CBCONTADOR'] ?>)
-                                                </option>
-                                            <?php endforeach; ?>
-                                        </select>
+                                        <input type="hidden" name="cbcontador_liquido" value="">
                                         <button type="submit" class="btn btn-sm btn-success">Gerar lancamentos</button>
                                     </form>
                                 <?php else: ?>
@@ -1592,6 +1584,76 @@ require '../../layout/header.php';
         </div>
     </div>
 </section>
+
+<div class="modal fade" id="modalContaLiquidoDC" tabindex="-1" aria-labelledby="modalContaLiquidoDCTitulo" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2 class="modal-title fs-5" id="modalContaLiquidoDCTitulo">Conta de saida do valor liquido</h2>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Fechar"></button>
+            </div>
+            <div class="modal-body">
+                <label for="contaLiquidoDC" class="form-label">Selecione a conta</label>
+                <select id="contaLiquidoDC" class="form-select" required>
+                    <option value="">Selecione</option>
+                    <?php foreach ($contasLiquido as $contaLiquido): ?>
+                        <option value="<?= (int)$contaLiquido['CBCONTADOR'] ?>">
+                            <?= htmlspecialchars($contaLiquido['nome_conta']) ?> (<?= (int)$contaLiquido['CBCONTADOR'] ?>)
+                        </option>
+                    <?php endforeach; ?>
+                </select>
+                <div class="form-text">O valor liquido sera debitado nesta conta e creditado na conta ACERTOS.</div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancelar</button>
+                <button type="button" class="btn btn-success" id="confirmarGeracaoFinanceiraDC">Continuar</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+let formularioGeracaoFinanceiraDC = null;
+
+function prepararGeracaoFinanceiraDC(formulario) {
+    const conta = formulario.querySelector('input[name="cbcontador_liquido"]');
+    if (conta && conta.value) {
+        const confirmado = confirm('Gerar os titulos e lancamentos da operacao? A operacao nao podera mais ser editada.');
+        if (!confirmado) {
+            conta.value = '';
+        }
+        return confirmado;
+    }
+
+    formularioGeracaoFinanceiraDC = formulario;
+    const selecao = document.getElementById('contaLiquidoDC');
+    selecao.value = '';
+    bootstrap.Modal.getOrCreateInstance(document.getElementById('modalContaLiquidoDC')).show();
+    return false;
+}
+
+document.getElementById('confirmarGeracaoFinanceiraDC').addEventListener('click', function () {
+    const selecao = document.getElementById('contaLiquidoDC');
+    if (!selecao.value) {
+        selecao.setCustomValidity('Selecione a conta de saida do valor liquido.');
+        selecao.reportValidity();
+        return;
+    }
+
+    selecao.setCustomValidity('');
+    if (!formularioGeracaoFinanceiraDC) {
+        return;
+    }
+
+    formularioGeracaoFinanceiraDC.querySelector('input[name="cbcontador_liquido"]').value = selecao.value;
+    bootstrap.Modal.getInstance(document.getElementById('modalContaLiquidoDC')).hide();
+    formularioGeracaoFinanceiraDC.requestSubmit();
+});
+
+document.getElementById('contaLiquidoDC').addEventListener('change', function () {
+    this.setCustomValidity('');
+});
+</script>
 <?php endif; ?>
 
 <?php if ($mostrarFormulario): ?>
