@@ -100,6 +100,9 @@ function garantirTabelasDescontoCheques(PDO $pdo): void
     garantirColunaDC($pdo, 'desconto_cheques_operacoes', 'mov_desconto', "INT NULL AFTER mov_bruto");
     garantirColunaDC($pdo, 'desconto_cheques_operacoes', 'mov_taxas', "INT NULL AFTER mov_desconto");
     garantirColunaDC($pdo, 'desconto_cheques_operacoes', 'mov_outros', "INT NULL AFTER mov_taxas");
+    garantirColunaDC($pdo, 'desconto_cheques_operacoes', 'cbcontador_liquido', "INT NULL AFTER mov_outros");
+    garantirColunaDC($pdo, 'desconto_cheques_operacoes', 'mov_liquido_conta', "INT NULL AFTER cbcontador_liquido");
+    garantirColunaDC($pdo, 'desconto_cheques_operacoes', 'mov_liquido_acertos', "INT NULL AFTER mov_liquido_conta");
     garantirColunaDC($pdo, 'desconto_cheques_operacoes', 'operacao_origem_id', "INT NULL AFTER historico_descontar");
     garantirIndiceDC($pdo, 'desconto_cheques_operacoes', 'idx_dc_operacoes_origem', ['empresa_id', 'operacao_origem_id']);
 

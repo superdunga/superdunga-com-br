@@ -75,7 +75,7 @@ function gerarMovimentoDescontoCheques(PDO $pdo, int $empresaId, int $usuarioId,
     return $movcontador;
 }
 
-function gerarLancamentosFinanceirosDescontoCheques(PDO $pdo, int $empresaId, int $usuarioId, int $operacaoId): array
+function gerarLancamentosFinanceirosDescontoCheques(PDO $pdo, int $empresaId, int $usuarioId, int $operacaoId, int $cbcontadorLiquido): array
 {
     $stmtOperacao = $pdo->prepare("
         SELECT o.*, c.nome AS cliente_nome, c.clicontador
@@ -96,6 +96,47 @@ function gerarLancamentosFinanceirosDescontoCheques(PDO $pdo, int $empresaId, in
     if (empty($operacao['clicontador'])) {
         throw new RuntimeException('O cliente da operacao nao possui vinculo com o cliente oficial. Atualize o cadastro antes de gerar o financeiro.');
     }
+    if ($cbcontadorLiquido <= 0 || $cbcontadorLiquido === 38) {
+        throw new RuntimeException('Selecione a conta que recebeu o valor liquido da operacao.');
+    }
+
+    $stmtConta = $pdo->prepare("
+        SELECT CBCONTADOR
+        FROM armazem_bnc002
+        WHERE EMPRESA = ?
+          AND CBCONTADOR = ?
+          AND COALESCE(CONTABLOQUEADA, 'N') <> 'S'
+          AND COALESCE(excluido_firebird, 'N') <> 'S'
+        LIMIT 1
+    ");
+    $stmtConta->execute([$empresaId, $cbcontadorLiquido]);
+    if (!$stmtConta->fetchColumn()) {
+        throw new RuntimeException('A conta selecionada nao esta disponivel para receber o valor liquido.');
+    }
+
+    $stmtTiposTransferencia = $pdo->prepare("
+        SELECT ESCONTADOR, TIPOMOV, CONTRAP_TIPOES, CONTRAP_TIPOMOV
+        FROM armazem_bnc005
+        WHERE EMPRESA = ?
+          AND ESCONTADOR IN (143, 179)
+          AND COALESCE(REGDISAB, 'N') <> 'S'
+          AND COALESCE(excluido_firebird, 'N') <> 'S'
+    ");
+    $stmtTiposTransferencia->execute([$empresaId]);
+    $tiposTransferencia = [];
+    foreach ($stmtTiposTransferencia->fetchAll(PDO::FETCH_ASSOC) as $tipoTransferencia) {
+        $tiposTransferencia[(int)$tipoTransferencia['ESCONTADOR']] = $tipoTransferencia;
+    }
+    if (
+        ($tiposTransferencia[143]['TIPOMOV'] ?? '') !== 'D'
+        || (int)($tiposTransferencia[143]['CONTRAP_TIPOES'] ?? 0) !== 179
+        || ($tiposTransferencia[143]['CONTRAP_TIPOMOV'] ?? '') !== 'C'
+        || ($tiposTransferencia[179]['TIPOMOV'] ?? '') !== 'C'
+        || (int)($tiposTransferencia[179]['CONTRAP_TIPOES'] ?? 0) !== 143
+        || ($tiposTransferencia[179]['CONTRAP_TIPOMOV'] ?? '') !== 'D'
+    ) {
+        throw new RuntimeException('Os tipos de movimentacao 143/179 nao estao configurados como contrapartidas reciprocas.');
+    }
 
     $stmtDocs = $pdo->prepare("
         SELECT *
@@ -111,6 +152,36 @@ function gerarLancamentosFinanceirosDescontoCheques(PDO $pdo, int $empresaId, in
 
     $pdo->beginTransaction();
     try {
+        $stmtLockOperacao = $pdo->prepare("
+            SELECT o.*, c.nome AS cliente_nome, c.clicontador
+            FROM desconto_cheques_operacoes o
+            INNER JOIN desconto_cheques_clientes c ON c.id = o.cliente_id
+            WHERE o.id = ?
+              AND o.empresa_id = ?
+            FOR UPDATE
+        ");
+        $stmtLockOperacao->execute([$operacaoId, $empresaId]);
+        $operacao = $stmtLockOperacao->fetch(PDO::FETCH_ASSOC);
+        if (!$operacao) {
+            throw new RuntimeException('Operacao nao encontrada durante o fechamento.');
+        }
+        if (($operacao['status'] ?? '') === 'LANCADA') {
+            throw new RuntimeException('Esta operacao ja foi lancada no financeiro.');
+        }
+
+        $stmtDocsLock = $pdo->prepare("
+            SELECT *
+            FROM desconto_cheques_documentos
+            WHERE operacao_id = ?
+            ORDER BY data_vencimento, id
+            FOR UPDATE
+        ");
+        $stmtDocsLock->execute([$operacaoId]);
+        $documentos = $stmtDocsLock->fetchAll(PDO::FETCH_ASSOC);
+        if (!$documentos) {
+            throw new RuntimeException('Operacao sem documentos para lancar.');
+        }
+
         $crGerados = 0;
         foreach ($documentos as $doc) {
             if (!empty($doc['crcontador'])) {
@@ -167,17 +238,81 @@ function gerarLancamentosFinanceirosDescontoCheques(PDO $pdo, int $empresaId, in
         $movTaxas = $operacao['mov_taxas'] ?: gerarMovimentoDescontoCheques($pdo, $empresaId, $usuarioId, $operacaoId, $operacao['data_referencia'], 'C', 51, (float)$operacao['valor_taxas_tarifas'], 'DESC. CHEQUES OP #' . $operacaoId . ' - TAXAS/TARIFAS - ' . $clienteHistorico);
         $movOutros = $operacao['mov_outros'] ?: gerarMovimentoDescontoCheques($pdo, $empresaId, $usuarioId, $operacaoId, $operacao['data_referencia'], 'C', 51, (float)$operacao['valor_descontar'], 'DESC. CHEQUES OP #' . $operacaoId . ' - OUTROS DESCONTOS - ' . $clienteHistorico);
 
+        $valorLiquido = round((float)$operacao['valor_liquido'], 2);
+        if ($valorLiquido <= 0) {
+            throw new RuntimeException('O valor liquido da operacao deve ser maior que zero para gerar a transferencia.');
+        }
+
+        $movLiquidoConta = proximoMovcontadorDescontoCheques($pdo);
+        $stmtMovimentoLiquido = $pdo->prepare("
+            INSERT INTO armazem_bnc001 (
+                EMPRESA, MOVCONTADOR, DTMOV, NUMDOC, TIPOMOV, CBCONTADOR, TIPOES,
+                HISTMOV, VALORMOV, TIPODOCORIGEM, NUMDOCORIGEM, REGSTAMP,
+                USERBNCLANC, CONTRAPARTIDA, ORIGEMCPART, DTLANC, DTPROCESSADO, deletado
+            ) VALUES (
+                ?, ?, ?, ?, ?, ?, ?,
+                ?, ?, 'DESCONTO_CHEQUES', ?, NOW(),
+                ?, ?, ?, NOW(), NOW(), 'N'
+            )
+        ");
+        $historicoLiquido = 'DESC. CHEQUES OP #' . $operacaoId . ' - VALOR LIQUIDO - ' . $clienteHistorico;
+        $stmtMovimentoLiquido->execute([
+            $empresaId,
+            $movLiquidoConta,
+            $operacao['data_referencia'],
+            'DESCCH-' . $operacaoId,
+            'D',
+            $cbcontadorLiquido,
+            143,
+            $historicoLiquido,
+            $valorLiquido,
+            $operacaoId,
+            $usuarioId ?: null,
+            'S',
+            0,
+        ]);
+
+        $movLiquidoAcertos = proximoMovcontadorDescontoCheques($pdo);
+        $stmtMovimentoLiquido->execute([
+            $empresaId,
+            $movLiquidoAcertos,
+            $operacao['data_referencia'],
+            'DESCCH-' . $operacaoId,
+            'C',
+            38,
+            179,
+            'CONTRAPARTIDA - ' . $historicoLiquido,
+            $valorLiquido,
+            $operacaoId,
+            $usuarioId ?: null,
+            'N',
+            $movLiquidoConta,
+        ]);
+
         $stmtUpdate = $pdo->prepare("
             UPDATE desconto_cheques_operacoes
             SET status = 'LANCADA',
                 mov_bruto = COALESCE(mov_bruto, ?),
                 mov_desconto = COALESCE(mov_desconto, ?),
                 mov_taxas = COALESCE(mov_taxas, ?),
-                mov_outros = COALESCE(mov_outros, ?)
+                mov_outros = COALESCE(mov_outros, ?),
+                cbcontador_liquido = ?,
+                mov_liquido_conta = ?,
+                mov_liquido_acertos = ?
             WHERE id = ?
               AND empresa_id = ?
         ");
-        $stmtUpdate->execute([$movBruto, $movDesconto, $movTaxas, $movOutros, $operacaoId, $empresaId]);
+        $stmtUpdate->execute([
+            $movBruto,
+            $movDesconto,
+            $movTaxas,
+            $movOutros,
+            $cbcontadorLiquido,
+            $movLiquidoConta,
+            $movLiquidoAcertos,
+            $operacaoId,
+            $empresaId,
+        ]);
 
         $pdo->commit();
         return ['cr' => $crGerados];
@@ -226,6 +361,19 @@ $clientesPorId = [];
 foreach ($clientes as $clienteLinha) {
     $clientesPorId[(int)$clienteLinha['id']] = $clienteLinha;
 }
+
+$stmtContasLiquido = $pdo_master->prepare("
+    SELECT CBCONTADOR,
+           TRIM(COALESCE(NULLIF(TITULAR, ''), NULLIF(DESCABREV, ''), CONCAT('Conta ', CBCONTADOR))) AS nome_conta
+    FROM armazem_bnc002
+    WHERE EMPRESA = ?
+      AND CBCONTADOR <> 38
+      AND COALESCE(CONTABLOQUEADA, 'N') <> 'S'
+      AND COALESCE(excluido_firebird, 'N') <> 'S'
+    ORDER BY nome_conta, CBCONTADOR
+");
+$stmtContasLiquido->execute([$empresaId]);
+$contasLiquido = $stmtContasLiquido->fetchAll(PDO::FETCH_ASSOC);
 
 $faixasPrazo = buscarPrazosDescontoCheques($pdo_master, $empresaId);
 $feriadosRecorrentes = feriadosRecorrentesDC($pdo_master, $empresaId);
@@ -295,8 +443,9 @@ if ($modoRenovacao) {
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['acao'] ?? '') === 'gerar_financeiro') {
     $operacaoGerarId = (int)($_POST['operacao_id'] ?? 0);
+    $cbcontadorLiquido = (int)($_POST['cbcontador_liquido'] ?? 0);
     try {
-        $resultadoGeracao = gerarLancamentosFinanceirosDescontoCheques($pdo_master, $empresaId, $usuarioId, $operacaoGerarId);
+        $resultadoGeracao = gerarLancamentosFinanceirosDescontoCheques($pdo_master, $empresaId, $usuarioId, $operacaoGerarId, $cbcontadorLiquido);
         header('Location: operacoes.php?ok=financeiro&id=' . $operacaoGerarId . '&cr=' . (int)$resultadoGeracao['cr']);
         exit;
     } catch (Throwable $e) {
@@ -1415,9 +1564,17 @@ require '../../layout/header.php';
                             <td class="text-end">
                                 <a href="operacoes.php?editar=<?= (int)$operacao['id'] ?>" class="btn btn-sm btn-outline-primary">Detalhes</a>
                                 <?php if (($operacao['status'] ?? '') !== 'LANCADA'): ?>
-                                    <form method="post" class="d-inline" onsubmit="return confirm('Gerar titulos no contas a receber e lancamentos na conta 38? A operacao nao podera mais ser editada.');">
+                                    <form method="post" class="d-inline-flex align-items-center gap-1" onsubmit="return confirm('Gerar os titulos, os lancamentos da operacao e transferir o valor liquido para a conta selecionada? A operacao nao podera mais ser editada.');">
                                         <input type="hidden" name="acao" value="gerar_financeiro">
                                         <input type="hidden" name="operacao_id" value="<?= (int)$operacao['id'] ?>">
+                                        <select name="cbcontador_liquido" class="form-select form-select-sm" required aria-label="Conta que recebeu o valor liquido">
+                                            <option value="">Conta do valor liquido</option>
+                                            <?php foreach ($contasLiquido as $contaLiquido): ?>
+                                                <option value="<?= (int)$contaLiquido['CBCONTADOR'] ?>">
+                                                    <?= htmlspecialchars($contaLiquido['nome_conta']) ?> (<?= (int)$contaLiquido['CBCONTADOR'] ?>)
+                                                </option>
+                                            <?php endforeach; ?>
+                                        </select>
                                         <button type="submit" class="btn btn-sm btn-success">Gerar lancamentos</button>
                                     </form>
                                 <?php else: ?>
