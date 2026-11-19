@@ -1593,15 +1593,24 @@ require '../../layout/header.php';
                 <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Fechar"></button>
             </div>
             <div class="modal-body">
+                <label for="filtroContaLiquidoDC" class="form-label">Buscar conta</label>
+                <input
+                    type="search"
+                    id="filtroContaLiquidoDC"
+                    class="form-control mb-3"
+                    placeholder="Digite o nome ou o codigo da conta"
+                    autocomplete="off"
+                >
                 <label for="contaLiquidoDC" class="form-label">Selecione a conta</label>
                 <select id="contaLiquidoDC" class="form-select" required>
                     <option value="">Selecione</option>
                     <?php foreach ($contasLiquido as $contaLiquido): ?>
                         <option value="<?= (int)$contaLiquido['CBCONTADOR'] ?>">
-                            <?= htmlspecialchars($contaLiquido['nome_conta']) ?> (<?= (int)$contaLiquido['CBCONTADOR'] ?>)
+                            <?= (int)$contaLiquido['CBCONTADOR'] ?> - <?= htmlspecialchars($contaLiquido['nome_conta']) ?>
                         </option>
                     <?php endforeach; ?>
                 </select>
+                <div class="form-text" id="resultadoFiltroContaLiquidoDC"></div>
                 <div class="form-text">O valor liquido sera debitado nesta conta e creditado na conta ACERTOS.</div>
             </div>
             <div class="modal-footer">
@@ -1614,6 +1623,50 @@ require '../../layout/header.php';
 
 <script>
 let formularioGeracaoFinanceiraDC = null;
+const filtroContaLiquidoDC = document.getElementById('filtroContaLiquidoDC');
+const selecaoContaLiquidoDC = document.getElementById('contaLiquidoDC');
+const resultadoFiltroContaLiquidoDC = document.getElementById('resultadoFiltroContaLiquidoDC');
+const opcoesContaLiquidoDC = Array.from(selecaoContaLiquidoDC.options)
+    .filter(function (opcao) {
+        return opcao.value !== '';
+    })
+    .map(function (opcao) {
+        return {
+            value: opcao.value,
+            text: opcao.textContent.trim()
+        };
+    });
+
+function normalizarBuscaContaDC(valor) {
+    return String(valor || '')
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .toLowerCase()
+        .trim();
+}
+
+function atualizarFiltroContaLiquidoDC() {
+    const termos = normalizarBuscaContaDC(filtroContaLiquidoDC.value).split(/\s+/).filter(Boolean);
+    const opcoesFiltradas = opcoesContaLiquidoDC.filter(function (opcao) {
+        const texto = normalizarBuscaContaDC(opcao.text);
+        return termos.every(function (termo) {
+            return texto.indexOf(termo) !== -1;
+        });
+    });
+
+    selecaoContaLiquidoDC.innerHTML = '<option value="">Selecione</option>';
+    opcoesFiltradas.forEach(function (opcao) {
+        const elemento = document.createElement('option');
+        elemento.value = opcao.value;
+        elemento.textContent = opcao.text;
+        selecaoContaLiquidoDC.appendChild(elemento);
+    });
+    selecaoContaLiquidoDC.value = '';
+    selecaoContaLiquidoDC.setCustomValidity('');
+    resultadoFiltroContaLiquidoDC.textContent = opcoesFiltradas.length === 1
+        ? '1 conta encontrada'
+        : opcoesFiltradas.length + ' contas encontradas';
+}
 
 function prepararGeracaoFinanceiraDC(formulario) {
     const conta = formulario.querySelector('input[name="cbcontador_liquido"]');
@@ -1626,14 +1679,20 @@ function prepararGeracaoFinanceiraDC(formulario) {
     }
 
     formularioGeracaoFinanceiraDC = formulario;
-    const selecao = document.getElementById('contaLiquidoDC');
-    selecao.value = '';
+    filtroContaLiquidoDC.value = '';
+    atualizarFiltroContaLiquidoDC();
     bootstrap.Modal.getOrCreateInstance(document.getElementById('modalContaLiquidoDC')).show();
     return false;
 }
 
+document.getElementById('modalContaLiquidoDC').addEventListener('shown.bs.modal', function () {
+    filtroContaLiquidoDC.focus();
+});
+
+filtroContaLiquidoDC.addEventListener('input', atualizarFiltroContaLiquidoDC);
+
 document.getElementById('confirmarGeracaoFinanceiraDC').addEventListener('click', function () {
-    const selecao = document.getElementById('contaLiquidoDC');
+    const selecao = selecaoContaLiquidoDC;
     if (!selecao.value) {
         selecao.setCustomValidity('Selecione a conta de saida do valor liquido.');
         selecao.reportValidity();
@@ -1653,6 +1712,8 @@ document.getElementById('confirmarGeracaoFinanceiraDC').addEventListener('click'
 document.getElementById('contaLiquidoDC').addEventListener('change', function () {
     this.setCustomValidity('');
 });
+
+atualizarFiltroContaLiquidoDC();
 </script>
 <?php endif; ?>
 
