@@ -478,6 +478,9 @@ $geradoresSistema = whatsappGeradoresSistema();
 $stmt = $pdo_master->prepare("SELECT * FROM whatsapp_destinatarios WHERE empresa_id = ? ORDER BY ativo DESC, tipo, nome");
 $stmt->execute([$empresaId]);
 $destinatarios = $stmt->fetchAll(PDO::FETCH_ASSOC);
+$listaDestinatariosAtivos = array_values(array_filter($destinatarios, static function (array $destinatario): bool {
+    return ($destinatario['ativo'] ?? 'N') === 'S';
+}));
 $clientesFechamentoMarcados = 0;
 try {
     $stmt = $pdo_master->prepare("
@@ -1073,20 +1076,26 @@ require __DIR__ . '/../../layout/header.php';
             </div>
             <div class="col-12">
                 <label class="form-label">Destinatarios da rotina</label>
-                <div class="row g-2">
-                    <?php foreach ($destinatarios as $d): ?>
-                        <?php if ($d['ativo'] !== 'S') { continue; } ?>
-                        <div class="col-md-4 col-xl-3">
-                            <label class="border rounded p-2 d-flex gap-2 h-100">
-                                <input type="checkbox" name="rotina_destinatarios[]" value="<?= (int)$d['id'] ?>">
-                                <span>
-                                    <strong><?= htmlspecialchars($d['nome']) ?></strong><br>
-                                    <small class="text-muted"><?= htmlspecialchars($d['tipo']) ?></small>
-                                </span>
-                            </label>
-                        </div>
-                    <?php endforeach; ?>
-                </div>
+                <?php if (empty($listaDestinatariosAtivos)): ?>
+                    <div class="alert alert-warning d-flex flex-wrap align-items-center justify-content-between gap-2 mb-0">
+                        <span>Nenhum destinatario ativo foi cadastrado nesta empresa.</span>
+                        <a class="btn btn-sm btn-outline-dark" href="?secao=destinatarios">Cadastrar destinatario</a>
+                    </div>
+                <?php else: ?>
+                    <div class="row g-2">
+                        <?php foreach ($listaDestinatariosAtivos as $d): ?>
+                            <div class="col-md-4 col-xl-3">
+                                <label class="border rounded p-2 d-flex gap-2 h-100">
+                                    <input type="checkbox" name="rotina_destinatarios[]" value="<?= (int)$d['id'] ?>">
+                                    <span>
+                                        <strong><?= htmlspecialchars($d['nome']) ?></strong><br>
+                                        <small class="text-muted"><?= htmlspecialchars($d['tipo']) ?></small>
+                                    </span>
+                                </label>
+                            </div>
+                        <?php endforeach; ?>
+                    </div>
+                <?php endif; ?>
             </div>
             <div class="col-12">
                 <button class="btn btn-primary w-100">Cadastrar rotina</button>
@@ -1264,20 +1273,26 @@ require __DIR__ . '/../../layout/header.php';
                                                 Os destinatarios sao obtidos automaticamente do responsavel por pagamento cadastrado na UNIMED.
                                             </div>
                                         <?php else: ?>
-                                        <div class="row g-2">
-                                            <?php foreach ($destinatarios as $d): ?>
-                                                <?php if ($d['ativo'] !== 'S') { continue; } ?>
-                                                <div class="col-md-4 col-xl-3">
-                                                    <label class="border rounded p-2 d-flex gap-2 h-100">
-                                                        <input type="checkbox" name="rotina_destinatarios[]" value="<?= (int)$d['id'] ?>" <?= in_array((int)$d['id'], $selecionados, true) ? 'checked' : '' ?>>
-                                                        <span>
-                                                            <strong><?= htmlspecialchars($d['nome']) ?></strong><br>
-                                                            <small class="text-muted"><?= htmlspecialchars($d['tipo']) ?> - <?= htmlspecialchars($d['numero']) ?></small>
-                                                        </span>
-                                                    </label>
+                                            <?php if (empty($listaDestinatariosAtivos)): ?>
+                                                <div class="alert alert-warning d-flex flex-wrap align-items-center justify-content-between gap-2 mb-0">
+                                                    <span>Nenhum destinatario ativo foi cadastrado nesta empresa.</span>
+                                                    <a class="btn btn-sm btn-outline-dark" href="?secao=destinatarios">Cadastrar destinatario</a>
                                                 </div>
-                                            <?php endforeach; ?>
-                                        </div>
+                                            <?php else: ?>
+                                                <div class="row g-2">
+                                                    <?php foreach ($listaDestinatariosAtivos as $d): ?>
+                                                        <div class="col-md-4 col-xl-3">
+                                                            <label class="border rounded p-2 d-flex gap-2 h-100">
+                                                                <input type="checkbox" name="rotina_destinatarios[]" value="<?= (int)$d['id'] ?>" <?= in_array((int)$d['id'], $selecionados, true) ? 'checked' : '' ?>>
+                                                                <span>
+                                                                    <strong><?= htmlspecialchars($d['nome']) ?></strong><br>
+                                                                    <small class="text-muted"><?= htmlspecialchars($d['tipo']) ?> - <?= htmlspecialchars($d['numero']) ?></small>
+                                                                </span>
+                                                            </label>
+                                                        </div>
+                                                    <?php endforeach; ?>
+                                                </div>
+                                            <?php endif; ?>
                                         <?php endif; ?>
                                     </div>
                                     <div class="col-12">
