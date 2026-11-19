@@ -497,6 +497,23 @@ function whatsappEnsureTables(PDO $pdo): void
         INSERT INTO whatsapp_rotinas
             (empresa_id, codigo, nome, descricao, mensagem_id, origem_mensagem, gerador_sistema, ativo, evitar_duplicidade_diaria, periodicidade)
         VALUES
+            (?, 'agenda_financeira', 'Agenda Financeira', 'Lista contas a receber e contas a pagar do dia, alem dos titulos vencidos.', NULL, 'SISTEMA', 'agenda_financeira', 'N', 'S', 'MANUAL')
+        ON DUPLICATE KEY UPDATE
+            nome = VALUES(nome),
+            descricao = VALUES(descricao),
+            mensagem_id = NULL,
+            origem_mensagem = 'SISTEMA',
+            gerador_sistema = 'agenda_financeira',
+            evitar_duplicidade_diaria = 'S'
+    ");
+    foreach ($empresaIds as $empresaRotinaId) {
+        $stmt->execute([(int)$empresaRotinaId]);
+    }
+
+    $stmt = $pdo->prepare("
+        INSERT INTO whatsapp_rotinas
+            (empresa_id, codigo, nome, descricao, mensagem_id, origem_mensagem, gerador_sistema, ativo, evitar_duplicidade_diaria, periodicidade)
+        VALUES
             (?, 'analise_performance_pdf', 'Analise de Performance', 'Envia o PDF completo da tela de metas e desempenho de vendas.', NULL, 'SISTEMA', 'analise_performance_pdf', 'N', 'S', 'MANUAL')
         ON DUPLICATE KEY UPDATE
             nome = VALUES(nome),
@@ -673,6 +690,12 @@ function whatsappGeradoresSistema(): array
             'arquivo' => 'modulos/whatsapp/whatsapp_lib.php',
             'funcao' => 'whatsappMensagemClientesVencidos',
         ],
+        'agenda_financeira' => [
+            'nome' => 'Agenda Financeira',
+            'descricao' => 'Lista contas a receber e contas a pagar do dia, alem dos titulos vencidos.',
+            'arquivo' => 'modulos/whatsapp/whatsapp_lib.php',
+            'funcao' => 'whatsappMensagemAgendaFinanceira',
+        ],
         'fechamento_compras_clientes_pdf' => [
             'nome' => 'Fechamento de compras dos clientes',
             'descricao' => 'Envia um PDF individual para cada cliente marcado em Contas a Receber > Clientes.',
@@ -740,6 +763,7 @@ function whatsappRotinaGerenciada(string $codigo): bool
 {
     return in_array($codigo, [
         'resumo_diario',
+        'agenda_financeira',
         'fechamento_compras_clientes_pdf',
         'unimed_responsaveis_pdf',
         'analise_performance_pdf',
@@ -1487,6 +1511,10 @@ function whatsappMensagemRotina(PDO $pdo, array $rotina): array
 
         if ($gerador === 'clientes_vencidos') {
             return [whatsappMensagemClientesVencidos($pdo, null, $empresaId), null];
+        }
+
+        if ($gerador === 'agenda_financeira') {
+            return [whatsappMensagemAgendaFinanceira($pdo, null, $empresaId), null];
         }
 
         if ($gerador === 'fechamento_compras_clientes_pdf') {
@@ -2701,6 +2729,179 @@ function whatsappEnviarUnimedResponsaveisPdf(
         $resultado['motivo'] = 'Nenhum demonstrativo UNIMED pendente';
     }
     return $resultado;
+}
+
+function whatsappMensagemAgendaFinanceira(PDO $pdo, ?DateTime $base = null, int $empresaId = 1): string
+{
+    date_default_timezone_set('America/Sao_Paulo');
+
+    $base = $base ?: new DateTime('now');
+    $data = $base->format('Y-m-d');
+    $empresa = whatsappNomeEmpresa($pdo, $empresaId);
+
+    $stmt = $pdo->prepare("
+        SELECT
+            cr.CRCONTADOR,
+            COALESCE(NULLIF(cli.APELIDO, ''), NULLIF(cli.NOME, ''), CONCAT('Cliente ', cr.CLICONTADOR)) AS cliente,
+            COALESCE(
+                NULLIF(cr.TITULO, ''),
+                NULLIF(cr.NOTAFISCAL, ''),
+                NULLIF(cr.NUMDOCORIGEM, ''),
+                CONCAT('CR ', cr.CRCONTADOR)
+            ) AS documento,
+            cr.VLRRESTANTE AS valor
+        FROM armazem_cr001 cr
+        LEFT JOIN armazem_cr002 cli
+          ON cli.EMPRESA = cr.EMPRESA
+         AND cli.CLICONTADOR = cr.CLICONTADOR
+        WHERE cr.EMPRESA = ?
+          AND DATE(cr.DTVENC) = ?
+          AND COALESCE(cr.VLRRESTANTE, 0) > 0
+          AND COALESCE(cr.STATUS, '') <> 'QT'
+          AND COALESCE(cr.excluido_firebird, 'N') <> 'S'
+        ORDER BY cliente ASC, documento ASC, cr.CRCONTADOR ASC
+    ");
+    $stmt->execute([$empresaId, $data]);
+    $contasReceber = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+    $stmt = $pdo->prepare("
+        SELECT
+            cp.CPCONTADOR,
+            COALESCE(NULLIF(f.APELIDO, ''), NULLIF(f.NOME, ''), CONCAT('Fornecedor ', cp.FCONTADOR)) AS fornecedor,
+            cp.VLRRESTANTE AS valor
+        FROM armazem_cp001 cp
+        LEFT JOIN armazem_cp003 f
+          ON f.EMPRESA = cp.EMPRESA
+         AND f.FCONTADOR = cp.FCONTADOR
+        WHERE cp.EMPRESA = ?
+          AND DATE(cp.DTVENC) = ?
+          AND COALESCE(cp.VLRRESTANTE, 0) > 0
+          AND COALESCE(cp.STATUS, '') <> 'QT'
+          AND COALESCE(cp.excluido_firebird, 'N') <> 'S'
+        ORDER BY fornecedor ASC, cp.CPCONTADOR ASC
+    ");
+    $stmt->execute([$empresaId, $data]);
+    $contasPagar = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+    $stmt = $pdo->prepare("
+        SELECT
+            cr.CRCONTADOR,
+            COALESCE(NULLIF(cli.APELIDO, ''), NULLIF(cli.NOME, ''), CONCAT('Cliente ', cr.CLICONTADOR)) AS cliente,
+            COALESCE(
+                NULLIF(cr.TITULO, ''),
+                NULLIF(cr.NOTAFISCAL, ''),
+                NULLIF(cr.NUMDOCORIGEM, ''),
+                CONCAT('CR ', cr.CRCONTADOR)
+            ) AS documento,
+            cr.DTVENC,
+            cr.VLRRESTANTE AS valor
+        FROM armazem_cr001 cr
+        LEFT JOIN armazem_cr002 cli
+          ON cli.EMPRESA = cr.EMPRESA
+         AND cli.CLICONTADOR = cr.CLICONTADOR
+        WHERE cr.EMPRESA = ?
+          AND DATE(cr.DTVENC) < ?
+          AND COALESCE(cr.VLRRESTANTE, 0) > 0
+          AND COALESCE(cr.STATUS, '') <> 'QT'
+          AND COALESCE(cr.excluido_firebird, 'N') <> 'S'
+        ORDER BY cr.DTVENC DESC, cliente ASC, documento ASC, cr.CRCONTADOR DESC
+    ");
+    $stmt->execute([$empresaId, $data]);
+    $contasReceberVencidas = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+    $stmt = $pdo->prepare("
+        SELECT
+            cp.CPCONTADOR,
+            COALESCE(NULLIF(f.APELIDO, ''), NULLIF(f.NOME, ''), CONCAT('Fornecedor ', cp.FCONTADOR)) AS fornecedor,
+            cp.DTVENC,
+            cp.VLRRESTANTE AS valor
+        FROM armazem_cp001 cp
+        LEFT JOIN armazem_cp003 f
+          ON f.EMPRESA = cp.EMPRESA
+         AND f.FCONTADOR = cp.FCONTADOR
+        WHERE cp.EMPRESA = ?
+          AND DATE(cp.DTVENC) < ?
+          AND COALESCE(cp.VLRRESTANTE, 0) > 0
+          AND COALESCE(cp.STATUS, '') <> 'QT'
+          AND COALESCE(cp.excluido_firebird, 'N') <> 'S'
+        ORDER BY cp.DTVENC DESC, fornecedor ASC, cp.CPCONTADOR DESC
+    ");
+    $stmt->execute([$empresaId, $data]);
+    $contasPagarVencidas = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+    $totalReceber = 0.0;
+    $totalPagar = 0.0;
+    $msg = "*Agenda Financeira*\n";
+    $msg .= "Empresa: {$empresa}\n";
+    $msg .= "Data: " . $base->format('d/m/Y') . "\n\n";
+    $msg .= "*Contas a Receber*\n";
+
+    if (empty($contasReceber)) {
+        $msg .= "- Nenhuma conta a receber em aberto.\n";
+    } else {
+        foreach ($contasReceber as $contaReceber) {
+            $valor = (float)$contaReceber['valor'];
+            $totalReceber += $valor;
+            $msg .= '- ' . trim((string)$contaReceber['cliente'])
+                . ' - ' . trim((string)$contaReceber['documento'])
+                . ' - R$ ' . number_format($valor, 2, ',', '.') . "\n";
+        }
+    }
+    $msg .= "\n*Total: R$ " . number_format($totalReceber, 2, ',', '.') . "*\n\n";
+    $msg .= "*Contas a Pagar*\n";
+
+    if (empty($contasPagar)) {
+        $msg .= "- Nenhuma conta a pagar em aberto.\n";
+    } else {
+        foreach ($contasPagar as $contaPagar) {
+            $valor = (float)$contaPagar['valor'];
+            $totalPagar += $valor;
+            $msg .= '- ' . trim((string)$contaPagar['fornecedor'])
+                . ' - R$ ' . number_format($valor, 2, ',', '.') . "\n";
+        }
+    }
+    $msg .= "\n*Total: R$ " . number_format($totalPagar, 2, ',', '.') . "*\n\n";
+
+    $totalReceberVencido = 0.0;
+    foreach ($contasReceberVencidas as $contaReceberVencida) {
+        $totalReceberVencido += (float)$contaReceberVencida['valor'];
+    }
+    $totalPagarVencido = 0.0;
+    foreach ($contasPagarVencidas as $contaPagarVencida) {
+        $totalPagarVencido += (float)$contaPagarVencida['valor'];
+    }
+
+    $limiteVencidos = 8;
+    $msg .= "*Vencidas*\n\n";
+    $msg .= "*Contas a receber*\n";
+    if (empty($contasReceberVencidas)) {
+        $msg .= "- Nenhuma conta a receber vencida.\n";
+    } else {
+        foreach (array_slice($contasReceberVencidas, 0, $limiteVencidos) as $contaReceberVencida) {
+            $msg .= '- ' . trim((string)$contaReceberVencida['cliente'])
+                . ' / ' . trim((string)$contaReceberVencida['documento'])
+                . ' / R$ ' . number_format((float)$contaReceberVencida['valor'], 2, ',', '.') . "\n";
+        }
+        if (count($contasReceberVencidas) > $limiteVencidos) {
+            $msg .= '- ... +' . (count($contasReceberVencidas) - $limiteVencidos) . " titulo(s) vencido(s) anterior(es)\n";
+        }
+    }
+    $msg .= "\n*Total a receber: R$ " . number_format($totalReceberVencido, 2, ',', '.') . "*\n\n";
+    $msg .= "*Contas a pagar*\n";
+    if (empty($contasPagarVencidas)) {
+        $msg .= "- Nenhuma conta a pagar vencida.\n";
+    } else {
+        foreach (array_slice($contasPagarVencidas, 0, $limiteVencidos) as $contaPagarVencida) {
+            $msg .= '- ' . trim((string)$contaPagarVencida['fornecedor'])
+                . ' / R$ ' . number_format((float)$contaPagarVencida['valor'], 2, ',', '.') . "\n";
+        }
+        if (count($contasPagarVencidas) > $limiteVencidos) {
+            $msg .= '- ... +' . (count($contasPagarVencidas) - $limiteVencidos) . " titulo(s) vencido(s) anterior(es)\n";
+        }
+    }
+    $msg .= "\n*Total a pagar: R$ " . number_format($totalPagarVencido, 2, ',', '.') . '*';
+
+    return trim($msg);
 }
 
 function whatsappMensagemResumoDiario(PDO $pdo, int $empresaId = 1, ?DateTime $base = null): string
