@@ -1268,7 +1268,7 @@ $configAtivosFirebird = [
     ],
     'bnc005_ativos' => [
         'tabela_mysql' => 'armazem_bnc005',
-        'coluna_chave' => 'ESCONTADOR',
+        'colunas_chave' => ['EMPRESA', 'ESCONTADOR'],
         'nome_firebird' => 'BNC005',
         'exige_empresa' => true,
     ],

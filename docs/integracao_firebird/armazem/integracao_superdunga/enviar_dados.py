@@ -10,6 +10,7 @@ from firebird_teste import conectar, tratar_valor
 MODO = (sys.argv[1] if len(sys.argv) > 1 else "rapido").lower()
 EXECUTAR_COMPLETO = MODO in ["completo", "full", "diario"]
 EMPRESA_DESTINO = 1
+EMPRESA_FIREBIRD = 1
 BASE_SITE = "https://www.superdunga.com.br"
 APLICAR_SNAPSHOT_EST008 = MODO in ["completo", "full", "diario", "est008_aplicar", "aplicar_est008"]
 
@@ -103,9 +104,10 @@ def processar_bnc001_historico():
     print(f"\nBNC001 historico finalizado. Total enviado: {total_enviado}")
 
 
-def processar_tabela(nome, url_api, tabela_php, forcar_completo=False):
+def processar_tabela(nome, url_api, tabela_php, forcar_completo=False, params_api=None):
     try:
         print(f"\nProcessando {nome}...")
+        params_api = params_api or {}
 
         url_ultima = f"{BASE_SITE}/modulos/tesouraria/ultimo_regstamp.php"
 
@@ -122,7 +124,7 @@ def processar_tabela(nome, url_api, tabela_php, forcar_completo=False):
 
         resposta = requests.get(
             url_api,
-            params={"ultima_regstamp": ultima_regstamp},
+            params={"ultima_regstamp": ultima_regstamp, **params_api},
             timeout=300
         )
         resposta.raise_for_status()
@@ -514,7 +516,8 @@ def verificar_tabelas_ativos():
         {
             "nome": "BNC005_ATIVOS",
             "url_api": "http://127.0.0.1:5000/dados/bnc005_ativos",
-            "tabela_php": "bnc005_ativos"
+            "tabela_php": "bnc005_ativos",
+            "params_api": {"empresa": EMPRESA_FIREBIRD}
         },
         {
             "nome": "CP001_ATIVOS",
@@ -675,7 +678,9 @@ try:
     processar_tabela(
         "BNC005",
         "http://127.0.0.1:5000/dados/bnc005",
-        "bnc005"
+        "bnc005",
+        forcar_completo=EXECUTAR_COMPLETO,
+        params_api={"empresa": EMPRESA_FIREBIRD}
     )
 
     processar_tabela(

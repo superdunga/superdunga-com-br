@@ -38,7 +38,15 @@ def tratar_valor(valor):
     return valor
 
 
-def buscar_ativos(tabela, colunas, order_by=None, limit=None, offset=0):
+def buscar_ativos(
+    tabela,
+    colunas,
+    order_by=None,
+    limit=None,
+    offset=0,
+    where_sql="",
+    params=(),
+):
     con = conectar()
     cursor = con.cursor()
 
@@ -53,12 +61,15 @@ def buscar_ativos(tabela, colunas, order_by=None, limit=None, offset=0):
         fim = offset + limit
         rows_sql = f" ROWS {inicio} TO {fim}"
 
+    filtro_sql = f" WHERE {where_sql}" if where_sql else ""
+
     cursor.execute(f"""
         SELECT {colunas_sql}
         FROM {tabela}
+        {filtro_sql}
         ORDER BY {order_sql}
         {rows_sql}
-    """)
+    """, params)
 
     dados = []
     for row in cursor.fetchall():
@@ -209,7 +220,13 @@ def bnc001_ids():
 @app.route("/dados/bnc005_ativos", methods=["GET"])
 def dados_bnc005_ativos():
     try:
-        return jsonify(buscar_ativos("BNC005", ["ESCONTADOR"]))
+        empresa = request.args.get("empresa", default=1, type=int)
+        return jsonify(buscar_ativos(
+            "BNC005",
+            ["EMPRESA", "ESCONTADOR"],
+            where_sql="EMPRESA = ?",
+            params=(empresa,),
+        ))
     except Exception as e:
         return jsonify({"erro": str(e)}), 500
 
@@ -226,18 +243,20 @@ def dados_bnc002_ativos():
 def dados_bnc005():
     try:
         ultima_regstamp = request.args.get("ultima_regstamp", default="1900-01-01 00:00:00", type=str)
+        empresa = request.args.get("empresa", default=1, type=int)
 
         con = conectar()
         cursor = con.cursor()
 
-        sql = f"""
+        sql = """
             SELECT *
             FROM BNC005
-            WHERE REGSTAMP > '{ultima_regstamp}'
+            WHERE EMPRESA = ?
+              AND REGSTAMP > ?
             ORDER BY REGSTAMP, EMPRESA, ESCONTADOR
         """
 
-        cursor.execute(sql)
+        cursor.execute(sql, (empresa, ultima_regstamp))
 
         colunas = [desc[0] for desc in cursor.description]
         dados = []
