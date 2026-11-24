@@ -96,6 +96,26 @@ if (!$rec) {
 }
 
 /* =========================
+   AUTORIZACAO MANUAL CM 9
+   Valida somente o vinculo iniciado nesta tela.
+========================= */
+$agoraTokenManual = time();
+if (!isset($_SESSION['conciliacao_manual_cm9_tokens']) || !is_array($_SESSION['conciliacao_manual_cm9_tokens'])) {
+    $_SESSION['conciliacao_manual_cm9_tokens'] = [];
+}
+foreach ($_SESSION['conciliacao_manual_cm9_tokens'] as $tokenExistente => $permissaoExistente) {
+    if (!is_array($permissaoExistente) || (int)($permissaoExistente['expira_em'] ?? 0) < $agoraTokenManual) {
+        unset($_SESSION['conciliacao_manual_cm9_tokens'][$tokenExistente]);
+    }
+}
+$tokenManualCm9 = bin2hex(random_bytes(24));
+$_SESSION['conciliacao_manual_cm9_tokens'][$tokenManualCm9] = [
+    'empresa_id' => $empresa_id,
+    'recebimento_id' => (int)$rec['id'],
+    'expira_em' => $agoraTokenManual + 15 * 60,
+];
+
+/* =========================
    BUSCAR CR001 DISPONÍVEIS
    (REGRA CORRETA)
 ========================= */
@@ -133,7 +153,6 @@ $stmtCr = $pdo_master->prepare("
             AND r2.CRCONTADOR = c.CRCONTADOR
       )
       AND c.EMPRESA = ?
-      AND c.CMCONTADOR <> 9
       AND COALESCE(c.STATUS, '') <> 'QT'
       AND (c.validado IS NULL OR c.validado <> 'S')
       AND COALESCE(c.excluido_firebird, 'N') = 'N'
@@ -201,7 +220,6 @@ if (empty($crs)) {
                 AND r2.CRCONTADOR = c.CRCONTADOR
           )
           AND c.EMPRESA = ?
-          AND c.CMCONTADOR <> 9
           AND COALESCE(c.STATUS, '') <> 'QT'
           AND (c.validado IS NULL OR c.validado <> 'S')
           AND COALESCE(c.excluido_firebird, 'N') = 'N'
@@ -244,7 +262,6 @@ if ($modoFallback && empty($crs)) {
                 AND r2.CRCONTADOR = c.CRCONTADOR
           )
           AND c.EMPRESA = ?
-          AND c.CMCONTADOR <> 9
           AND COALESCE(c.STATUS, '') <> 'QT'
           AND (c.validado IS NULL OR c.validado <> 'S')
           AND COALESCE(c.excluido_firebird, 'N') = 'N'
@@ -265,6 +282,11 @@ if ($modoFallback && empty($crs)) {
         $crs = $crsFallbackValorCm;
     }
 }
+
+$_SESSION['conciliacao_manual_cm9_tokens'][$tokenManualCm9]['crcontadores'] = array_values(array_map(
+    'intval',
+    array_column($crs, 'CRCONTADOR')
+));
 ?>
 
 <div class="card shadow-sm mb-3">
@@ -358,7 +380,7 @@ if ($modoFallback && empty($crs)) {
                     <?php endif; ?>
 
                     <td>
-                        <a href="conciliar_exec.php?rec=<?= $rec['id'] ?>&cr=<?= $c['CRCONTADOR'] ?>&data=<?= $data ?>" 
+                        <a href="conciliar_exec.php?rec=<?= $rec['id'] ?>&cr=<?= $c['CRCONTADOR'] ?>&data=<?= urlencode($data) ?>&manual_token=<?= urlencode($tokenManualCm9) ?>"
                            class="btn btn-sm btn-success">
                            ✔ Vincular
                         </a>

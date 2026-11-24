@@ -8,6 +8,7 @@ require '../../config/conexao.php';
 $rec_id = $_GET['rec'] ?? null;
 $cr_id  = $_GET['cr'] ?? null;
 $data   = $_GET['data'] ?? null;
+$manualToken = trim((string)($_GET['manual_token'] ?? ''));
 $empresa_id = (int)$_SESSION['empresa_id'];
 
 if (!$rec_id || !$cr_id) {
@@ -16,6 +17,19 @@ if (!$rec_id || !$cr_id) {
 
 if (!$data) {
     die("Data nao informada.");
+}
+
+$permissaoManualCm9 = null;
+if ($manualToken !== '' && isset($_SESSION['conciliacao_manual_cm9_tokens'][$manualToken])) {
+    $permissaoCandidata = $_SESSION['conciliacao_manual_cm9_tokens'][$manualToken];
+    if (is_array($permissaoCandidata)
+        && (int)($permissaoCandidata['empresa_id'] ?? 0) === $empresa_id
+        && (int)($permissaoCandidata['recebimento_id'] ?? 0) === (int)$rec_id
+        && (int)($permissaoCandidata['expira_em'] ?? 0) >= time()
+        && in_array((int)$cr_id, array_map('intval', (array)($permissaoCandidata['crcontadores'] ?? [])), true)
+    ) {
+        $permissaoManualCm9 = $permissaoCandidata;
+    }
 }
 
 $stmt = $pdo_master->prepare("
@@ -58,7 +72,7 @@ if (!empty($cr['recebimento_id'])) {
     die("Este CR001 ja esta vinculado a outro recebivel.");
 }
 
-if ((int)($cr['cm_origem'] ?? 0) === 9) {
+if ((int)($cr['cm_origem'] ?? 0) === 9 && !$permissaoManualCm9) {
     die("Titulos originados em venda CM 9 nao podem ser conciliados com recebiveis de cartao ou PIX.");
 }
 
@@ -106,6 +120,9 @@ try {
     }
 
     $pdo_master->commit();
+    if ($manualToken !== '') {
+        unset($_SESSION['conciliacao_manual_cm9_tokens'][$manualToken]);
+    }
 } catch (Throwable $e) {
     $pdo_master->rollBack();
     die($e->getMessage());
