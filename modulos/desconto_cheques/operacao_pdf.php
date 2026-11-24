@@ -89,7 +89,7 @@ foreach ($documentos as $doc) {
     }
 }
 
-$nomeArquivo = 'desconto_cheques_operacao_' . $operacaoId . '.pdf';
+$nomeArquivo = 'operacao_' . $operacaoId . '.pdf';
 
 function imagemChequePrecisaRotacionarDC(string $arquivoAbs, int $larguraImagem, int $alturaImagem): bool
 {
