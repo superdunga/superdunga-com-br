@@ -459,27 +459,22 @@ function empresaTemModuloDoGrupo(PDO $pdo, int $empresaId, string $grupo): bool
         return true;
     }
 
-    static $cacheGrupos = [];
-    $cacheKey = $empresaId . '|' . $grupo;
-    if (array_key_exists($cacheKey, $cacheGrupos)) {
-        return $cacheGrupos[$cacheKey];
+    static $cacheGruposPorEmpresa = [];
+    if (!isset($cacheGruposPorEmpresa[$empresaId])) {
+        $stmt = $pdo->prepare("
+            SELECT DISTINCT sm.grupo
+            FROM sistema_modulos sm
+            INNER JOIN empresa_modulos em
+                ON em.modulo_id = sm.id
+            WHERE sm.ativo = 'S'
+              AND em.empresa_id = ?
+              AND em.ativo = 'S'
+        ");
+        $stmt->execute([$empresaId]);
+        $cacheGruposPorEmpresa[$empresaId] = array_fill_keys($stmt->fetchAll(PDO::FETCH_COLUMN), true);
     }
 
-    $stmt = $pdo->prepare("
-        SELECT COUNT(*)
-        FROM sistema_modulos sm
-        INNER JOIN empresa_modulos em
-            ON em.modulo_id = sm.id
-        WHERE sm.grupo = ?
-          AND sm.ativo = 'S'
-          AND em.empresa_id = ?
-          AND em.ativo = 'S'
-    ");
-    $stmt->execute([$grupo, $empresaId]);
-
-    $cacheGrupos[$cacheKey] = (int)$stmt->fetchColumn() > 0;
-
-    return $cacheGrupos[$cacheKey];
+    return isset($cacheGruposPorEmpresa[$empresaId][$grupo]);
 }
 
 function grupoPermitido(PDO $pdo, int $empresaId, string $grupo, ?string $perfil = null): bool

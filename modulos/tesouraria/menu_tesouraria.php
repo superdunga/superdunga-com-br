@@ -6,7 +6,6 @@ require_once 'estoque_minimo_lib.php';
 require '../../layout/header.php';
 
 $empresaId = (int)($_SESSION['empresa_id'] ?? 0);
-garantirTabelaEstoqueMinimo($pdo_master);
 $resumoEstoqueMinimo = resumirEstoqueMinimo(listarEstoqueMinimo($pdo_master, $empresaId));
 
 if ($resumoEstoqueMinimo['alertas'] > 0) {

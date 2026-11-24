@@ -13,6 +13,22 @@ function garantirTabelaEstoqueMinimo(PDO $pdo): void
             KEY idx_estoque_minimo_tipo (tipo_dinheiro_id)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
     ");
+
+    $stmtIndice = $pdo->prepare("
+        SELECT COUNT(*)
+        FROM information_schema.STATISTICS
+        WHERE TABLE_SCHEMA = DATABASE()
+          AND TABLE_NAME = 'tesouraria_movimentacoes_detalhes'
+          AND INDEX_NAME = 'idx_tesouraria_detalhes_movimentacao'
+    ");
+    $stmtIndice->execute();
+
+    if ((int)$stmtIndice->fetchColumn() === 0) {
+        $pdo->exec("
+            CREATE INDEX idx_tesouraria_detalhes_movimentacao
+            ON tesouraria_movimentacoes_detalhes (movimentacao_id)
+        ");
+    }
 }
 
 function listarEstoqueMinimo(PDO $pdo, int $empresaId): array
