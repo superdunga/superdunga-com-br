@@ -1358,7 +1358,7 @@ require '../../layout/header.php';
                                         </div>
                                         <div class="dc-doc-remove">
                                             <div class="d-grid gap-2">
-                                                <button type="button" class="btn btn-primary btn-salvar-doc">Salvar documento</button>
+                                                <button type="button" class="btn btn-primary btn-salvar-doc"><?= $modoRenovacao ? 'Confirmar vencimento' : 'Salvar documento' ?></button>
                                                 <?php if (!$modoRenovacao): ?>
                                                     <button type="button" class="btn btn-outline-danger btn-remover-doc">Remover</button>
                                                 <?php endif; ?>
@@ -1722,6 +1722,7 @@ atualizarFiltroContaLiquidoDC();
 document.addEventListener('DOMContentLoaded', function () {
     const container = document.getElementById('documentosContainer');
     const btnAdd = document.getElementById('btnAddDocumento');
+    const modoRenovacao = <?= $modoRenovacao ? 'true' : 'false' ?>;
     const clienteSelect = document.querySelector('#formOperacao select[name="cliente_id"]');
     const totalTitulosCliente = document.getElementById('totalTitulosCliente');
     if (clienteSelect && totalTitulosCliente) {
@@ -1971,6 +1972,25 @@ document.addEventListener('DOMContentLoaded', function () {
             if (linha) {
                 linhaAtiva = linha;
                 if (!validarDocumentoAtivo()) {
+                    return;
+                }
+                if (modoRenovacao) {
+                    const proximaLinha = Array.from(container.querySelectorAll('.documento-row')).find(function (candidata) {
+                        if (candidata === linha) {
+                            return false;
+                        }
+                        const vencimento = candidata.querySelector('input[name="data_vencimento[]"]');
+                        return vencimento && !vencimento.value.trim();
+                    });
+                    linhaAtiva = proximaLinha || null;
+                    atualizarBotoes();
+                    if (proximaLinha) {
+                        proximaLinha.scrollIntoView({behavior: 'smooth', block: 'center'});
+                        const vencimento = proximaLinha.querySelector('input[name="data_vencimento[]"]');
+                        if (vencimento) {
+                            vencimento.focus();
+                        }
+                    }
                     return;
                 }
                 const continuar = document.getElementById('continuarEditando');
