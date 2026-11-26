@@ -1483,7 +1483,21 @@ function inverterTipomovExtratoBanco(string $tipomov): string
     return strtoupper($tipomov) === 'D' ? 'C' : 'D';
 }
 
-function lancarExtratosSelecionadosNoBnc(PDO $pdo, int $empresaId, int $empresaExtratoId, int $usuarioId, array $extratoIds, int $cbcontador, int $tipoes, int $contrapCbcontadorInformado = 0): int
+const LIMITE_COMPLEMENTO_HISTORICO_EXTRATO = 150;
+
+function complementoHistoricoExtratoBanco($valor): string
+{
+    if (!is_string($valor) || !mb_check_encoding($valor, 'UTF-8')) {
+        throw new RuntimeException('Complemento do historico invalido.');
+    }
+    $complemento = trim($valor);
+    if (mb_strlen($complemento, 'UTF-8') > LIMITE_COMPLEMENTO_HISTORICO_EXTRATO) {
+        throw new RuntimeException('O complemento do historico permite ate ' . LIMITE_COMPLEMENTO_HISTORICO_EXTRATO . ' caracteres.');
+    }
+    return $complemento === '' ? '' : ' - ' . $complemento;
+}
+
+function lancarExtratosSelecionadosNoBnc(PDO $pdo, int $empresaId, int $empresaExtratoId, int $usuarioId, array $extratoIds, int $cbcontador, int $tipoes, int $contrapCbcontadorInformado, string $complementoHistorico): int
 {
     $extratoIds = array_values(array_unique(array_filter(array_map('intval', $extratoIds))));
     if (!$extratoIds) {
@@ -1620,6 +1634,7 @@ function lancarExtratosSelecionadosNoBnc(PDO $pdo, int $empresaId, int $empresaE
             if ($historico === '') {
                 $historico = 'LANCAMENTO GERADO PELO EXTRATO #' . (int)$extrato['id'];
             }
+            $historico .= $complementoHistorico;
 
             $stmtBnc->execute([
                 $empresaId,
@@ -2081,7 +2096,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['acao'] ?? '') === 'lancar_
             $extratosSelecionadosBnc,
             $cbcontador,
             $tipoesLancamentoBnc,
-            $contrapCbcontadorBnc
+            $contrapCbcontadorBnc,
+            complementoHistoricoExtratoBanco($_POST['complemento_historico'] ?? '')
         );
 
         header('Location: conciliacao_extratos.php?' . queryConciliacaoExtratos([
@@ -2099,6 +2115,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['acao'] ?? '') === 'gerar_r
     $cmRecebivel = (int)($_POST['cm_recebivel'] ?? 12);
 
     try {
+        $complementoHistorico = complementoHistoricoExtratoBanco($_POST['complemento_historico'] ?? '');
         if (!is_array($extratosSelecionados) || empty($extratosSelecionados)) {
             throw new RuntimeException('Selecione ao menos um lancamento do extrato para virar recebivel.');
         }
@@ -2193,6 +2210,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['acao'] ?? '') === 'gerar_r
             $nsuTransacao = mb_substr((string)$extratoRecebivel['identificador_banco'], 0, 50);
             $autorizacao = mb_substr($documento, 0, 20);
             $numeroEstabelecimento = (string)$extratoRecebivel['cbcontador'];
+            $descricao .= $complementoHistorico;
+            if (mb_strlen($descricao, 'UTF-8') > 255) {
+                throw new RuntimeException('Reduza o complemento do historico: a descricao do recebivel do extrato #' . $extratoIdSelecionado . ' excede 255 caracteres.');
+            }
 
             $stmtInsertRecebivel->execute([
                 $empresaId,
@@ -2202,7 +2223,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['acao'] ?? '') === 'gerar_r
                 $valor,
                 $valor,
                 $identificador,
-                mb_substr($descricao, 0, 255),
+                $descricao,
                 $pagador,
                 $cmRecebivel,
                 $tipoOperacaoRecebivel,
@@ -4608,6 +4629,10 @@ window.addEventListener('pageshow', atualizarResumoRecSelecionados);
                         <div id="resumo-rec-total" class="h5 fw-bold text-success mb-0">R$ 0,00</div>
                     </div>
                 </div>
+                <div class="mt-2">
+                    <label for="complemento-historico-rec" class="form-label small fw-semibold mb-1">Complemento do historico (opcional)</label>
+                    <input type="text" id="complemento-historico-rec" name="complemento_historico" form="form-gerar-recebiveis" class="form-control form-control-sm" maxlength="<?= LIMITE_COMPLEMENTO_HISTORICO_EXTRATO ?>">
+                </div>
             </div>
             <div class="bg-white border rounded-2 shadow-sm overflow-hidden">
                 <div class="p-3 border-bottom bg-light">
@@ -4693,6 +4718,10 @@ window.addEventListener('pageshow', atualizarResumoRecSelecionados);
                                     <button type="submit" class="btn btn-sm btn-primary" <?= $cbcontador <= 0 || empty($tiposBncRapido) ? 'disabled' : '' ?>>
                                         Lancar selecionados no BNC001
                                     </button>
+                                </div>
+                                <div class="col-12">
+                                    <label for="complemento-historico-bnc" class="form-label small fw-semibold mb-1">Complemento do historico (opcional)</label>
+                                    <input type="text" id="complemento-historico-bnc" name="complemento_historico" class="form-control form-control-sm" maxlength="<?= LIMITE_COMPLEMENTO_HISTORICO_EXTRATO ?>">
                                 </div>
                             </div>
                             <div class="small text-muted mt-1">
