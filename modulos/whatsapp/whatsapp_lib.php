@@ -3247,7 +3247,7 @@ function whatsappCalcularPrevisaoFechamentoVendas(PDO $pdo, DateTime $base, int 
     ];
 }
 
-function whatsappMensagemApresentacaoCaixa(PDO $pdo, ?DateTimeInterface $base = null, int $empresaId = 1): string
+function whatsappMensagemApresentacaoCaixa(PDO $pdo, ?DateTimeInterface $base = null, int $empresaId = 1, string $titulo = 'Apresentacao do Caixa'): string
 {
     date_default_timezone_set('America/Sao_Paulo');
 
@@ -3332,7 +3332,7 @@ function whatsappMensagemApresentacaoCaixa(PDO $pdo, ?DateTimeInterface $base = 
     $diferencaCartoes = $vendasCartoes - $valorCartoes;
     $temRecebiveisCartoes = (int)($recebiveisCartoes['quantidade'] ?? 0) > 0;
 
-    $msg = "*Apresentacao do Caixa*\n\n";
+    $msg = '*' . $titulo . "*\n\n";
     $msg .= "Data: " . $base->format('d/m/Y') . "\n";
 
     if (empty($caixas)) {
@@ -3375,7 +3375,7 @@ function whatsappMensagemCaixaDiaAnterior(PDO $pdo, ?DateTimeInterface $base = n
         : new DateTime('now');
     $referencia->setTime(12, 0, 0)->modify('-1 day');
 
-    return whatsappMensagemApresentacaoCaixa($pdo, $referencia, $empresaId);
+    return whatsappMensagemApresentacaoCaixa($pdo, $referencia, $empresaId, 'Conciliacao do Caixa');
 }
 
 function whatsappMensagemConferenciaCaixaDetalhada(PDO $pdo, ?DateTime $base = null, int $empresaId = 1): string

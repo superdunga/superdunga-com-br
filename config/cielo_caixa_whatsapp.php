@@ -107,6 +107,10 @@ function cieloCaixaExecutarMonitor(PDO $pdo, ?DateTimeImmutable $agora = null): 
     $empresaId = 1;
     $dataProcessamento = $agora->format('Y-m-d');
     $dataCaixa = $agora->modify('-1 day')->format('Y-m-d');
+    if ($agora->format('H:i:s') < '08:30:00') {
+        return ['status' => 'AGUARDANDO_HORARIO', 'data_caixa' => $dataCaixa];
+    }
+
     $nomeLock = 'superdunga_cielo_caixa_anterior';
 
     $stmtLock = $pdo->prepare('SELECT GET_LOCK(?, 0)');
