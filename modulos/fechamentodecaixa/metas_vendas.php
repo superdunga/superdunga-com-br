@@ -519,9 +519,11 @@ while ($cursorFechamentoDesempenho <= $fimDiasMes) {
 $previsaoFechamentoDesempenho = $faturamentoRealMes + $previsaoRestantePorMeta;
 $percentualPrevisaoMeta = $metaVendas > 0 ? ($previsaoFechamentoDesempenho / $metaVendas) * 100 : null;
 
-$vendasMesAtual = $temDiasFechados
-    ? vendasPorDiaMetaVendas($pdo_master, $empresaId, $filtroDataIni, $filtroDataFim, $diasSelecionados)
-    : [];
+// Usa a mesma leitura do realizado no mes para manter os totais consistentes.
+$vendasMesAtual = array_filter($vendasMesAtualCompleto, static function (string $dataVenda) use ($filtroDataIni, $filtroDataFim, $diasSelecionados): bool {
+    return $dataVenda >= $filtroDataIni && $dataVenda <= $filtroDataFim
+        && in_array((int)date('w', strtotime($dataVenda)), $diasSelecionados, true);
+}, ARRAY_FILTER_USE_KEY);
 $vendasMesAnterior = vendasPorDiaMetaVendas($pdo_master, $empresaId, $inicioMesAnterior, $fimMesAnterior, $diasSelecionados);
 $vendasMesAnteriorCompleto = vendasPorDiaMetaVendas($pdo_master, $empresaId, $inicioMesAnterior, $fimMesAnterior);
 $vendasPorHora = $temDiasFechados
@@ -639,6 +641,10 @@ while ($cursor <= $fimComparativo) {
 }
 
 $totalMesAnterior = array_sum(array_column($vendasMesAnteriorCompleto, 'total'));
+$diasComVendasMesAtual = count($vendasMesAtualCompleto);
+$diasComVendasMesAnterior = count($vendasMesAnteriorCompleto);
+$mediaDiaTrabalhadoMesAtual = $diasComVendasMesAtual > 0 ? $faturamentoRealMes / $diasComVendasMesAtual : null;
+$mediaDiaTrabalhadoMesAnterior = $diasComVendasMesAnterior > 0 ? $totalMesAnterior / $diasComVendasMesAnterior : null;
 $diasComparativo = count($comparativoDias);
 $mediaDiaAtual = $diasComparativo > 0 ? $totalAtualAteReferencia / $diasComparativo : 0.0;
 $ticketMedioAtualAteReferencia = $qtdVendasAtualAteReferencia > 0 ? $totalAtualAteReferencia / $qtdVendasAtualAteReferencia : 0.0;
@@ -776,7 +782,7 @@ if ($modoPdfMetaVendas) {
             .col-lg-4 { width: 33.333%; }
             .col-lg-3 { width: 25%; }
             .col-lg-2 { width: 16.666%; }
-            .row-cols-xl-5 > .col { width: 20%; }
+            .row-cols-xl-6 > .col { width: 16.666%; }
             .d-flex { display: block; }
             .d-grid { display: block; }
             .h-100 { height: auto !important; }
@@ -947,7 +953,7 @@ if ($modoPdfMetaVendas) {
                 </div>
             </form>
 
-            <div class="row row-cols-1 row-cols-md-2 row-cols-xl-5 g-3 mb-3">
+            <div class="row row-cols-1 row-cols-md-2 row-cols-lg-3 row-cols-xl-6 g-3 mb-3">
                 <div class="col">
                     <div class="border rounded-2 p-3 h-100">
                         <div class="text-muted small">
@@ -990,6 +996,13 @@ if ($modoPdfMetaVendas) {
                         </div>
                         <div class="h4 mb-1"><?= moedaMetaVendas($ticketMedioAtualAteReferencia) ?></div>
                         <div class="small">Mes anterior equivalente: <?= moedaMetaVendas($ticketMedioAnteriorComparavel) ?></div>
+                    </div>
+                </div>
+                <div class="col">
+                    <div class="border rounded-2 p-3 h-100">
+                        <div class="text-muted small">Media de vendas por dia trabalhado</div>
+                        <div class="h4 mb-1"><?= $mediaDiaTrabalhadoMesAtual !== null ? moedaMetaVendas($mediaDiaTrabalhadoMesAtual) : '-' ?></div>
+                        <div class="small text-muted">Mes anterior: <?= $mediaDiaTrabalhadoMesAnterior !== null ? moedaMetaVendas($mediaDiaTrabalhadoMesAnterior) : '-' ?></div>
                     </div>
                 </div>
             </div>
